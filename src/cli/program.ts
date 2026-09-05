@@ -3903,7 +3903,7 @@ program
 program
   .command('agent-hook')
   .description('Translate a project-local agent host hook into bounded Knowl memory events')
-  .argument('<host>', 'claude, codex, copilot, cursor, openhands, antigravity, windsurf, cline, hermes, claude-desktop, or generic')
+  .argument('<host>', 'claude, codex, copilot, cursor, openhands, antigravity, windsurf, cline, hermes, claude-desktop, openclaw, or generic')
   .argument('<event>', 'host lifecycle event name')
   .option('--json')
   // Registered so `knowl --help` still describes it, but a real hook invocation never

@@ -1,6 +1,5 @@
-import { Readable, Transform } from 'node:stream';
+import { Readable } from 'node:stream';
 import chain from 'stream-chain';
-import { ignore } from 'stream-json/filters/ignore.js';
 import { parser } from 'stream-json';
 import { streamObject } from 'stream-json/streamers/stream-object.js';
 import { SessionEventType } from '../../core/types.js';
@@ -9,9 +8,9 @@ import { LifecycleCapability, LifecycleEvent } from './types.js';
 const capabilities: LifecycleCapability[] = ['supported', 'unsupported', 'degraded'];
 const events: LifecycleEvent[] = ['session-start', 'session-event', 'session-stop', 'session-recover'];
 const sessionEventTypes: SessionEventType[] = ['start', 'command', 'test', 'error', 'git', 'decision', 'checkpoint', 'stop'];
-const MAX_RETAINED_STRING = 2_000;
-const MAX_RETAINED_ARRAY_ITEMS = 50;
-const ROOT_FIELDS = new Set([
+export const MAX_RETAINED_STRING = 2_000;
+export const MAX_RETAINED_ARRAY_ITEMS = 50;
+export const ROOT_FIELDS = new Set([
   // `cascade_id` is Windsurf's third identity fallback and was read by its profile while this
   // list dropped it -- harmless only for as long as Windsurf also sends one of the first two.
   'session_id', 'sessionId', 'thread_id', 'turn_id', 'turnId', 'conversation_id', 'cascade_id', 'generation_id',
@@ -44,18 +43,18 @@ const ROOT_FIELDS = new Set([
  * head of `stdout` is the list of files that passed. These keep the tail instead, at the same
  * bound, so the line that names the failure survives.
  */
-const TAIL_FIELDS = new Set(['error', 'stdout', 'stderr']);
+export const TAIL_FIELDS = new Set(['error', 'stdout', 'stderr']);
 // Knowl write-tool arguments are retained so a new commit can be recognised as the
 // caller's own work. They are compared in memory and never persisted: only summary,
 // command, and changedPaths reach the stored event payload.
-const KNOWL_WRITE_ARGS = ['title', 'id', 'supersedeId', 'supersedes', 'atoms'];
+export const KNOWL_WRITE_ARGS = ['title', 'id', 'supersedeId', 'supersedes', 'atoms'];
 // What tells one call of a search tool from the next. Without these, every Grep in a
 // session normalises to the same event -- the payload keeps only `summary: "Grep
 // completed"` -- so two searches inside the debounce window counted as one and the
 // second was dropped unprocessed, taking its change card with it. Short strings, bounded
 // by MAX_RETAINED_STRING like every other retained field, and compared in memory only.
-const TOOL_DISCRIMINATORS = ['pattern', 'glob', 'query', 'url'];
-const NESTED_FIELDS: Record<string, Set<string>> = {
+export const TOOL_DISCRIMINATORS = ['pattern', 'glob', 'query', 'url'];
+export const NESTED_FIELDS: Record<string, Set<string>> = {
   tool_input: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', 'notebook_path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
   toolInput: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', 'notebook_path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
   // `stdout`/`stderr` are kept here, tail-bounded, for the fleet's error signature and never
@@ -69,10 +68,10 @@ const NESTED_FIELDS: Record<string, Set<string>> = {
 // Fields kept inside an allowlisted array of objects, e.g. tool_input.atoms[i].
 // Without this, allowing `atoms` above would retain whole atom bodies; only the
 // title is needed to recognise a commit as the caller's own.
-const NESTED_ARRAY_ITEM_FIELDS: Record<string, Set<string>> = {
+export const NESTED_ARRAY_ITEM_FIELDS: Record<string, Set<string>> = {
   atoms: new Set(['title']),
 };
-const ARRAY_FIELDS = new Set(['workspace_roots', 'workspacePaths', 'changedPaths', 'changed_paths', 'file_paths', 'filePaths']);
+export const ARRAY_FIELDS = new Set(['workspace_roots', 'workspacePaths', 'changedPaths', 'changed_paths', 'file_paths', 'filePaths']);
 /**
  * The `toolCall.args` leaves Antigravity's normalizer reads, and nothing else.
  *
@@ -81,73 +80,89 @@ const ARRAY_FIELDS = new Set(['workspace_roots', 'workspacePaths', 'changedPaths
  * arguments are allowlisted down to the fields that are actually read; letting one host's
  * arguments through by their parent would put whole file bodies in this process for no reader.
  */
-const TOOL_CALL_ARG_FIELDS = new Set(['TargetFile', 'AbsolutePath', 'CommandLine', 'Query']);
+export const TOOL_CALL_ARG_FIELDS = new Set(['TargetFile', 'AbsolutePath', 'CommandLine', 'Query']);
 
-function shouldDiscardPath(stack: Array<string | number | null>): boolean {
-  if (stack.length === 0) return false;
-  if (stack.length === 1) return !ROOT_FIELDS.has(String(stack[0]));
-  if (typeof stack.at(-1) === 'number') {
-    const index = Number(stack.at(-1));
-    if (stack.length === 2) return !ARRAY_FIELDS.has(String(stack[0])) || index >= MAX_RETAINED_ARRAY_ITEMS;
-    if (stack.length === 3) return !NESTED_FIELDS[String(stack[0])]?.has(String(stack[1])) || index >= MAX_RETAINED_ARRAY_ITEMS;
-    return true;
+export type LifecyclePayload = Record<string, unknown>;
+
+function boundString(key: string, val: string): string {
+  if (TAIL_FIELDS.has(key)) {
+    return val.length > MAX_RETAINED_STRING ? val.slice(-MAX_RETAINED_STRING) : val;
   }
-  const parent = String(stack[0]);
-  if (stack.length >= 4 && typeof stack[2] === 'number') {
-    // A field of an object inside an allowlisted array. Nothing deeper is ever kept.
-    return stack.length > 4 || !NESTED_ARRAY_ITEM_FIELDS[String(stack[1])]?.has(String(stack[3]));
-  }
-  // `toolCall.args` is the one allowlisted pair with a third level worth keeping, and the one
-  // whose siblings are file contents. Everything under it is named or dropped.
-  if (parent === 'toolCall' && stack.length > 2) {
-    return stack.length > 3 || stack[1] !== 'args' || !TOOL_CALL_ARG_FIELDS.has(String(stack[2]));
-  }
-  if (NESTED_FIELDS[parent]) return !NESTED_FIELDS[parent].has(String(stack[1]));
-  return true;
+  return val.length > MAX_RETAINED_STRING ? val.slice(0, MAX_RETAINED_STRING) : val;
 }
 
-function retainOnlyBoundedStrings() {
-  let chunks: string[] | undefined;
-  // The key the next string value belongs to. Keys arrive packed (`packKeys: true`) as one
-  // `keyValue` token ahead of their value, so this is exact rather than inferred.
-  let currentKey: string | undefined;
-  let keepTail = false;
-  return new Transform({
-    objectMode: true,
-    transform(token, _encoding, callback) {
-      if (token.name === 'keyValue') currentKey = String(token.value);
-      if (token.name === 'startString') {
-        chunks = [];
-        keepTail = currentKey !== undefined && TAIL_FIELDS.has(currentKey);
-        callback();
-        return;
-      }
-      if (chunks) {
-        if (token.name === 'stringChunk') {
-          if (keepTail) {
-            // Rolling window: never hold more than twice the bound, never lose the end.
-            chunks.push(String(token.value));
-            const joined = chunks.join('');
-            if (joined.length > 2 * MAX_RETAINED_STRING) chunks = [joined.slice(-MAX_RETAINED_STRING)];
+export function readLifecyclePayloadObject(raw: unknown): LifecyclePayload {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+  const source = raw as Record<string, unknown>;
+  const payload: LifecyclePayload = {};
+
+  for (const [key, value] of Object.entries(source)) {
+    if (!ROOT_FIELDS.has(key)) continue;
+
+    if (typeof value === 'string') {
+      payload[key] = boundString(key, value);
+    } else if (Array.isArray(value)) {
+      if (!ARRAY_FIELDS.has(key)) continue;
+      payload[key] = value.slice(0, MAX_RETAINED_ARRAY_ITEMS).map((item) => {
+        if (typeof item === 'string') return boundString(key, item);
+        return item;
+      });
+    } else if (value !== null && typeof value === 'object') {
+      const allowedNested = NESTED_FIELDS[key];
+      if (!allowedNested) continue;
+
+      const nestedSource = value as Record<string, unknown>;
+      const nestedResult: Record<string, unknown> = {};
+
+      for (const [nestedKey, nestedValue] of Object.entries(nestedSource)) {
+        if (!allowedNested.has(nestedKey)) continue;
+
+        if (key === 'toolCall' && nestedKey === 'args') {
+          if (nestedValue !== null && typeof nestedValue === 'object' && !Array.isArray(nestedValue)) {
+            const argsObj = nestedValue as Record<string, unknown>;
+            const filteredArgs: Record<string, unknown> = {};
+            for (const [argKey, argValue] of Object.entries(argsObj)) {
+              if (TOOL_CALL_ARG_FIELDS.has(argKey)) {
+                filteredArgs[argKey] = typeof argValue === 'string' ? boundString(argKey, argValue) : argValue;
+              }
+            }
+            nestedResult[nestedKey] = filteredArgs;
           } else {
-            const retained = chunks.join('').length;
-            if (retained < MAX_RETAINED_STRING) chunks.push(String(token.value).slice(0, MAX_RETAINED_STRING - retained));
+            nestedResult[nestedKey] = typeof nestedValue === 'string' ? boundString(nestedKey, nestedValue) : nestedValue;
           }
-          callback();
-          return;
+        } else if (Array.isArray(nestedValue)) {
+          const itemFields = NESTED_ARRAY_ITEM_FIELDS[nestedKey];
+          nestedResult[nestedKey] = nestedValue.slice(0, MAX_RETAINED_ARRAY_ITEMS).map((item) => {
+            if (item !== null && typeof item === 'object' && !Array.isArray(item) && itemFields) {
+              const itemObj = item as Record<string, unknown>;
+              const filteredItem: Record<string, unknown> = {};
+              for (const [itemKey, itemVal] of Object.entries(itemObj)) {
+                if (itemFields.has(itemKey)) {
+                  filteredItem[itemKey] = typeof itemVal === 'string' ? boundString(itemKey, itemVal) : itemVal;
+                }
+              }
+              return filteredItem;
+            }
+            if (typeof item === 'string') {
+              return boundString(nestedKey, item);
+            }
+            return item;
+          });
+        } else if (typeof nestedValue === 'string') {
+          nestedResult[nestedKey] = boundString(nestedKey, nestedValue);
+        } else {
+          nestedResult[nestedKey] = nestedValue;
         }
-        if (token.name === 'endString') {
-          const joined = chunks.join('');
-          const value = keepTail ? joined.slice(-MAX_RETAINED_STRING) : joined.slice(0, MAX_RETAINED_STRING);
-          chunks = undefined;
-          callback(null, { name: 'stringValue', value });
-          return;
-        }
-        chunks = undefined;
       }
-      callback(null, token);
-    },
-  });
+      payload[key] = nestedResult;
+    } else {
+      payload[key] = value;
+    }
+  }
+
+  return payload;
 }
 
 export function isLifecycleCapability(value: string): value is LifecycleCapability {
@@ -189,7 +204,7 @@ function stripByteOrderMark(chunk: unknown): unknown {
   return chunk;
 }
 
-export async function readLifecyclePayload(stdin = process.stdin): Promise<Record<string, unknown>> {
+export async function readLifecyclePayload(stdin = process.stdin): Promise<LifecyclePayload> {
   if (stdin.isTTY) return {};
   const iterator = stdin[Symbol.asyncIterator]();
   let first = await iterator.next();
@@ -206,16 +221,14 @@ export async function readLifecyclePayload(stdin = process.stdin): Promise<Recor
   })());
   const stream = chain([
     source,
-    parser({ packStrings: false, packKeys: true }),
-    ignore({ filter: shouldDiscardPath, streamKeys: false }),
-    retainOnlyBoundedStrings(),
+    parser(),
     streamObject(),
   ]);
-  const payload: Record<string, unknown> = {};
+  const raw: Record<string, unknown> = {};
   for await (const entry of stream as AsyncIterable<{ key: string; value: unknown }>) {
-    payload[entry.key] = entry.value;
+    raw[entry.key] = entry.value;
   }
-  return payload;
+  return readLifecyclePayloadObject(raw);
 }
 
 export function stringPayloadValue(payload: Record<string, unknown>, key: string): string | undefined {

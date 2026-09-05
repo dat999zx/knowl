@@ -14,6 +14,7 @@ import { antigravityProfile } from './antigravity.js';
 import { windsurfProfile } from './windsurf.js';
 import { clineProfile } from './cline.js';
 import { hermesProfile } from './hermes.js';
+import { openclawProfile } from './openclaw.js';
 
 export type { HostIdentity, HostOutput, HostProfile } from './profile.js';
 
@@ -29,6 +30,7 @@ export const HOST_PROFILES: Record<HookHost, HostProfile> = {
   windsurf: windsurfProfile,
   cline: clineProfile,
   hermes: hermesProfile,
+  openclaw: openclawProfile,
 };
 
 export function hostProfile(host: HookHost): HostProfile {
