@@ -1,0 +1,21 @@
+{
+  "name": "@dat999zx/knowl-openclaw-plugin",
+  "version": "5.21.1",
+  "description": "Knowl persistent repository memory and write gate plugin for OpenClaw",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@dat999zx/knowl": "5.21.1"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.9.1"
+  },
+  "openclaw": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "release": {
+      "bundleRuntimeDependencies": false
+    }
+  }
+}

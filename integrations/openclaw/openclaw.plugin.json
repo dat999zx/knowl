@@ -1,0 +1,14 @@
+{
+  "id": "knowl",
+  "name": "Knowl",
+  "description": "Persistent repository memory and write gate for OpenClaw.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "agentToolResultMiddleware": [
+      "openclaw",
+      "codex"
+    ]
+  }
+}
