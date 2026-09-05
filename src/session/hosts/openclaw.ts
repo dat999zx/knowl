@@ -91,8 +91,14 @@ export const openclawProfile: HostProfile = {
   startContext(event, context) {
     return event === 'turn-start' ? { prependContext: context } : undefined;
   },
-  midTurnContext() {
-    return undefined;
+  midTurnContext(text) {
+    // A distinct key from `startContext`'s `prependContext`, because the two arrive by
+    // different routes and must not be confused: the turn-start card is prepended to the
+    // prompt the model is about to receive, while this one is APPENDED to a tool result the
+    // model is about to read. The middleware writes it into `content` rather than `details`
+    // for the reason recorded at its registration -- OpenClaw strips `details` before provider
+    // replay and compaction, so a card written there is one the model never reads twice.
+    return { appendContent: text };
   },
   denyToolCall: openclawBlock,
 };
