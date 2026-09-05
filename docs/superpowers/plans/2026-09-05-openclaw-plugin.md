@@ -227,3 +227,32 @@ The single most important file. Every failure mode the spec accepts is contained
 | Version skew on a shared file | Task 6 Step 4 migration-level guard. |
 | `exports` map breaks Cline | Task 3 Step 1 wildcards + Step 2 resolution test. |
 | Prompt text reaching the engine | Task 1 allowlist + Task 7 Step 2. |
+
+---
+
+## Environment (verified 2026-09-05)
+
+- **Build and typecheck against the npm package**, not the monorepo: `npm install openclaw@2026.9.1`
+  takes ~46 s and ships the whole SDK as `.d.ts` under `node_modules/openclaw/dist/plugin-sdk/`,
+  with ~300 subpath exports. There is no top-level `types` field — types come per subpath, so
+  importing `openclaw/plugin-sdk/plugin-entry` is what resolves `definePluginEntry`.
+- **Source checkout at `D:/coding/openclaw`** (`1d1c0db3`, v2026.9.1, 37,986 files) for reading
+  implementation when a doc is ambiguous. A plain `--depth 1` clone failed once with
+  `early EOF / fetch-pack: unexpected disconnect`; `--filter=blob:none --no-tags` succeeded.
+  Never pipe `git clone` through `tail` — the pipe reports exit 0 on a failed clone.
+- **`rg`, not `grep -r`, inside those trees.** `grep -rn` over `openclaw/dist` times out at 180 s;
+  `rg -l --max-count 1 -g '*.d.ts'` answers in seconds.
+- `pnpm@12.3.4` installed globally (OpenClaw's own package manager, needed only to build the
+  monorepo).
+
+### Two spec assumptions now confirmed at source
+
+- `registerAgentToolResultMiddleware` is real and **async**:
+  `(event, ctx) => Promise<AgentToolResultMiddlewareResult | void> | ...`, with
+  `options: { matcher?, runtimes? }` — so Task 9's middleware can be scoped to write tools exactly
+  as the gate is.
+- `tool_result_persist` really is transcript-only. `session-tool-result-guard.ts:685` names the
+  function `persistToolResult`, the option is `transformToolResultForPersistence`, and its output
+  flows only into `appendMessageAndCacheTranscriptSeq`. **Do not use it for the impact card.**
+- `registerSessionExtension` and `enqueueNextTurnInjection` are deprecated at top level; the
+  current names are `api.session.state.*` and `api.session.workflow.*`.
