@@ -2,6 +2,12 @@ import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@dat999zx/knowl/plugin': path.resolve('./dist/plugin.js'),
+      '@dat999zx/knowl': path.resolve('./dist/index.js'),
+    },
+  },
   test: {
     // Benchmark harness lives under benchmarks/ with its own vitest project (`npm run
     // test:bench`). Excluding it keeps `npm test` scoped to the product, so research tooling can
