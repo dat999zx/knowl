@@ -1,31 +1,19 @@
 {
   "name": "@dat999zx/knowl-openclaw-plugin",
   "version": "5.21.1",
+  "private": true,
   "description": "Knowl persistent repository memory and write gate plugin for OpenClaw",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "openclaw.plugin.json",
-    "README.md"
-  ],
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "prepack": "npm run build"
-  },
+  "main": "./src/index.ts",
   "dependencies": {
-    "@dat999zx/knowl": "5.21.1"
+    "@dat999zx/knowl": "*"
   },
   "peerDependencies": {
     "openclaw": ">=2026.9.1"
   },
-  "devDependencies": {
-    "typescript": "^5.7.2"
-  },
   "openclaw": {
     "extensions": [
-      "./dist/index.js"
+      "./src/index.ts"
     ],
     "release": {
       "bundleRuntimeDependencies": false

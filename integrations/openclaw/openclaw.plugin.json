@@ -6,9 +6,60 @@
     "onStartup": true
   },
   "contracts": {
-    "agentToolResultMiddleware": [
-      "openclaw",
-      "codex"
-    ]
+    "agentToolResultMiddleware": ["openclaw", "codex"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "gateDeadlineMs": {
+        "type": "integer",
+        "minimum": 250,
+        "maximum": 14000
+      },
+      "observerDeadlineMs": {
+        "type": "integer",
+        "minimum": 250,
+        "maximum": 29000
+      },
+      "recall": {
+        "type": "boolean"
+      },
+      "writeGate": {
+        "type": "boolean"
+      },
+      "impactCard": {
+        "type": "boolean"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Knowl Memory",
+      "help": "Enable or pause every Knowl hook. When off the gateway keeps running with no memory card, no write gate and no capture."
+    },
+    "gateDeadlineMs": {
+      "label": "Write Gate Deadline (ms)",
+      "help": "How long the write gate waits for Knowl before allowing the tool call anyway. Default 5000. Capped below OpenClaw's 15s before_tool_call budget on purpose: that budget is FAIL-CLOSED, so a Knowl that hangs past it would block your write. Hitting this deadline allows the call instead."
+    },
+    "observerDeadlineMs": {
+      "label": "Observer Deadline (ms)",
+      "help": "Budget for the non-blocking hooks: capture after a tool call, and the checkpoint before compaction. Default 10000, held under OpenClaw's 30s per-handler compaction timeout."
+    },
+    "recall": {
+      "label": "Recall Card",
+      "help": "Prepend the project orientation card at the start of each turn: bound session, pending handoff, recent decisions. The card is fixed for the session and is never a search built from your prompt."
+    },
+    "writeGate": {
+      "label": "Write Gate",
+      "help": "Let Knowl refuse a write that contradicts recorded project knowledge. Applies to exec, apply_patch and spawn_agent. A refusal carries its reason back to the model."
+    },
+    "impactCard": {
+      "label": "Impact Card",
+      "help": "After a file is written, append what Knowl knows about that file to the tool result, so the model sees it in the same turn rather than the next one."
+    }
   }
 }

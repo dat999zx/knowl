@@ -1,6 +1,7 @@
 import fsSync from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
-import { MergeStatus, readTextIfExists, writeWithBackup } from './files.js';
+import { MergeStatus, packageRootDir, readTextIfExists, writeWithBackup } from './files.js';
 import {
   AgentAdapter,
   AgentDetection,
@@ -8,6 +9,34 @@ import {
   AgentIntegrationResult,
   IntegrationScope,
 } from './types.js';
+
+/** Where this package keeps the plugin it ships, the way Hermes' adapter reads its own. */
+export function openclawPluginSourceDir(): string {
+  return path.join(packageRootDir(), 'integrations', 'openclaw');
+}
+
+/** Where the plugin is copied to, so OpenClaw can link a directory this package does not own. */
+export function openclawPluginTargetDir(environment: AgentEnvironment): string {
+  return path.join(environment.homeDir, '.openclaw', 'knowl-plugin');
+}
+
+/**
+ * The files that make a loadable plugin: manifest, package manifest, and the TypeScript entry.
+ *
+ * TypeScript, deliberately, and it is not an oversight that nothing is compiled. OpenClaw
+ * refuses a `.ts` entry on the MANAGED npm path (`plugins install npm-pack:…` wants
+ * `./dist/index.js`), but a **link** install of a local directory loads the source directly --
+ * its own error text says the source fallback exists for "source checkouts and local
+ * development paths". Copying source is therefore the same shape `knowl init hermes` already
+ * uses for its Python plugin, and it keeps Knowl to one published package rather than a second
+ * one that would have to be released before this one could depend on it.
+ */
+const PLUGIN_FILES = [
+  'openclaw.plugin.json',
+  'package.json',
+  path.join('src', 'index.ts'),
+  path.join('src', 'engine.ts'),
+];
 
 /**
  * Resolves the configuration path for OpenClaw.
@@ -52,6 +81,35 @@ export function isOpenClawConfigured(data: unknown): boolean {
   if (hooks.allowPromptInjection !== true) return false;
   if (hooks.timeouts?.before_tool_call !== 5000) return false;
   return true;
+}
+
+/** Every plugin file present at the target. Config alone is not an installed plugin. */
+export async function openclawPluginInstalled(environment: AgentEnvironment): Promise<boolean> {
+  const target = openclawPluginTargetDir(environment);
+  try {
+    await Promise.all(PLUGIN_FILES.map(file => fs.access(path.join(target, file))));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copies the plugin out of this package and into a directory OpenClaw can link.
+ *
+ * Copied rather than linked straight at `node_modules/@dat999zx/knowl/integrations/openclaw`
+ * for the reason the Hermes adapter gives: npm may replace that tree on any update, and a
+ * plugin registered at a path npm owns is a plugin that disappears. Only the files Knowl ships
+ * are written; anything else in the target is left alone.
+ */
+export async function installOpenClawPlugin(environment: AgentEnvironment): Promise<string> {
+  const source = openclawPluginSourceDir();
+  const target = openclawPluginTargetDir(environment);
+  await fs.mkdir(path.join(target, 'src'), { recursive: true });
+  for (const file of PLUGIN_FILES) {
+    await fs.copyFile(path.join(source, file), path.join(target, file));
+  }
+  return target;
 }
 
 /**
@@ -158,12 +216,23 @@ export function createOpenClawAdapter(environment: AgentEnvironment): AgentAdapt
       const scope = openclawConfigScope(pathname, root);
       try {
         const status = await mergeOpenClawConfig(pathname);
+        // Config alone enables a plugin OpenClaw has never been told about. The files have to
+        // land somewhere linkable first, exactly as the Hermes adapter copies its plugin before
+        // the config that references it means anything.
+        const target = await installOpenClawPlugin(environment);
         return {
           agent: 'openclaw',
           status,
           scope,
           configPath: pathname,
-          message: 'OpenClaw plugin enabled with required hook permissions and timeout.',
+          message: `Plugin copied to ${target}. Two steps remain, both once:\n`
+            + `  cd "${target}" && npm install @dat999zx/knowl @libsql/client\n`
+            + `  openclaw plugins install --link "${target}" --force --accept-capabilities\n`
+            + 'then restart the gateway. The install is not optional: a linked directory resolves '
+            + 'its own imports, and libsql stays external to the Knowl bundle, so without it the '
+            + "plugin loads to \"Cannot find module\". Both install flags are required too -- "
+            + '--force because the directory is outside ClawHub trust metadata, '
+            + '--accept-capabilities because the plugin declares tool-result middleware.',
         };
       } catch (error: any) {
         return {
@@ -180,7 +249,8 @@ export function createOpenClawAdapter(environment: AgentEnvironment): AgentAdapt
       try {
         const text = await readTextIfExists(pathname);
         if (!text || text.trim() === '') return false;
-        return isOpenClawConfigured(JSON.parse(text));
+        if (!isOpenClawConfigured(JSON.parse(text))) return false;
+        return await openclawPluginInstalled(environment);
       } catch {
         return false;
       }
