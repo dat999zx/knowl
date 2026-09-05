@@ -3,7 +3,7 @@
   "name": "io.github.dat999zx/knowl",
   "title": "Knowl",
   "description": "Persistent memory for Claude Code, Cursor and Codex. Facts retire when they change.",
-  "version": "5.21.0",
+  "version": "5.21.1",
   "websiteUrl": "https://knowl.cloud",
   "repository": {
     "url": "https://github.com/dat999zx/knowl",
@@ -14,7 +14,7 @@
     {
       "registryType": "npm",
       "identifier": "@dat999zx/knowl",
-      "version": "5.21.0",
+      "version": "5.21.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

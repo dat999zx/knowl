@@ -3,6 +3,39 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.21.1 — 2026-09-05
+
+**A project can be held open per consumer, without the process-global handle deciding for
+everyone.** `initDb` writes to one module-level context and `getDb`/`getClient` read it, so two
+projects open at once in one process silently share the last one opened: reproduced by opening A
+then B and issuing a write through the caller that held A, which landed in B's file — A's store
+empty, B's holding A's row, no error and no log line. `closeDb` is the other half, because it
+releases the whole pool, so the first consumer to finish tore down every other one's connection
+and the survivors got `Database has not been initialized` from a call they had made correctly.
+
+**No shipped consumer is affected, and this is hardening rather than a bugfix.** Every one of
+them opens exactly one project per process — the CLI is one-shot, and the MCP server binds a
+project at startup and hops namespaces with `withDbPath`, which has been scoped since 3.0.1. The
+subprocess boundary has been hiding the defect; the in-process library export planned for the
+OpenClaw plugin removes it, because a long-running gateway holds several workspaces open in one
+address space.
+
+`openProjectScope(root)` returns a handle whose `run(body)` executes inside the same
+`AsyncLocalStorage` the namespace hop already uses, so ambient reads resolve to that project
+rather than to whoever opened last, and whose `release()` maps to `releaseClient` — one database,
+leaving the pool alone. `withProjectScope(root, body)` is the open-run-release form. Two handles
+on one project are refcounted, and a database the process-wide context is also using is never
+released by a scope. Nothing assigns the global handle, so `initDb`/`closeDb` and every existing
+call site behave exactly as before.
+
+**A Hermes session with Knowl selected as the memory provider gets its own card back.** Selecting
+Knowl in Settings > Memory & Context replaced the orientation card with keyword search over the
+user's literal sentence: `pre_llm_call` returned nothing when `memory.provider` was `knowl`, and
+the provider's `prefetch` ran `knowl query <the prompt> --limit 5` on every turn instead. Recall
+is the hook's job again on every host, whatever the dropdown says. `system_prompt_block` went with
+it — `register` already publishes the rules section, and both halves loaded on such a session, so
+the rules were in the system prompt twice.
+
 ## 5.21.0 — 2026-09-04
 
 **The code index reads Python and Go.** The Tree-sitter index behind `symbol://` locators, the
