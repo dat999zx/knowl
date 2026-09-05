@@ -141,8 +141,13 @@ export const hermesProfile: HostProfile = {
   startContext(event, context) {
     return event === 'turn-start' ? { context } : undefined;
   },
-  midTurnContext() {
-    return undefined;
+  midTurnContext(text) {
+    // `context` is the same key startContext uses, because the plugin hands both to the
+    // model the same way: a bare string appended to what the model is about to read. Proven
+    // by the impact card, which has been riding transform_tool_result in production since
+    // the plugin shipped -- this profile returning undefined is what kept the ENGINE's
+    // cards off a channel the plugin was already using for its own.
+    return { context: text };
   },
   denyToolCall: hermesBlock,
   stopContext: hermesBlock,
