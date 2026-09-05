@@ -111,10 +111,12 @@ export class OpenClawEngineManager {
   private disabledRoots = new Map<string, string>();
   private logger?: HostLogger;
   private gateDeadlineMs: number;
+  private observerDeadlineMs: number;
 
-  constructor(options: { logger?: HostLogger; gateDeadlineMs?: number } = {}) {
+  constructor(options: { logger?: HostLogger; gateDeadlineMs?: number; observerDeadlineMs?: number } = {}) {
     this.logger = options.logger;
     this.gateDeadlineMs = options.gateDeadlineMs ?? DEFAULT_GATE_DEADLINE_MS;
+    this.observerDeadlineMs = options.observerDeadlineMs ?? DEFAULT_OBSERVER_DEADLINE_MS;
   }
 
   isDisabled(projectRoot: string): boolean {
@@ -198,5 +200,9 @@ export class OpenClawEngineManager {
 
   getGateDeadlineMs(): number {
     return this.gateDeadlineMs;
+  }
+
+  getObserverDeadlineMs(): number {
+    return this.observerDeadlineMs;
   }
 }
