@@ -123,20 +123,50 @@ state and misroutes concurrent writes. That was v2.17.0. `src/store/database.ts:
 in the past tense. `openProjectScope` (`:257`) and `withRepoRoot` (`:184`) are the same pattern
 already in production. The fix is cheap and the seam exists.
 
-### RC3 — nothing enforces parity, so known defects survive for months
+### RC3 — the conformance test checks the wrong direction, so a stub is invisible
 
-`tests/cli/hosts/profile-conformance.test.ts` exists. Per review atom `728ca4879c2b444e` it
-asserted `midTurnDeliveryVerified === false` — *a literal the same commit had just written*.
-A test that reads back a constant cannot fail.
+`tests/cli/hosts/profile-conformance.test.ts` is substantially better than review atom
+`728ca4879c2b444e` reports — that atom describes an earlier state and is itself stale. The file
+is 200+ lines and pins real invariants: the prompt-event-in-hookEvents trap, the stdin
+allowlist round-trip, Codex's event list against the shipped binary, `writeTools` vs
+`writesFiles` exclusivity.
 
-The cost is measurable: `3f1fa7ebec504083` (2026-08-22) found `copilot.ts` registering `stop`
-and `userPromptSubmit`, **names GitHub never fires** (canonical: `agentStop`,
-`userPromptSubmitted`). Four months later `promptEvent: 'userPromptSubmitted'` is fixed but the
-audit's other findings are not, and `docs/hosts.md` still advertises ✅ for channels that
-cannot fire.
+The gap is narrower and more specific than "the test asserts a literal". Both mid-turn
+assertions are **one-directional, and both point away from the defect**:
 
-RC3 is why RC1 and RC2 must not be fixed without it. Without an enforcing test this document
-describes work that will rot on the same schedule.
+```ts
+// :148 — verified implies envelope
+if (profile().midTurnDeliveryVerified) expect(profile().midTurnContext('x')).toBeDefined();
+
+// :158 — envelope implies tool event
+if (profile().midTurnContext('x') !== undefined) expect(hasToolEvent).toBe(true);
+```
+
+Read them together: *verified → envelope → tool event*. Every implication starts from having a
+capability. **Nothing starts from registering a tool event and demands the envelope.** A host
+that maps `post_tool_call → session-event` and returns `undefined` from `midTurnContext`
+satisfies both assertions vacuously, because both are `if (capability)` guards and the stub has
+no capability to trigger them.
+
+That is exactly hermes (`hermes.ts:29` maps `post_tool_call: 'session-event'`) and openclaw
+(`openclaw.ts:35` maps `after_tool_call: 'session-event'`). Both register the attachment point.
+Both return `undefined`. Both pass.
+
+The missing assertion is the converse of `:151`:
+
+> a host that registers a `session-event` tool event MUST return a mid-turn envelope, or
+> declare in the profile why it cannot.
+
+The escape hatch matters: `claude-desktop` legitimately has neither (pinned separately at
+`:170`), and `cursor` deliberately has an envelope with unverified delivery so the MCP fallback
+keeps talking to it. The rule is not "every host must deliver" — it is **"a host that has
+somewhere to put a card must either put one there or say why not."**
+
+This reframes Phase 1. The work is not writing a conformance suite from nothing; it is adding
+the one implication that closes the loop, plus the vendor-event fixtures that the Copilot
+finding (`3f1fa7ebec504083`) shows are still missing. The existing Codex assertion at `:89` is
+the model to copy — it pins event names against a dated inspection of the shipped binary, which
+is precisely the check Copilot never got.
 
 ## What this does not do
 
