@@ -147,3 +147,180 @@ describe('OpenClaw hooks: recall card', () => {
     expect(result).toBeUndefined();
   });
 });
+
+describe('OpenClaw hooks: write gate', () => {
+  let scratchDir: string;
+  let registeredHooks: Map<string, Array<{ handler: (...args: unknown[]) => Promise<unknown> | unknown; opts?: unknown }>>;
+  let api: any;
+
+  beforeEach(async () => {
+    scratchDir = path.join(os.tmpdir(), `knowl-openclaw-gate-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await fs.mkdir(scratchDir, { recursive: true });
+
+    registeredHooks = new Map();
+    api = {
+      id: 'knowl',
+      name: 'Knowl',
+      logger: {
+        warn: vi.fn(),
+        info: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      },
+      pluginConfig: {},
+      on: vi.fn((hookName: string, handler: any, opts: any) => {
+        if (!registeredHooks.has(hookName)) {
+          registeredHooks.set(hookName, []);
+        }
+        registeredHooks.get(hookName)!.push({ handler, opts });
+      }),
+      registerAgentToolResultMiddleware: vi.fn(),
+    };
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(scratchDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('registers before_tool_call with canonical write tool matcher', () => {
+    knowlPlugin.register(api);
+
+    const gateEntries = registeredHooks.get('before_tool_call');
+    expect(gateEntries).toBeDefined();
+    expect(gateEntries?.length).toBe(1);
+
+    const opts = gateEntries![0].opts as { matcher: string[] };
+    expect(opts).toBeDefined();
+    expect(opts.matcher).toEqual(['exec', 'apply_patch', 'spawn_agent']);
+  });
+
+  it('allows write when engine has no objection (returns undefined, never params or block: false)', async () => {
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: scratchDir, encoding: 'utf8' });
+
+    knowlPlugin.register(api);
+    const gateHook = registeredHooks.get('before_tool_call')?.[0]?.handler;
+    expect(gateHook).toBeDefined();
+
+    const event = {
+      toolName: 'apply_patch',
+      params: { patch: '*** test patch ***', path: 'src/index.ts' },
+      derivedPaths: ['src/index.ts'],
+    };
+    const ctx = {
+      workspaceDir: scratchDir,
+      sessionId: 'gate-session-1',
+    };
+
+    const result = (await gateHook!(event, ctx)) as any;
+    // Decision is abstain (undefined) so host allows the write
+    expect(result).toBeUndefined();
+    expect(result?.params).toBeUndefined();
+    expect(result?.block).toBeUndefined();
+  });
+
+  it('blocks write when engine lifecycle refuses, returning blockReason and never params', async () => {
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: scratchDir, encoding: 'utf8' });
+
+    // Mock lifecycle to return a refusal
+    const origOpenProject = pluginModule.openProject;
+    vi.spyOn(pluginModule, 'openProject').mockImplementation(async (cwd: string) => {
+      const handle = await origOpenProject(cwd);
+      if (!handle) return null;
+      handle.lifecycle = async () => ({
+        accepted: true,
+        hostOutput: {
+          block: true,
+          blockReason: 'Modifying src/core.ts contradicts a verified invariant from Task 2.',
+        },
+      });
+      return handle;
+    });
+
+    knowlPlugin.register(api);
+    const gateHook = registeredHooks.get('before_tool_call')?.[0]?.handler;
+
+    const event = {
+      toolName: 'apply_patch',
+      params: { patch: '*** bad patch ***', path: 'src/core.ts' },
+      derivedPaths: ['src/core.ts'],
+    };
+    const ctx = {
+      workspaceDir: scratchDir,
+      sessionId: 'gate-session-refusal',
+    };
+
+    const result = (await gateHook!(event, ctx)) as any;
+    expect(result).toBeDefined();
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toBe('Modifying src/core.ts contradicts a verified invariant from Task 2.');
+    // Invariant: Codex relays reject rewrites and fail closed, so never return params
+    expect(result?.params).toBeUndefined();
+  });
+
+  it('Step 5: test that a stalled engine accepts — deadline fires, returns accept, write proceeds', async () => {
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: scratchDir, encoding: 'utf8' });
+
+    // Configure a short gate deadline to test deadline expiry
+    api.pluginConfig = { gateDeadlineMs: 40 };
+
+    const origOpenProject = pluginModule.openProject;
+    vi.spyOn(pluginModule, 'openProject').mockImplementation(async (cwd: string) => {
+      const handle = await origOpenProject(cwd);
+      if (!handle) return null;
+      // Stalled engine: simulates a hung sqlite query or blocked native worker
+      handle.lifecycle = async () => new Promise<any>(() => {});
+      return handle;
+    });
+
+    knowlPlugin.register(api);
+    const gateHook = registeredHooks.get('before_tool_call')?.[0]?.handler;
+
+    const start = Date.now();
+    const event = {
+      toolName: 'exec',
+      params: { command: 'rm -rf /tmp/data' },
+    };
+    const ctx = {
+      workspaceDir: scratchDir,
+      sessionId: 'gate-session-stall',
+    };
+
+    const result = (await gateHook!(event, ctx)) as any;
+    const elapsed = Date.now() - start;
+
+    // The gate must resolve well under the host's 15s budget (here in ~40-150ms)
+    expect(elapsed).toBeLessThan(1_000);
+    // On timeout, gate abstains / accepts rather than failing closed
+    expect(result).toBeUndefined();
+  });
+
+  it('throwing engine safely accepts the write without crashing the gateway', async () => {
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: scratchDir, encoding: 'utf8' });
+
+    const origOpenProject = pluginModule.openProject;
+    vi.spyOn(pluginModule, 'openProject').mockImplementation(async (cwd: string) => {
+      const handle = await origOpenProject(cwd);
+      if (!handle) return null;
+      handle.lifecycle = async () => {
+        throw new Error('Native LibSQL crash or disk corruption');
+      };
+      return handle;
+    });
+
+    knowlPlugin.register(api);
+    const gateHook = registeredHooks.get('before_tool_call')?.[0]?.handler;
+
+    const result = (await gateHook!(
+      { toolName: 'spawn_agent', params: { task: 'run' } },
+      { workspaceDir: scratchDir, sessionId: 's-err' },
+    )) as any;
+
+    expect(result).toBeUndefined();
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Swallowed engine failure: Native LibSQL crash or disk corruption'),
+      expect.any(Error),
+    );
+  });
+});
+
