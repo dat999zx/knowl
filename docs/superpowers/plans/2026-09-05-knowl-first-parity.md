@@ -45,10 +45,25 @@ A capability nothing checks and everything assumes: there, an installed peer; he
 channel. Both pass locally, both are absent in the environment that matters, and neither
 announces itself.
 
-Baseline to confirm before Task 1: full gate green on the rebased branch. Re-confirm
-`tests/cloud/send-transfer.test.ts:250` — it timed out at 30s during a run with three concurrent
-vitest processes and passes in isolation, so it is probably load, but "probably" is not a
-baseline.
+Baseline confirmed on the rebased branch (`3dcd1b1`), full gate, single run with no concurrent
+vitest process:
+
+| check | result |
+| --- | --- |
+| `npm test` | **415 files, 3925 passed, 5 skipped, 0 failed** (263s) |
+| `tsc --noEmit` | clean |
+| `npx eslint .` | clean (exit 0) |
+| `docs:check` | "Generated documentation regions are current" |
+| `check-version-sync.mjs` | all four sites match 5.21.1 |
+
+`tests/cloud/send-transfer.test.ts:250` — which timed out at 30s in an earlier run — **passes
+here**. The earlier failure was contention: three vitest processes were running concurrently
+against a suite whose config already caps `maxWorkers: 4` for exactly this reason (its docblock
+notes extra workers "starve vitest's own worker RPC on a busy machine"). Not a fourth defect,
+and not something to design around. The operational lesson is narrower and worth obeying during
+execution: **run the suite once, alone.** A red result obtained under self-inflicted load is
+indistinguishable from a regression, and this plan's whole argument is that a signal nobody can
+trust is the same as no signal.
 
 ## Already established, do not re-litigate
 
