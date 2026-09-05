@@ -25,13 +25,30 @@
 - Commit after every task. Lowercase conventional commit subjects; body written for someone reading it in a year.
 - `CHANGELOG.md` HAS a `## Unreleased` heading at line 6 as of this writing. Append there; do not create a second one.
 
-## Prerequisite: baseline must be green before Task 1
+## Prerequisite: baseline must be green before Task 1 — RESOLVED
 
-The worktree branched from `1f50d19`, which is **red for the OpenClaw suite**. The fix is uncommitted in the user's main checkout: a modified `vitest.config.ts` adding an `openclaw/plugin-sdk/plugin-entry` alias, plus the untracked `tests/integrations/openclaw/plugin-entry-stub.ts` it points at. Without it, `integrations/openclaw/src/index.ts:2` cannot resolve its peer dependency and 2 suites fail at import.
+The worktree originally branched from `1f50d19`, which was **red for the OpenClaw suite**. That
+is fixed and landed: `07dd150` on `feat/openclaw-plugin` ("fix(tests): the openclaw suite passed
+only where openclaw was installed"), and this branch is rebased onto it.
 
-**Do not start Task 1 against a red baseline.** Resolve with the user first — land their fix on `feat/openclaw-plugin` and rebase, or cherry-pick the two files. A red baseline is how a real regression later gets waved off as pre-existing.
+The cause is worth carrying, because it is the same shape as the defects this plan fixes.
+`openclaw` is a **peer dependency**, correctly absent from a clean checkout — the host refuses a
+second registry copy of itself inside a managed plugin project and relinks its own
+`node_modules/openclaw` after install. So the suite passed on the developer's machine, where a
+live-install experiment had left a repo-local and a global copy behind, and died on CI's ubuntu
+and macOS legs with `ERR_MODULE_NOT_FOUND`. `07dd150` aliases the specifier to a committed stub
+in `vitest.config.ts`, and bumps `plugin-export.test.ts` to 300s because that hook runs a real
+`npm pack` + `npm install` and was timing out under parallel load.
 
-Confirmed baseline once that lands: 3902 passed, 1 failed (`tests/cloud/send-transfer.test.ts:250`, a 30s timeout that passes in isolation — re-confirm it is load and not a fourth defect).
+**A green suite that is green only on one machine is exactly the failure class of RC1 and RC3.**
+A capability nothing checks and everything assumes: there, an installed peer; here, a mid-turn
+channel. Both pass locally, both are absent in the environment that matters, and neither
+announces itself.
+
+Baseline to confirm before Task 1: full gate green on the rebased branch. Re-confirm
+`tests/cloud/send-transfer.test.ts:250` — it timed out at 30s during a run with three concurrent
+vitest processes and passes in isolation, so it is probably load, but "probably" is not a
+baseline.
 
 ## Already established, do not re-litigate
 
@@ -260,7 +277,23 @@ it('carries a mid-turn card through the tool-result middleware', () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run tests/integrations/openclaw/hooks.test.ts`
-Expected: FAIL — `expected undefined to be defined`. If it fails on `Cannot find package 'openclaw/plugin-sdk/plugin-entry'` instead, the prerequisite is unmet; stop and resolve it.
+Expected: FAIL — `expected undefined to be defined`.
+
+**Do not expect a resolution error.** `openclaw` is a peer dependency and is *correctly absent*
+from this repository: OpenClaw refuses a second registry copy of the host inside a managed
+plugin project and relinks its own `node_modules/openclaw` after install. `07dd150` aliases
+`openclaw/plugin-sdk/plugin-entry` to `tests/integrations/openclaw/plugin-entry-stub.ts` in
+`vitest.config.ts` so the suite runs on a clean machine. If you see
+`Cannot find package 'openclaw/plugin-sdk/plugin-entry'`, you are on a branch below `07dd150` —
+rebase rather than installing OpenClaw, because installing it is what hid this on the original
+developer's box while CI's ubuntu and macOS legs stayed red.
+
+**What the stub does and does not cover.** `definePluginEntry` is stubbed as identity. These
+tests drive `register(api)` directly with a fake `api`, so nothing exercises the host's side of
+the registration contract. That is faithful for Steps 1-4, which only ask what the *profile*
+returns. It is **not** coverage of Step 5: whether the gateway actually delivers what the
+middleware appends is not observable under the stub, which is why Step 6 requires a live
+gateway session and not a green suite.
 
 - [ ] **Step 3: Implement the envelope**
 
