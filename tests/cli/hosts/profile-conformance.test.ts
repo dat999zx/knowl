@@ -5,7 +5,7 @@ import { HookHost } from '../../../src/cli/agents/host-hook.js';
 const ALL_HOSTS: HookHost[] = [
   'codex', 'claude', 'cursor', 'claude-desktop', 'generic',
   'copilot', 'openhands', 'antigravity', 'windsurf', 'cline',
-  'hermes',
+  'hermes', 'openclaw',
 ];
 
 describe('host profile registry', () => {

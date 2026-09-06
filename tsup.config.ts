@@ -26,7 +26,7 @@ import { defineConfig } from 'tsup';
  * without a `require` in scope an ESM bundle throws on it.
  */
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: ['src/index.ts', 'src/plugin.ts'],
   format: ['esm'],
   clean: true,
   dts: true,

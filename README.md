@@ -161,7 +161,11 @@ works.
 <strong>Claude Desktop</strong><br/>
 <sub>MCP · manual loop</sub>
 </td>
-<td align="center" width="14%"></td>
+<td align="center" width="14%">
+<a href="https://github.com/openclaw/openclaw"><img src="docs/assets/logos/openclaw.svg" alt="OpenClaw" width="40" height="40" /></a><br/>
+<strong>OpenClaw</strong><br/>
+<sub>in-process · plugin · gate</sub>
+</td>
 </tr>
 </table>
 
@@ -172,7 +176,8 @@ the agent picks up its guidance, and it will query and write memory on its own.
 Neovim and Kiro work the same way as Zed and JetBrains, through `knowl acp`. Cline needs one
 line pointing it at the shipped plugin. Hermes Agent gets a Python plugin, installed for you,
 that works in the terminal and in Hermes Desktop alike, and can additionally be picked as
-Hermes' memory provider. Any other MCP client works with
+Hermes' memory provider. OpenClaw runs in-process inside its gateway via an extension plugin,
+evaluating write gates without subprocess overhead. Any other MCP client works with
 no integration at all.
 
 Running agents in parallel? Every **git worktree** resolves to the main checkout's store —

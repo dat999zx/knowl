@@ -31,6 +31,7 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 | **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | via MCP |
 | **Cline** (with the plugin) | ✅ | ✅ | ✅ | — | via MCP |
 | **Hermes Agent** (with the plugin) | ✅ | ✅ | ✅ | ✅ | ✅ edit turns |
+| **OpenClaw** (with the plugin) | ✅ | ✅ | ✅ | ✅ | — |
 | **Zed, JetBrains, Neovim, Kiro** (via `knowl acp`) | ✅ | ❌ | ✅ | ❌ | via MCP |
 | **OpenCode, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | via MCP |
 
@@ -42,7 +43,9 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 
 ## One process per event, or one server
 
-Every hook above is installed as a `command` hook: a fresh `knowl agent-hook` process per event, ~230ms of Node startup each, serialized against the agent's own tool calls because the host waits on the pre-tool hook. Over 102 real Claude Code sessions that is 31s at the median session and 190s at the 90th percentile.
+Every hook above except OpenClaw is installed as a `command` hook: a fresh `knowl agent-hook` process per event, ~230ms of Node startup each, serialized against the agent's own tool calls because the host waits on the pre-tool hook. Over 102 real Claude Code sessions that is 31s at the median session and 190s at the 90th percentile.
+
+OpenClaw is the exception: it runs entirely in-process inside the gateway via an extension plugin (`integrations/openclaw`), using Knowl's scoped project handles (`@dat999zx/knowl/plugin`). This eliminates subprocess startup latency entirely, reducing write gate evaluation from ~118ms to ~0.68ms (and 0.04ms on non-write tools).
 
 Claude Code (2.1.257+) and Codex (0.148+) can run a hook as a call to a tool on an already-connected MCP server instead. Set `hooks.transport` to `mcp` in `.knowl/config.json` and re-run `knowl init <host>`: the mid-session events become `mcp_tool` hooks calling `knowl_hook` on the `knowl serve` process the host already holds open, and the server registers that tool. `SessionStart` stays a process (both hosts say it fires before servers finish connecting), as does `SessionEnd`. No other host has the hook type yet; on those the setting changes nothing. The trade and the details are in the [reference](reference.md#hook-transport--hookstransport).
 
@@ -87,6 +90,7 @@ cd my-repo && knowl init
 | Cursor | `.cursor/mcp.json` | `.cursor/hooks.json` |
 | Claude Desktop | platform config directory | — |
 | Hermes Agent | `config.yaml` in the Hermes home (global) | a plugin in `<Hermes home>/plugins/knowl/` |
+| OpenClaw | — | in-process plugin in `openclaw.json` (`plugins.entries.knowl`) |
 
 † Antigravity is two products reading two files. The IDE's "View raw config" opens `~/.gemini/antigravity/mcp_config.json`; the `agy` CLI reads `~/.gemini/config/mcp_config.json`, which Gemini CLI's migration often leaves at 0 bytes — an empty file, not a broken one. Both are confirmed against real installs, and `knowl init antigravity` writes both.
 

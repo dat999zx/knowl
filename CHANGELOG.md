@@ -3,6 +3,14 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+**OpenClaw in-process plugin integration.** OpenClaw is supported via an in-process plugin package (`@dat999zx/knowl/plugin` and `integrations/openclaw`) rather than shell hooks. Running inside the OpenClaw gateway evaluates the write gate at `before_tool_call` in sub-millisecond time (~0.68ms vs ~118ms subprocess) with an explicit matcher filtering write tools (`exec`, `apply_patch`, `spawn_agent`). The write gate carries an internal 5-second deadline and swallows engine errors to uphold OpenClaw's fail-closed host contract without blocking user writes on memory degradation.
+
+Prompt recall is delivered at `before_prompt_build` returning `{ prependContext: card }` with the fixed orientation card, ensuring prompt prose never becomes a search query. Impact cards are injected before model replay via `api.registerAgentToolResultMiddleware` directly into `result.content` (avoiding `details` which OpenClaw strips before compaction).
+
+`knowl init openclaw` merges the plugin entry into `openclaw.json` (project-scoped or `~/.openclaw/openclaw.json`), writing both required permission gates (`allowConversationAccess` and `allowPromptInjection`) and explicitly setting `timeouts.before_tool_call: 5000` while preserving all surrounding user configuration.
+
 ## 5.21.1 — 2026-09-05
 
 **A project can be held open per consumer, without the process-global handle deciding for
