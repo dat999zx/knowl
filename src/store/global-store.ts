@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { globalStorePath } from '../core/paths.js';
-import { initDbPath } from './database.js';
+import { withDbPath } from './database.js';
 
 /**
  * Create the global store if it is missing, and say which happened.
@@ -18,7 +18,19 @@ export async function ensureGlobalStore(): Promise<{ path: string; created: bool
   const existed = await fs.access(target).then(() => true, () => false);
   await fs.mkdir(path.dirname(target), { recursive: true });
   // Opening runs schema bootstrap; closing leaves a file the namespace reader can attach to.
-  await initDbPath(target, { configRoot: path.dirname(target) });
+  //
+  // SCOPED, not ambient. This used to call `initDbPath`, which assigns the module-level
+  // `globalContext` -- the handle every UNSCOPED store operation resolves through. Creating the
+  // global store therefore rebound the whole process to `~/.knowl/global.db`, and under
+  // `knowl serve` a process outlives the call: one `knowl_store` with `namespace: 'global'`
+  // silently redirected every later project write for the life of the server. Bootstrap is all
+  // this function needs, and `withDbPath` runs it through `AsyncLocalStorage` without touching
+  // the ambient handle -- the same reason the namespace hop was moved off `initDbPath`.
+  //
+  // Safe for every caller because none of them read the ambient afterwards: both global write
+  // paths re-enter explicitly (`src/mcp/tools.ts` and the `--namespace global` branch of
+  // `src/cli/program.ts` each wrap their write in their own `withDbPath(globalStorePath(), ...)`).
+  await withDbPath(target, async () => {}, { configRoot: path.dirname(target) });
   return { path: target, created: !existed };
 }
 
