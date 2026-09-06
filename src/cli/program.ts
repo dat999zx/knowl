@@ -2748,6 +2748,19 @@ program
             return;
           }
 
+          // Same pairing as the project branch below, and for the same reason: the id does not
+          // exist until the row does, so the auto-stage seam may already have queued it. The
+          // global namespace is not exempt from that seam -- `maybeAutoStage` skips only
+          // `session` -- and since the machine store can itself be cloud-connected, a global
+          // `--local` atom was being staged while the CLI printed that it never would be.
+          // Inside `withDbPath` deliberately: the exclusion row belongs in the global store,
+          // beside the atom it excludes, not in whatever project the shell happened to be in.
+          if (options.local) {
+            await excludeFromPublish(result.item.id, 'knowl store --namespace global --local');
+            const connected = cloudPointer(config);
+            if (connected) await unstagePublish(result.item.id, connected.workspaceId);
+          }
+
           console.log(`Stored ${options.category} ${result.item.id}: ${result.item.title}`);
           if (result.superseded) console.log(`  Retired ${result.superseded.id}.`);
           if (options.local) console.log('  Marked local. It will not be published.');
