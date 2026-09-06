@@ -25,6 +25,7 @@
 [Features](#features) ·
 [Agent setup](#connecting-an-agent) ·
 [Viewer](#see-it-the-local-viewer) ·
+[Discord](#community) ·
 [Requirements](#requirements-and-local-data) ·
 **[Full reference →](docs/reference.md)**
 
@@ -295,6 +296,15 @@ hosted layer for when one machine is not enough:
 </p>
 
 Local-only remains a first-class way to run Knowl. Nothing here is required to use anything above.
+
+## Community
+
+<p align="center">
+  <a href="https://discord.gg/YrWbHe8FBB"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?logo=discord&logoColor=white&style=for-the-badge" alt="Join the Knowl Discord" height="40" /></a>
+</p>
+
+Questions, bug reports, and what you are building with it — the fastest place to reach us is
+**[the Knowl Discord](https://discord.gg/YrWbHe8FBB)**.
 
 ## What gets stored
 
