@@ -43,6 +43,17 @@ const OPENCLAW_EVENT_MAP: Record<string, NormalizedHookEventName> = {
 const openclawBlock = (blockReason: string): HostOutput => ({ block: true, blockReason });
 
 /**
+ * The lifecycle events the plugin registers with `api.on(...)`, beside the prompt event
+ * `before_prompt_build`.
+ *
+ * Documentation and a runtime declaration both: `hookEvents` means "events `knowl init` writes
+ * into a file", and this host has none -- the gateway loads a plugin instead. Derived from the
+ * event map rather than repeated by hand, so the two cannot drift apart.
+ */
+export const OPENCLAW_PLUGIN_EVENTS = Object.keys(OPENCLAW_EVENT_MAP)
+  .filter(event => event !== 'before_prompt_build');
+
+/**
  * OpenClaw host profile for in-process gateway execution.
  *
  * Like Cline and Hermes, OpenClaw has no hooks file: its lifecycle hooks are registered
@@ -52,6 +63,10 @@ const openclawBlock = (blockReason: string): HostOutput => ({ block: true, block
 export const openclawProfile: HostProfile = {
   host: 'openclaw',
   hookEvents: [],
+  // The runtime channel: registered with `api.on(...)` by the gateway plugin, invisible to
+  // `hookEvents` because no file is written. Without this a conformance check asking whether
+  // the host has a tool event answers `false` while `after_tool_call` fires on every call.
+  pluginEvents: OPENCLAW_PLUGIN_EVENTS,
   promptEvent: 'before_prompt_build',
   sharesSessionBinding: true,
   nativeOutput: true,
@@ -76,8 +91,14 @@ export const openclawProfile: HostProfile = {
   startContext(event, context) {
     return event === 'turn-start' ? { prependContext: context } : undefined;
   },
-  midTurnContext() {
-    return undefined;
+  midTurnContext(text) {
+    // A distinct key from `startContext`'s `prependContext`, because the two arrive by
+    // different routes and must not be confused: the turn-start card is prepended to the
+    // prompt the model is about to receive, while this one is APPENDED to a tool result the
+    // model is about to read. The middleware writes it into `content` rather than `details`
+    // for the reason recorded at its registration -- OpenClaw strips `details` before provider
+    // replay and compaction, so a card written there is one the model never reads twice.
+    return { appendContent: text };
   },
   denyToolCall: openclawBlock,
 };

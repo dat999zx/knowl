@@ -47,8 +47,17 @@ describe('hermes profile', () => {
   it('injects context on the prompt event only', () => {
     expect(profile.startContext('turn-start', 'card')).toEqual({ context: 'card' });
     expect(profile.startContext('session-start', 'card')).toBeUndefined();
-    expect(profile.midTurnContext('x')).toBeUndefined();
     expect(profile.preToolContext).toBeUndefined();
+  });
+
+  it('carries a mid-turn card on the tool-result channel', () => {
+    // Hermes reads a bare string from transform_tool_result and appends it to the tool
+    // result the model is about to see. That is a real mid-turn delivery channel, proven by
+    // the impact card already shipping on it -- so returning undefined here cost this host
+    // every card the mid-turn slot carries.
+    const output = hostProfile('hermes').midTurnContext('remember to store that');
+    expect(output).toBeDefined();
+    expect(JSON.stringify(output)).toContain('remember to store that');
   });
 
   it('knows Hermes tool names', () => {

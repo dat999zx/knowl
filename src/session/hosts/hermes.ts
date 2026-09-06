@@ -114,10 +114,19 @@ export const hermesProfile: HostProfile = {
   // list entries in the person's config. Not empty because the host has no lifecycle -- the
   // events it sends are in HERMES_PLUGIN_EVENTS, and the map above is what accepts them.
   hookEvents: [],
+  // The runtime channel, which `hookEvents` cannot express: these arrive from the plugin on
+  // every session, and a conformance check reading only the empty list above concluded this
+  // host had no tool event and skipped the assertion written for it.
+  pluginEvents: HERMES_PLUGIN_EVENTS,
   promptEvent: 'pre_llm_call',
   sharesSessionBinding: true,
   nativeOutput: true,
-  midTurnDeliveryVerified: false,
+  // Observed 2026-09-06: driving the real plugin hooks against the real engine in a real
+  // project, the drift reminder was delivered on tool call 11 (0-indexed) of 14 read_file
+  // calls -- the tick DEFAULT_DRIFT_REMINDER_EVERY = 12 predicts -- appended to the tool
+  // result by `transform_tool_result`. The card the model receives, not merely an envelope
+  // the host accepts.
+  midTurnDeliveryVerified: true,
   // No hooks file: the lifecycle arrives through the plugin, and `knowl init hermes` installs
   // that rather than writing handlers into the person's config.
   hookConfigStyle: 'none',
@@ -137,8 +146,13 @@ export const hermesProfile: HostProfile = {
   startContext(event, context) {
     return event === 'turn-start' ? { context } : undefined;
   },
-  midTurnContext() {
-    return undefined;
+  midTurnContext(text) {
+    // `context` is the same key startContext uses, because the plugin hands both to the
+    // model the same way: a bare string appended to what the model is about to read. Proven
+    // by the impact card, which has been riding transform_tool_result in production since
+    // the plugin shipped -- this profile returning undefined is what kept the ENGINE's
+    // cards off a channel the plugin was already using for its own.
+    return { context: text };
   },
   denyToolCall: hermesBlock,
   stopContext: hermesBlock,
