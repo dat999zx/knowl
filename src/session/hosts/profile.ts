@@ -39,6 +39,35 @@ export interface HostProfile {
    */
   readonly midTurnDeliveryVerified: boolean;
   /**
+   * Why this host registers a tool event but cannot carry a mid-turn card.
+   *
+   * Required by the conformance suite for exactly that combination, because the alternative
+   * is what shipped for months: a profile returning `undefined` from `midTurnContext` while
+   * mapping a tool event, which reads as "nothing to deliver here" and is indistinguishable
+   * from an oversight. A sentence costs one line and makes the gap answerable.
+   *
+   * Absent means the host delivers. It is not a way to opt out of delivering.
+   */
+  readonly midTurnUnavailableReason?: string;
+  /**
+   * The events this host forwards at RUNTIME when its channel is a plugin rather than a file.
+   *
+   * `hookEvents` cannot answer that question, and the difference is not cosmetic: that field
+   * means "events `knowl init` writes into a config file", so a host whose lifecycle arrives
+   * through an in-process plugin correctly declares `hookEvents: []` while sending a full set
+   * of events. Hermes and OpenClaw are both in that position.
+   *
+   * The cost of conflating the two was a conformance assertion that could not fire. A check
+   * reading `hookEvents` to ask "does this host have a tool event to hang a mid-turn card on"
+   * answered `false` for exactly the two hosts whose stubbed `midTurnContext` it existed to
+   * catch, so it passed them vacuously and the gap it was written to close stayed open.
+   *
+   * Use `hostSendsNormalizedEvent` rather than reading either list directly; it asks the
+   * question every caller actually has, which is whether the host can send an event of a
+   * given kind at all.
+   */
+  readonly pluginEvents?: readonly string[];
+  /**
    * The shape of the file `knowl init` writes this host's handlers into.
    *
    * A shape rather than a host name, because the shapes are shared and the vendors are not:
@@ -256,3 +285,20 @@ export const agentIdentityFrom = (raw: Record<string, unknown>): Pick<HostIdenti
   agentId: hostString(raw.agent_id) ?? hostString(raw.agentId),
   agentType: hostString(raw.agent_type) ?? hostString(raw.agentType),
 });
+
+/**
+ * Whether this host can send an event that normalizes to `event`, by any channel it has.
+ *
+ * The union of `hookEvents` (what `knowl init` writes into a config file) and `pluginEvents`
+ * (what an in-process plugin forwards), because a caller asking "can this host reach me with a
+ * tool event" does not care which of the two carries it -- and asking only the first gets a
+ * confident `false` from a host whose plugin sends that event on every tool call.
+ *
+ * The prompt event is deliberately excluded. It is declared separately, `mergeNestedHookConfig`
+ * treats a host that lists it in `hookEvents` as a defect, and every caller of this helper is
+ * asking about the lifecycle rather than turn start.
+ */
+export function hostSendsNormalizedEvent(profile: HostProfile, event: NormalizedHookEventName): boolean {
+  const candidates = [...profile.hookEvents, ...(profile.pluginEvents ?? [])];
+  return candidates.some(candidate => profile.normalizedEvent(candidate) === event);
+}

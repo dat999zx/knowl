@@ -71,6 +71,7 @@ export const windsurfProfile: HostProfile = {
   nativeOutput: true,
   lifecycleClaimable: false,
   midTurnDeliveryVerified: false,
+  midTurnUnavailableReason: 'Windsurf Cascade hooks document no context injection channel on tool events, so guidance is delivered over MCP.',
   hookConfigStyle: 'flat-commands',
   denyExitCode: 2,
   identity(raw): HostIdentity {

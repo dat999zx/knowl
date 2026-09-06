@@ -32,6 +32,38 @@ function resolveWorkspace(event: unknown, ctx: unknown): string {
 const MAX_IMPACT_SEEN = 512;
 const impactSeen = new Map<string, true>();
 
+/**
+ * The engine's mid-turn card, parked by `after_tool_call` for the middleware to deliver.
+ *
+ * Session-keyed and insertion-ordered, so the oldest entry is evicted first. Bounded because a
+ * gateway is a long-lived process serving many sessions and an unbounded map here is a slow
+ * leak in a plugin whose whole promise is that it costs the host nothing.
+ */
+const MIDTURN_PENDING_MAX = 256;
+const MIDTURN_CARD_MAX = 1500;
+const midturnPending = new Map<string, string>();
+
+/** Test seam: the pending cards do not survive a run, and a leaked one would cross tests. */
+export function resetMidturnPendingForTest(): void {
+  midturnPending.clear();
+}
+
+/**
+ * A tool result with `text` appended to its `content`.
+ *
+ * `content`, never only `details`: OpenClaw strips `details` before provider replay and
+ * compaction, so a card written there is one the model reads once and then loses.
+ */
+function appendCard(event: { result?: { content?: unknown } }, text: string) {
+  const existingContent = Array.isArray(event.result?.content) ? event.result.content : [];
+  return {
+    result: {
+      ...event.result,
+      content: [...existingContent, { type: 'text', text }],
+    },
+  };
+}
+
 export function markImpactSeen(key: string): void {
   if (impactSeen.size >= MAX_IMPACT_SEEN) {
     const firstKey = impactSeen.keys().next().value;
@@ -264,14 +296,23 @@ export default definePluginEntry({
             const handle = await manager.getHandle(cwd);
             if (!handle) return undefined;
 
-            const writtenPaths = extractWrittenPaths(event.toolName, event.args);
-            if (writtenPaths.length === 0) return undefined;
-
             const sessionId = ctx?.sessionId
               ?? ctx?.sessionKey
               ?? (event as Record<string, unknown>)?.sessionId as string | undefined
               ?? (event as Record<string, unknown>)?.sessionKey as string | undefined
               ?? 'openclaw-session';
+
+            // The engine's card, parked by `after_tool_call` on an earlier call. Read before
+            // the impact lookup and on EVERY tool, not just writes: the drift reminder counts
+            // consecutive non-Knowl calls of any kind, so a write-only path would drop it
+            // during exactly the read-and-shell runs it exists to interrupt.
+            const engineCard = midturnPending.get(String(sessionId));
+            if (engineCard) midturnPending.delete(String(sessionId));
+
+            const writtenPaths = extractWrittenPaths(event.toolName, event.args);
+            if (writtenPaths.length === 0) {
+              return engineCard ? appendCard(event, engineCard) : undefined;
+            }
 
             for (const rawPath of writtenPaths) {
               const rel = toRepoRelativePath(rawPath, handle.projectRoot || cwd);
@@ -299,23 +340,21 @@ export default definePluginEntry({
               ];
               const cardText = lines.join('\n').slice(0, 1500);
 
-              const existingContent = Array.isArray(event.result?.content) ? event.result.content : [];
-              return {
-                result: {
-                  ...event.result,
-                  content: [
-                    ...existingContent,
-                    { type: 'text', text: cardText },
-                  ],
-                },
-              };
+              // Impact card first: it names a file the model just wrote, which decays fastest.
+              return appendCard(event, engineCard ? `${cardText}\n\n${engineCard}` : cardText);
             }
 
-            return undefined;
+            // Every written path was already carded this session, so the impact half has
+            // nothing to say -- but a parked engine card still has to be delivered, or it is
+            // dropped and the next one overwrites it.
+            return engineCard ? appendCard(event, engineCard) : undefined;
           }, api.logger);
         },
         {
-          matcher: ['exec', 'apply_patch', 'spawn_agent'] as const,
+          // Every tool, not just the writers. The impact card is write-only by nature and
+          // still gates itself on `extractWrittenPaths`, but the engine's mid-turn cards --
+          // the drift reminder above all -- ride any tool call, and a write-only matcher never
+          // sees the read-and-shell runs those exist to interrupt.
           runtimes: ['openclaw', 'codex'],
         },
       );
@@ -347,11 +386,38 @@ export default definePluginEntry({
         const payload = readLifecyclePayloadObject(raw);
         const normalized = normalizeHostHook('openclaw', 'after_tool_call', payload as Record<string, unknown>);
 
-        await withDeadline(
+        const result = await withDeadline(
           manager.getObserverDeadlineMs(),
           () => handle.lifecycle(normalized),
           null,
         );
+
+        // Park the engine's mid-turn card for the middleware to deliver.
+        //
+        // Keyed by SESSION, not (session, tool). This observer is not on the path that
+        // rewrites the current tool result -- by the time it resolves, that result has been
+        // transformed and sent -- so the reader is always a LATER call and usually a different
+        // tool. A tool-keyed slot would strand the card until that same tool happened to run
+        // again, which for a drift reminder counting consecutive non-Knowl calls could be
+        // never.
+        //
+        // One tool call late is affordable because every card in this slot is advisory: "you
+        // have not touched memory in 12 calls" is as true on the next call as on this one. The
+        // write gate on `before_tool_call` keeps its synchronous fail-closed path precisely
+        // because a refusal does NOT have that property. Same trade as the Hermes plugin, for
+        // the same reason -- collecting it inline would put the engine's latency in front of
+        // every tool call, including the overwhelming majority carrying no card at all.
+        const card = result?.hostOutput?.appendContent;
+        if (typeof card === 'string' && card.trim()) {
+          const key = String(raw.sessionId);
+          midturnPending.delete(key);
+          midturnPending.set(key, card.slice(0, MIDTURN_CARD_MAX));
+          while (midturnPending.size > MIDTURN_PENDING_MAX) {
+            const oldest = midturnPending.keys().next().value;
+            if (oldest === undefined) break;
+            midturnPending.delete(oldest);
+          }
+        }
       }, api.logger);
     });
 

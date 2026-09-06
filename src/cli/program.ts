@@ -8,6 +8,7 @@ import { spawnWorkLoopCommand } from './windows-spawn.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from '../core/version-check.js';
 import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, setGlobalNamespace, hasAiConfigured } from '../core/config.js';
+import { withItemNamespace } from '../store/namespaces.js';
 import {
   installKnowlProjectGuidance,
   KnowlProjectGuidanceInstallResult,
@@ -893,15 +894,34 @@ program.command('supersede').argument('<itemId>').argument('<replacementId>').de
     if (itemId === replacementId) {
       throw new Error('An item cannot supersede itself; name the replacement that takes its place.');
     }
-    if (!(await repo.getKnowledgeItem(replacementId))) {
-      throw new Error(`No knowledge item "${replacementId}" to supersede with. Nothing was retired.`);
+    // Both ids are resolved in the namespace that actually holds them, not the ambient project
+    // store. A global atom found by `knowl query` was previously unretirable from a project
+    // checkout -- "Knowledge item not found" -- because every id-addressed path assumed project.
+    const config = await loadConfig(root);
+    const retired = await withItemNamespace(itemId, root, config, async () => {
+      // The replacement is resolved from the CALLER's namespaces, not the retired item's, so a
+      // project fact may replace a global one. Only its existence matters here; the pointer is
+      // an id.
+      const replacement = await withItemNamespace(replacementId, root, config, async found => found);
+      if (!replacement) {
+        throw new Error(`No knowledge item "${replacementId}" to supersede with. Nothing was retired.`);
+      }
+      // Through the committing wrapper so the retirement reaches `knowledge_commits`. The bare
+      // `repo.supersedeKnowledgeItem` writes the item row only, which left every reader of the
+      // change log blind to it -- including the workspace notice that tells a teammate an atom
+      // they hold is no longer current.
+      //
+      // The commit row must be written against a project that exists in the RESOLVED database.
+      // The caller's project id belongs to the project store, so in the global database it names
+      // nothing -- `withItemNamespace` has already swapped the connection, so resolving it here
+      // gets (or creates) the owning store's own row.
+      const owner = await repo.getProjectByRootPath(root) ?? await repo.createProject(root, 'knowl');
+      return supersedeKnowledgeItemWithCommit(owner.id, itemId, replacementId);
+    });
+    if (!retired) {
+      throw new Error(`No knowledge item "${itemId}" to retire. Nothing was changed.`);
     }
-    // Through the committing wrapper so the retirement reaches `knowledge_commits`. The bare
-    // `repo.supersedeKnowledgeItem` writes the item row only, which left every reader of the
-    // change log blind to it -- including the workspace notice that tells a teammate an atom
-    // they hold is no longer current.
-    const project = await repo.getProjectByRootPath(root) ?? await repo.createProject(root, 'knowl');
-    console.log(JSON.stringify(await supersedeKnowledgeItemWithCommit(project.id, itemId, replacementId), null, 2));
+    console.log(JSON.stringify(retired.value, null, 2));
     await closeDb();
   } catch (error: any) { console.error(`Error superseding knowledge: ${error.message}`); process.exit(1); }
 });
@@ -4432,14 +4452,17 @@ program
     try {
       const root = await findProjectRoot(process.cwd());
       await initDb(root);
-      if (!(await repo.getKnowledgeItem(itemId))) {
+      // Resolved and updated in the namespace that holds it -- same reason as `supersede`: a
+      // global atom is found by `knowl query` and was then unreviewable from a project checkout.
+      const config = await loadConfig(root);
+      const reviewed = await withItemNamespace(itemId, root, config, async () =>
+        repo.updateKnowledgeItem(itemId, { freshness: 'fresh' }));
+      if (!reviewed) {
         throw new Error(`No knowledge item "${itemId}". Nothing was reviewed.`);
       }
-
-      const updated = await repo.updateKnowledgeItem(itemId, { freshness: 'fresh' });
+      const updated = reviewed.value;
       console.log(`Reviewed ${itemId}: ${updated?.title ?? ''}`);
 
-      const config = await loadConfig(root);
       if (config.cloud) {
         const outcome = await reportReviewed({
           projectRoot: root, config, itemId,

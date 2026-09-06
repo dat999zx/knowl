@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import knowlPlugin, { resetImpactSeenForTest } from '../../../integrations/openclaw/src/index.js';
+import knowlPlugin, { resetImpactSeenForTest, resetMidturnPendingForTest } from '../../../integrations/openclaw/src/index.js';
 import type { NormalizedHostHook } from '../../../src/core/host-hook-types.js';
 import * as pluginModule from '@dat999zx/knowl/plugin';
 
@@ -332,6 +332,7 @@ describe('OpenClaw hooks: impact card and capture (Task 9)', () => {
 
   beforeEach(async () => {
     resetImpactSeenForTest();
+    resetMidturnPendingForTest();
     scratchDir = path.join(os.tmpdir(), `knowl-openclaw-impact-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await fs.mkdir(scratchDir, { recursive: true });
 
@@ -364,15 +365,80 @@ describe('OpenClaw hooks: impact card and capture (Task 9)', () => {
     await fs.rm(scratchDir, { recursive: true, force: true }).catch(() => {});
   });
 
-  it('Step 1: registers agent tool result middleware with write tool matcher and runtimes', () => {
+  it('Step 1: registers agent tool result middleware for every tool, not just the writers', () => {
     knowlPlugin.register(api);
 
     expect(registeredMiddleware.length).toBe(1);
     const { opts } = registeredMiddleware[0];
+    // No `matcher`. It used to be `['exec', 'apply_patch', 'spawn_agent']`, which was right
+    // while the only passenger was the impact card -- that card names a file the model just
+    // wrote, so a non-writing tool has nothing for it to say. The engine's mid-turn cards do
+    // not share that property: the drift reminder counts consecutive non-Knowl calls of ANY
+    // kind, so a write-only matcher would drop it during exactly the read-and-shell runs it
+    // exists to interrupt. The impact half still gates itself on `extractWrittenPaths`.
     expect(opts).toEqual({
-      matcher: ['exec', 'apply_patch', 'spawn_agent'],
       runtimes: ['openclaw', 'codex'],
     });
+  });
+
+  it('delivers the engine mid-turn card on a READ tool, one call after the engine produced it', async () => {
+    // The whole point of Task 3. host-lifecycle.ts gates every mid-turn card -- change card,
+    // lesson card, fleet card, both skill nudges, turn-capture prompt, drift reminder -- on
+    // `midTurnContext` returning an envelope, and this profile returned undefined, so none of
+    // them could reach OpenClaw at all.
+    //
+    // The card arrives one tool call late by design: `after_tool_call` is an observer that
+    // resolves AFTER the result it accompanied has already been transformed and sent, so
+    // collecting inline would put engine latency in front of every tool call. Affordable only
+    // because these cards are advisory -- "you have not touched memory in 12 calls" is as true
+    // on the next call as on this one. The write gate keeps its synchronous path precisely
+    // because a refusal does not have that property.
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: scratchDir, encoding: 'utf8' });
+
+    const origOpenProject = pluginModule.openProject;
+    vi.spyOn(pluginModule, 'openProject').mockImplementation(async (cwd: string) => {
+      const handle = await origOpenProject(cwd);
+      if (!handle) return null;
+      // No atom covers anything, so the impact half stays silent and this test can only pass
+      // by way of the engine card.
+      handle.query = async () => [];
+      handle.lifecycle = async () => ({
+        hostOutput: { appendContent: '[Knowl] 12 tool calls without memory. Query before you continue.' },
+      } as any);
+      return handle;
+    });
+
+    knowlPlugin.register(api);
+    const middleware = registeredMiddleware[0]?.handler;
+    const afterToolCall = registeredHooks.get('after_tool_call')?.[0]?.handler;
+    expect(middleware).toBeDefined();
+    expect(afterToolCall).toBeDefined();
+
+    const ctx = { runtime: 'openclaw', sessionId: 'sess-midturn-1' };
+
+    // A read tool: under the old write-only matcher this event never reached the middleware.
+    const readEvent = {
+      toolName: 'read_file',
+      args: { path: 'src/core.ts' },
+      cwd: scratchDir,
+      result: { content: [{ type: 'text', text: 'file contents' }] },
+      toolCallId: 'call-read-1',
+    };
+
+    // Nothing parked yet, so the middleware has nothing to add.
+    expect(await middleware!(readEvent, ctx)).toBeUndefined();
+
+    // The engine produces a card on the observer path.
+    await afterToolCall!({ toolName: 'read_file', params: {}, cwd: scratchDir, durationMs: 3 }, ctx);
+
+    // The NEXT tool result carries it.
+    const delivered = (await middleware!(readEvent, ctx)) as any;
+    expect(delivered?.result?.content).toHaveLength(2);
+    expect(delivered.result.content[0]).toEqual({ type: 'text', text: 'file contents' });
+    expect(delivered.result.content[1].text).toContain('12 tool calls without memory');
+
+    // Delivered once: the slot is cleared, so the card does not repeat on every later call.
+    expect(await middleware!(readEvent, ctx)).toBeUndefined();
   });
 
   it('Step 2: appends impact card to result.content (never only details) and cards once per (session, file)', async () => {

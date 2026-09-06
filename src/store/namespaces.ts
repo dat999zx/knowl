@@ -4,6 +4,7 @@ import type { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, ProjectConfig }
 import { globalStorePath, knowlHome } from '../core/paths.js';
 import { withDbPath } from './database.js';
 import { queryKnowledgeForAgentExplained } from './agent-query.js';
+import { getKnowledgeItem } from './repository.js';
 import { resolveStorage } from './storage-roles.js';
 
 export type MemoryNamespace = 'session' | 'project' | 'organization' | 'global';
@@ -77,6 +78,53 @@ export function namespaceDescriptor(root: string, namespace: MemoryNamespace, co
 
 export async function withNamespaceDatabase<T>(descriptor: NamespaceDescriptor, run: () => Promise<T>): Promise<T> {
   return withDbPath(descriptor.databasePath, run);
+}
+
+/**
+ * Run an id-addressed operation in whichever namespace database actually holds that id.
+ *
+ * Search is layered -- `queryLayeredKnowledge` visits every configured namespace and wraps each
+ * visit in `withNamespaceDatabase`. Nothing addressed BY ID ever did. Those operations read and
+ * wrote the ambient project database only, so an id that search had just returned resolved to
+ * nothing the moment a caller tried to use it: `knowl supersede <global-id>` failed with
+ * "Knowledge item not found", and so did `knowl review` and the MCP timeline and update paths.
+ * Search and fetch disagreeing about one id is the whole bug, and it is one bug rather than four
+ * because every entry point had independently assumed "the item is in the project store".
+ *
+ * The scope covers the CALLER'S ENTIRE OPERATION, not just the lookup. Reading through a
+ * namespace and then writing outside it is what makes a half-fix: the precheck starts passing
+ * and the write still lands in the project database, which turns a clean "not found" into a
+ * retirement recorded against the wrong store. `withDbPath` is AsyncLocalStorage-scoped, so
+ * every `repo.*` call inside `run` sees the resolved database with no argument threading.
+ *
+ * `run` receives the item as it was found, because an id-addressed write usually needs the row
+ * it is about to change -- and its `projectId`, which is the owning store's, not the caller's.
+ */
+export async function withItemNamespace<T>(
+  id: string,
+  root: string,
+  config: ProjectConfig | undefined,
+  run: (item: KnowledgeItem, descriptor: NamespaceDescriptor) => Promise<T>,
+): Promise<{ value: T } | null> {
+  // The global store is addressed by its KNOWN PATH, not through project config -- that is what
+  // lets `knowl store --namespace global` work in a repository that never configured one, and a
+  // resolver built on `configuredNamespaces` alone would miss exactly the atoms this fixes.
+  // Deduped by path because a project that DOES configure global would otherwise list it twice.
+  const candidates = [...configuredNamespaces(root, config), ...globalOnlyNamespaces()];
+  const seenPaths = new Set<string>();
+  for (const descriptor of namespacePrecedence(candidates)) {
+    if (seenPaths.has(descriptor.databasePath)) continue;
+    seenPaths.add(descriptor.databasePath);
+    // A namespace whose file was never created is absent, not broken: skip it silently.
+    if (!fsSync.existsSync(descriptor.databasePath)) continue;
+    const found = await withNamespaceDatabase(descriptor, () => getKnowledgeItem(id));
+    // `{ value }` rather than the bare result: a callback that returns void or null would
+    // otherwise be indistinguishable from "the id is in no namespace", and callers branch on
+    // exactly that difference to decide whether to report a failure.
+    if (found) return { value: await withNamespaceDatabase(descriptor, () => run(found, descriptor)) };
+  }
+  // Absent everywhere. The caller reports it -- only the caller knows what it was trying to do.
+  return null;
 }
 
 /**
