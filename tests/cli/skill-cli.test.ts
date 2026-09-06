@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -185,11 +185,18 @@ describe('CLI learned skills', () => {
     execSync('git add .', { cwd: PROJECT_DIR, stdio: 'pipe' });
     execSync(`${AS_TEST} commit -m "clean worktree"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
 
-    const runOutput = execSync(`node "${CLI_PATH}" skill run deploy_task`, {
+    // Both streams, the way the failure paths above already read them. The banner goes to
+    // stderr -- `runSkillPackage` is also reached from the `knowl_skill_run` MCP tool, where
+    // stdout carries JSON-RPC frames and a banner written there corrupts the transport -- while
+    // the skill's own output stays on stdout. What this test is about is that the operator sees
+    // the resolved command before it runs, and that is true of either stream.
+    const runResult = spawnSync(process.execPath, [CLI_PATH, 'skill', 'run', 'deploy_task'], {
       cwd: PROJECT_DIR,
       env,
       encoding: 'utf-8',
     });
+    const runOutput = `${runResult.stdout ?? ''}${runResult.stderr ?? ''}`;
+    expect(runResult.status).toBe(0);
     expect(runOutput).toContain('knowl skill run deploy_task');
     expect(runOutput).toContain('production');
     expect(runOutput).toContain('clean_worktree');
