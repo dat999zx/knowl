@@ -425,35 +425,6 @@ async function assertOwnedTargets(
 type OpenImpact = { sessionId: string; finding: ImpactFinding };
 
 /**
- * Read an item, falling back to the personal-defaults store when the project does not hold it.
- *
- * Four call sites reach for an item by id -- the `knowl_query` id fetch, `knowl_timeline`,
- * `knowl_update`'s supersede precheck, and the correction-feedback title lookup -- and all four
- * read only the ambient project database. A global atom is therefore invisible to every one of
- * them: search finds it (that path IS namespace-aware) and then fetching by the id search just
- * returned reports it does not exist, while `knowl_update --supersedeId` refuses to retire it
- * with "No knowledge item ... to supersede". Search and fetch disagreeing about one id is the
- * bug.
- *
- * The fallback runs only on a miss, so a project read costs nothing, and `globalOnlyNamespaces`
- * is empty when no global store exists -- a no-op for repositories that never opted into one.
- *
- * ponytail: UNTESTED. Two attempts at a regression test passed with this fallback reverted,
- * which means they never exercised it -- the seeded atom kept landing in the project store,
- * once through a hand-rolled `withDbPath` and once through `knowl_store namespace: 'global'`
- * driven over an in-memory MCP transport. Both were asserting that a project-resident item is
- * readable, which was never in doubt. A real test needs the global write verified at the file
- * level (assert `global.db` gained the row) before the read is asserted; until then this is a
- * read-path fix backed by inspection only.
- */
-async function readItemAnyNamespace(id: string): Promise<KnowledgeItem | null> {
-  const { getKnowledgeItem } = await import('../store/repository.js');
-  const local = await getKnowledgeItem(id);
-  if (local || globalOnlyNamespaces().length === 0) return local;
-  return withDbPath(globalStorePath(), () => getKnowledgeItem(id));
-}
-
-/**
  * The evidence a certain finding carries, parsed, or null when it is not that shape.
  *
  * `path_json` is written at detection time because the "was:" side cannot be recomputed later
@@ -803,7 +774,8 @@ export function registerTools(
         // session. This is also the first surface that returns `reasoning` and `alternatives` --
         // `knowl_decide` REQUIRES reasoning and until now nothing could hand it back.
         if (id) {
-          const local = await readItemAnyNamespace(String(id));
+          const { getKnowledgeItem } = await import('../store/repository.js');
+          const local = await getKnowledgeItem(String(id));
           // Resolved only on a local miss, so an ordinary fetch pays nothing for the workspace
           // lookup -- the property `assertOwnedTargets` keeps on the write side, for the same
           // reason. `findForeignItem` returns null for a null workspace, so the hit path needs
@@ -1450,14 +1422,7 @@ export function registerTools(
         // The bare array stays the first block -- callers and a test parse it as one. But a
         // short complete history looked identical to the opening five of a long one, so a
         // second block names the overflow, the way gc_preview reports its candidateCount.
-        //
-        // Falls back to the personal-defaults store on an empty project read, for the reason
-        // `readItemAnyNamespace` exists: a global item's history is otherwise reported as `[]`,
-        // which reads as "this item has no history" rather than "I looked in the wrong store".
-        let assertions = await listAssertions(itemId);
-        if (assertions.length === 0 && globalOnlyNamespaces().length > 0) {
-          assertions = await withDbPath(globalStorePath(), () => listAssertions(itemId));
-        }
+        const assertions = await listAssertions(itemId);
         const timelineBlocks: { type: 'text'; text: string }[] = [
           { type: 'text', text: compactMcpJson(assertions.slice(0, 5).map(compactAssertionResponse)) },
         ];
@@ -1538,7 +1503,8 @@ export function registerTools(
         // causedCorrection is the unambiguous signal; a routine supersede is not.
         let blast: Awaited<ReturnType<typeof flagCorrectionSiblingsBestEffort>> = null;
         if (causedCorrection === true) {
-          const corrected = await readItemAnyNamespace(itemId);
+          const { getKnowledgeItem } = await import('../store/repository.js');
+          const corrected = await getKnowledgeItem(itemId);
           blast = await flagCorrectionSiblingsBestEffort(projectId!, itemId, `"${corrected?.title ?? itemId}" (correction feedback)`);
         }
         const tierNote = tierChange
@@ -1574,11 +1540,12 @@ export function registerTools(
         // Checked BEFORE the update is written. It used to be resolved after, so an unknown
         // supersedeId threw once the update had already committed and the whole call was
         // reported as failed -- the agent believed nothing happened while memory had moved.
+        const { getKnowledgeItem: readItem } = await import('../store/repository.js');
         if (supersedeId) {
           if (supersedeId === id) {
             throw new Error('supersedeId names a DIFFERENT item to retire; it cannot be the item being updated.');
           }
-          if (!(await readItemAnyNamespace(supersedeId))) {
+          if (!(await readItem(supersedeId))) {
             throw new Error(`No knowledge item "${supersedeId}" to supersede. Nothing was updated.`);
           }
         }
