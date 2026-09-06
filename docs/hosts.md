@@ -79,6 +79,8 @@ knowl init --global hermes      # install the plugin, enable it, add the MCP ser
 cd my-repo && knowl init
 ```
 
+OpenClaw is machine-wide the same way, with one difference worth knowing before you start: `knowl init openclaw` copies the plugin but leaves the dependency install and the `openclaw plugins install --link` registration for you to run, and prints both. Neither is optional, and the flags on them are not decoration — see [Why some hosts get less](#why-some-hosts-get-less) below.
+
 | Host | MCP config | Hooks |
 | --- | --- | --- |
 | Claude Code | `.mcp.json` | `.claude/settings.local.json` |
@@ -90,7 +92,7 @@ cd my-repo && knowl init
 | Cursor | `.cursor/mcp.json` | `.cursor/hooks.json` |
 | Claude Desktop | platform config directory | — |
 | Hermes Agent | `config.yaml` in the Hermes home (global) | a plugin in `<Hermes home>/plugins/knowl/` |
-| OpenClaw | — | in-process plugin in `openclaw.json` (`plugins.entries.knowl`) |
+| OpenClaw | — | in-process plugin in `openclaw.json` (`plugins.entries.knowl`), plus a copy in `~/.openclaw/knowl-plugin` |
 
 † Antigravity is two products reading two files. The IDE's "View raw config" opens `~/.gemini/antigravity/mcp_config.json`; the `agy` CLI reads `~/.gemini/config/mcp_config.json`, which Gemini CLI's migration often leaves at 0 bytes — an empty file, not a broken one. Both are confirmed against real installs, and `knowl init antigravity` writes both.
 
@@ -174,6 +176,26 @@ stops injecting once it sees `memory.provider: knowl`, though it still fires, be
 what binds the session and carries capture.
 
 **One thing to know about the MCP tools on Desktop.** `knowl serve` resolves the project by walking up from its own process directory, and every other host launches one server per project, so it inherits the right one. Hermes Desktop runs a single server for every project, started from the Hermes process directory — so its `mcp__knowl__*` tools report *No Knowl project found* on a machine whose store is perfectly healthy. Setting `mcp_servers.knowl.cwd` fixes one project and then silently answers from **that** project in every other session, which is worse than the error, so `knowl init hermes` does not set it; pin it yourself only if you use Hermes for a single repository. Because of this the plugin registers `knowl_query` and `knowl_store` as its own tools, run in the session's own directory, so the query-then-store loop is correct in every session no matter how many projects are open. The rest of the tool surface stays reachable the way any command is — `knowl timeline`, `knowl conflicts`, `knowl drift` and the others, run from the repository in the agent's terminal. A per-session MCP server needs something Hermes does not have yet: project-local config, or MCP roots.
+
+**OpenClaw** takes the same shape as Hermes — a plugin copied out of the Knowl package rather than a shell hook — but it runs *inside the gateway process*, so the write gate costs ~0.68ms instead of the ~118ms a subprocess pays, and 0.04ms on a tool that cannot write. `knowl init openclaw` merges `plugins.entries.knowl` into `openclaw.json` (the repository's own file if it has one, otherwise `~/.openclaw/openclaw.json`) and copies [`integrations/openclaw/`](../integrations/openclaw/README.md) into `~/.openclaw/knowl-plugin`.
+
+It then prints two commands and does not run them, because both need to be your decision:
+
+```bash
+cd ~/.openclaw/knowl-plugin && npm install @dat999zx/knowl @libsql/client --install-links
+openclaw plugins install --link ~/.openclaw/knowl-plugin --force --accept-capabilities
+# then restart the gateway
+```
+
+Every flag there is load-bearing, and each one was found by an install that failed without it:
+
+- **`--install-links` is not optional.** A plain `npm install <path>` symlinks the dependency back to its source, and OpenClaw's safety scan refuses any plugin whose `node_modules` point outside the install root — *"dependency boundary scan found node_modules symlink target outside install root"*. `--install-links` copies instead. The dependencies themselves are required because a linked directory resolves its own imports and libsql stays external to the Knowl bundle; without them the plugin loads to *"Cannot find module"*.
+- **`--force`** covers the directory being outside ClawHub trust metadata, and **`--accept-capabilities`** covers the tool-result middleware the plugin declares. Miss either and the install stops.
+- **A refused install leaves the config entry behind.** The next run reports `plugins.entries.knowl: plugin not found (stale config entry ignored)`, which reads like a missing plugin rather than a rejected one. If you see it, the registration step is what failed.
+
+Check the result with `openclaw plugins inspect knowl --runtime`: `status: loaded` and a non-zero `hookCount` mean the plugin registered. `knowl init openclaw` re-run afterwards reports *configured* only when both the config entry and the copied files are present, so a half-finished install cannot report success.
+
+**A caveat worth reading before you rely on the prompt card.** The card is delivered from `before_prompt_build`, and on OpenClaw 2026.9.1 that hook is not dispatched on every surface: it fires under the `claude-cli` backend and does not fire on the embedded runner, for bundled and non-bundled plugins alike. `plugins inspect` still reports the hook registered, and no warning is emitted either way. Upstream discussion is [openclaw#134579](https://github.com/openclaw/openclaw/issues/134579), where the generic `openclaw agent` command is also documented as not being a contracted surface for prompt hooks. The write gate, the capture observers and the impact card are unaffected; treat automatic recall as working where that hook runs and verify it on the surface you actually use.
 
 **Gemini CLI is gone.** Discontinued upstream; its adapter was instructions-only and was removed. Antigravity replaces it. An existing `GEMINI.md` is left on disk.
 

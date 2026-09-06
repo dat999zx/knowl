@@ -2369,12 +2369,12 @@ one `knowl_store` or one hook capture is a single write — and better under con
 ## Agent setup
 
 `knowl init` detects Claude Code, Codex, GitHub Copilot, Cursor, OpenHands, Antigravity,
-Windsurf, Cline, Hermes Agent, OpenCode and Claude Desktop. Run it interactively or name the integrations
+Windsurf, Cline, Hermes Agent, OpenClaw, OpenCode and Claude Desktop. Run it interactively or name the integrations
 explicitly:
 
 ```bash
 knowl init
-knowl init claude codex copilot cursor openhands antigravity windsurf cline hermes opencode claude-desktop
+knowl init claude codex copilot cursor openhands antigravity windsurf cline hermes openclaw opencode claude-desktop
 knowl doctor
 ```
 
@@ -2384,7 +2384,7 @@ Codex, Copilot, OpenHands and Hermes — the installed prompt hook invokes `know
 --json`. Existing unrelated MCP servers and host rules are preserved, and changed configuration
 files are backed up.
 
-Three hosts need one extra step:
+Four hosts need one extra step:
 
 - **Cline** loads lifecycle as a plugin. Point it at the shipped file:
   `ClineCore.start({ pluginPaths: ['./node_modules/@dat999zx/knowl/integrations/cline/knowl-plugin.mjs'] })`
@@ -2396,6 +2396,18 @@ Three hosts need one extra step:
   memory providers, so Knowl also appears under **Settings > Memory & Context > Memory
   Provider**; picking it there (or setting `memory.provider: knowl`) is optional and additive
   — see [hosts](hosts.md).
+- **OpenClaw** runs in-process inside the gateway. `knowl init openclaw` merges
+  `plugins.entries.knowl` into `openclaw.json` with both permission gates and copies the plugin
+  to `~/.openclaw/knowl-plugin`, then prints two commands it deliberately does not run:
+  `npm install @dat999zx/knowl @libsql/client --install-links` in that directory, and
+  `openclaw plugins install --link <dir> --force --accept-capabilities`. All three flags are
+  required — `--install-links` because OpenClaw's safety scan refuses a plugin whose
+  `node_modules` symlink outside the install root, `--force` because the directory is outside
+  ClawHub trust metadata, `--accept-capabilities` because the plugin declares tool-result
+  middleware. Restart the gateway, then confirm with
+  `openclaw plugins inspect knowl --runtime`. One caveat: `before_prompt_build`, which carries
+  the recall card, is not dispatched on every OpenClaw surface as of 2026.9.1 — see
+  [hosts](hosts.md) and [openclaw#134579](https://github.com/openclaw/openclaw/issues/134579).
 - **Zed, JetBrains, Neovim and Kiro** speak the Agent Client Protocol, whose traffic runs
   agent-to-client with no hook to register. Point the editor at `knowl acp -- <agent-command>`
   instead of at the agent.

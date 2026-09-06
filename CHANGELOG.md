@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.22.0 — 2026-09-06
 
 **OpenClaw in-process plugin integration.** OpenClaw is supported via an in-process plugin package (`@dat999zx/knowl/plugin` and `integrations/openclaw`) rather than shell hooks. Running inside the OpenClaw gateway evaluates the write gate at `before_tool_call` in sub-millisecond time (~0.68ms vs ~118ms subprocess) with an explicit matcher filtering write tools (`exec`, `apply_patch`, `spawn_agent`). The write gate carries an internal 5-second deadline and swallows engine errors to uphold OpenClaw's fail-closed host contract without blocking user writes on memory degradation.
 
@@ -13,7 +13,7 @@ Prompt recall is delivered at `before_prompt_build` returning `{ prependContext:
 
 **Namespace reads now reach the store that writes reach.** The global store is addressed by its known path, but every namespace list was built from project config — and `knowl init` writes no `memory.global` block. So in every repository Knowl creates, an atom written with `namespace: 'global'` was unreadable by the surface that wrote it: `knowl query` and `knowl_query` keyword search both missed it, and every id-addressed operation failed on an id search had just printed — `knowl supersede` and `knowl reviewed` with "Knowledge item not found", `knowl_query --id` reporting it did not exist, `knowl_timeline` answering `[]`. Reported as "Knowl is bad at superseding". `withItemNamespace` now resolves an id in whichever namespace holds it and runs the caller's entire operation there, write included; both keyword search paths union the global store's known path.
 
-`knowl init openclaw` merges the plugin entry into `openclaw.json` (project-scoped or `~/.openclaw/openclaw.json`), writing both required permission gates (`allowConversationAccess` and `allowPromptInjection`) and explicitly setting `timeouts.before_tool_call: 5000` while preserving all surrounding user configuration.
+`knowl init openclaw` merges the plugin entry into `openclaw.json` (project-scoped or `~/.openclaw/openclaw.json`), writing both required permission gates (`allowConversationAccess` and `allowPromptInjection`) and explicitly setting `timeouts.before_tool_call: 5000` while preserving all surrounding user configuration. It also **copies the plugin** into `~/.openclaw/knowl-plugin`, the way `knowl init hermes` has always copied its own — previously the command wrote config enabling a plugin OpenClaw had never been told about, reported success, and left a dead install that `verify()` agreed was configured because it only read the config file. The printed instructions name the two remaining steps and why each is mandatory: the dependency install needs `--install-links`, because OpenClaw's safety scan refuses a plugin whose `node_modules` symlink outside the install root and a plain `npm install <path>` produces exactly that; the registration needs `--force` (the directory is outside ClawHub trust metadata) and `--accept-capabilities` (the plugin declares tool-result middleware).
 
 ## 5.21.1 — 2026-09-05
 
