@@ -110,6 +110,11 @@ works.
 <sub>MCP · lifecycle · gate</sub>
 </td>
 <td align="center" width="14%">
+<a href="https://github.com/openclaw/openclaw"><img src="docs/assets/logos/openclaw.svg" alt="OpenClaw" width="40" height="40" /></a><br/>
+<strong>OpenClaw</strong><br/>
+<sub>in-process · plugin · gate</sub>
+</td>
+<td align="center" width="14%">
 <a href="https://github.com/features/copilot"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/logos/githubcopilot-dark.svg" /><img src="docs/assets/logos/githubcopilot.svg" alt="Copilot" width="40" height="40" /></picture></a><br/>
 <strong>Copilot</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
@@ -124,13 +129,13 @@ works.
 <strong>OpenHands</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
+</tr>
+<tr>
 <td align="center" width="14%">
 <a href="https://antigravity.google"><img src="docs/assets/logos/antigravity.svg" alt="Antigravity" width="40" height="40" /></a><br/>
 <strong>Antigravity</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
-</tr>
-<tr>
 <td align="center" width="14%">
 <a href="https://windsurf.com"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/logos/windsurf-dark.svg" /><img src="docs/assets/logos/windsurf.svg" alt="Windsurf" width="40" height="40" /></picture></a><br/>
 <strong>Windsurf</strong><br/>
@@ -161,11 +166,6 @@ works.
 <strong>Claude Desktop</strong><br/>
 <sub>MCP · manual loop</sub>
 </td>
-<td align="center" width="14%">
-<a href="https://github.com/openclaw/openclaw"><img src="docs/assets/logos/openclaw.svg" alt="OpenClaw" width="40" height="40" /></a><br/>
-<strong>OpenClaw</strong><br/>
-<sub>in-process · plugin · gate</sub>
-</td>
 </tr>
 </table>
 
@@ -177,7 +177,8 @@ Neovim and Kiro work the same way as Zed and JetBrains, through `knowl acp`. Cli
 line pointing it at the shipped plugin. Hermes Agent gets a Python plugin, installed for you,
 that works in the terminal and in Hermes Desktop alike, and can additionally be picked as
 Hermes' memory provider. OpenClaw runs in-process inside its gateway via an extension plugin,
-evaluating write gates without subprocess overhead. Any other MCP client works with
+evaluating write gates without subprocess overhead — `knowl init openclaw` copies it and prints
+the two commands that register it. Any other MCP client works with
 no integration at all.
 
 Running agents in parallel? Every **git worktree** resolves to the main checkout's store —
