@@ -774,8 +774,16 @@ export function registerTools(
         // session. This is also the first surface that returns `reasoning` and `alternatives` --
         // `knowl_decide` REQUIRES reasoning and until now nothing could hand it back.
         if (id) {
-          const { getKnowledgeItem } = await import('../store/repository.js');
-          const local = await getKnowledgeItem(String(id));
+          // Every namespace, not just the ambient project. Search is layered, so an id it
+          // returned may live in the global store; reading only the project store is what made
+          // fetch disagree with search about an id search had just handed out.
+          const { withItemNamespace } = await import('../store/namespaces.js');
+          const local = projectRoot
+            ? (await withItemNamespace(String(id), projectRoot, config ?? undefined, async found => found))?.value ?? null
+            : await withDbPath(globalStorePath(), async () => {
+              const { getKnowledgeItem } = await import('../store/repository.js');
+              return getKnowledgeItem(String(id));
+            });
           // Resolved only on a local miss, so an ordinary fetch pays nothing for the workspace
           // lookup -- the property `assertOwnedTargets` keeps on the write side, for the same
           // reason. `findForeignItem` returns null for a null workspace, so the hit path needs
@@ -1419,10 +1427,16 @@ export function registerTools(
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
         try { await assertOwnedItem(itemId, owner); } catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
         const { listAssertions } = await import('../store/assertions.js');
+        const { withItemNamespace } = await import('../store/namespaces.js');
         // The bare array stays the first block -- callers and a test parse it as one. But a
         // short complete history looked identical to the opening five of a long one, so a
         // second block names the overflow, the way gc_preview reports its candidateCount.
-        const assertions = await listAssertions(itemId);
+        //
+        // Read in the namespace that holds the item: a global atom's assertions live in the
+        // global database, so this answered `[]` for one that demonstrably had history.
+        const assertions = projectRoot
+          ? (await withItemNamespace(itemId, projectRoot, config ?? undefined, async () => listAssertions(itemId)))?.value ?? []
+          : await listAssertions(itemId);
         const timelineBlocks: { type: 'text'; text: string }[] = [
           { type: 'text', text: compactMcpJson(assertions.slice(0, 5).map(compactAssertionResponse)) },
         ];
@@ -1540,12 +1554,22 @@ export function registerTools(
         // Checked BEFORE the update is written. It used to be resolved after, so an unknown
         // supersedeId threw once the update had already committed and the whole call was
         // reported as failed -- the agent believed nothing happened while memory had moved.
-        const { getKnowledgeItem: readItem } = await import('../store/repository.js');
+        //
+        // Resolved across namespaces: the item being retired is very often a global atom that
+        // this project fact replaces, and reading only the project store rejected exactly that
+        // case with "No knowledge item ... to supersede".
+        const { withItemNamespace } = await import('../store/namespaces.js');
+        const findAnywhere = async (target: string) => projectRoot
+          ? await withItemNamespace(target, projectRoot, config ?? undefined, async found => found)
+          : await withDbPath(globalStorePath(), async () => {
+            const { getKnowledgeItem } = await import('../store/repository.js');
+            return getKnowledgeItem(target);
+          });
         if (supersedeId) {
           if (supersedeId === id) {
             throw new Error('supersedeId names a DIFFERENT item to retire; it cannot be the item being updated.');
           }
-          if (!(await readItem(supersedeId))) {
+          if (!(await findAnywhere(supersedeId))) {
             throw new Error(`No knowledge item "${supersedeId}" to supersede. Nothing was updated.`);
           }
         }
@@ -1574,7 +1598,24 @@ export function registerTools(
             // writes the item row only, so the retirement never reached the change log and
             // every reader of the log missed it -- most visibly the workspace change notice,
             // which left a teammate reading a retired atom as current.
-            await supersedeKnowledgeItemWithCommit(projectId!, supersedeId, updated.id);
+            //
+            // Written in the SAME namespace the precheck found it in. Resolving the read and
+            // then writing outside it is the half-fix: the precheck starts passing and the
+            // retirement lands in the project database, leaving the global atom active while
+            // the caller is told it was retired.
+            const retire = async () => {
+              const { getProjectByRootPath, createProject } = await import('../store/repository.js');
+              const owningProject = projectRoot
+                ? (await getProjectByRootPath(projectRoot) ?? await createProject(projectRoot, 'knowl'))
+                : null;
+              await supersedeKnowledgeItemWithCommit(owningProject?.id ?? projectId!, supersedeId, updated.id);
+            };
+            if (projectRoot) {
+              const done = await withItemNamespace(supersedeId, projectRoot, config ?? undefined, retire);
+              if (done === null) throw new Error(`No knowledge item "${supersedeId}" to supersede.`);
+            } else {
+              await withDbPath(globalStorePath(), retire);
+            }
             supersedeNote = `; retired ${supersedeId}`;
           } catch (error) {
             supersedeNote = `. WARNING: the update IS saved, but retiring ${supersedeId} failed (${sanitizeToolErrorMessage(String((error as Error).message))}). Both items are still active`;

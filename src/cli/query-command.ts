@@ -145,8 +145,14 @@ export async function runCliQuery(input: {
     };
   }
 
+  // The global store is addressed by its known path, not through project config, so
+  // `configuredNamespaces` alone omits it for every repo that never opted in -- while
+  // `store --namespace global` writes there regardless. Search then could not reach atoms the
+  // CLI had just written, and `knowl query` disagreed with `knowl_query`, which does include it.
+  // Deduped by path for a project that DOES configure global.
   const descriptors = input.projectRoot
-    ? configuredNamespaces(input.projectRoot, config ?? undefined)
+    ? [...configuredNamespaces(input.projectRoot, config ?? undefined), ...globalOnlyNamespaces()]
+      .filter((descriptor, index, all) => all.findIndex(other => other.databasePath === descriptor.databasePath) === index)
     : globalOnlyNamespaces();
 
   if (descriptors.length > 0) {
