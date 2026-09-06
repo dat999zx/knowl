@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HOST_PROFILES, hostProfile } from '../../../src/session/hosts/index.js';
+import { hostSendsNormalizedEvent } from '../../../src/session/hosts/profile.js';
 import { HookHost } from '../../../src/cli/agents/host-hook.js';
 
 const ALL_HOSTS: HookHost[] = [
@@ -156,8 +157,36 @@ describe('host profile registry', () => {
       // named the same event differently, and it failed open: an unrecognised spelling read as
       // "no tool event", so the assertion it exists to make quietly stopped being made.
       // `session-event` *is* the definition of a mid-turn attachment point.
-      const hasToolEvent = profile().hookEvents.some(event => profile().normalizedEvent(event) === 'session-event');
-      if (profile().midTurnContext('x') !== undefined) expect(hasToolEvent).toBe(true);
+      //
+      // Through `hostSendsNormalizedEvent`, not `hookEvents` alone: a plugin host declares
+      // `hookEvents: []` because `knowl init` writes it no file, while its plugin forwards a
+      // tool event on every call. Reading the empty list called that "no tool event" and would
+      // fail this assertion for Hermes the moment its envelope became real.
+      if (profile().midTurnContext('x') !== undefined) {
+        expect(hostSendsNormalizedEvent(profile(), 'session-event')).toBe(true);
+      }
+    });
+
+    it('registers a tool event only when it can put a card on it', () => {
+      // The converse of the assertion above, and the one that was missing. Both existing
+      // mid-turn checks are `if (capability)` guards, so a profile with NO capability passes
+      // them without ever being asked anything -- which is how hermes and openclaw registered
+      // a tool event and returned undefined from midTurnContext for months while the change
+      // card, the lesson card, the fleet card, both skill nudges, the turn-capture prompt and
+      // the drift reminder were all silently undeliverable on them.
+      //
+      // The escape hatch is deliberate and must stay: a host may genuinely have no channel
+      // (claude-desktop), and cursor deliberately keeps an unverified envelope so the MCP
+      // fallback goes on talking to it. The rule is not "every host delivers" -- it is
+      // "a host that has somewhere to put a card either puts one there or says why not".
+      if (!hostSendsNormalizedEvent(profile(), 'session-event')) return;
+      const explained = typeof profile().midTurnUnavailableReason === 'string'
+        && profile().midTurnUnavailableReason!.length > 0;
+      expect(
+        profile().midTurnContext('x') !== undefined || explained,
+        `${host} sends a session-event tool event but returns no mid-turn envelope and `
+          + 'declares no midTurnUnavailableReason',
+      ).toBe(true);
     });
   });
 

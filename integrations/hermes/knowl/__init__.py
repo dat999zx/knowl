@@ -880,17 +880,79 @@ def register(ctx: Any) -> None:
         logger.debug("knowl pre_tool_call: %s allowed", tool_name)
         return None
 
-    # -- observer: feeds the read/write sets. Off the tool loop's critical path.
-    def post_tool_call(tool_name: str = "", args: Optional[Dict[str, Any]] = None, session_id: str = "", status: Any = None, **_: Any) -> None:
+    # -- observer: feeds the read/write sets and collects the mid-turn card (change card,
+    #    destructive-command lesson, fleet card, skill nudges, turn capture, drift reminder).
+    #
+    #    Still asynchronous, and the card is therefore delivered on the NEXT tool result rather
+    #    than this one. That is deliberate. Running `fire` synchronously here does deliver the
+    #    card in the same call, and it was measured at ~230 ms per tool call on this machine --
+    #    paid on EVERY call, including the overwhelming majority that have no card to carry,
+    #    because the plugin cannot know whether the engine has anything to say without asking.
+    #    At a few hundred tool calls a session that is a minute of latency in front of the user,
+    #    spent almost entirely on nothing. `docs/superpowers/specs/2026-09-05-openclaw-plugin-design.md`
+    #    treats 118 ms as reason enough to move a whole integration in-process; this is twice
+    #    that, and the impact card's own comment two functions down states the promise being
+    #    protected -- a plugin "whose whole promise is that it costs the host nothing".
+    #
+    #    Every card in this slot is advisory: "you have not touched memory in 12 calls",
+    #    "the file you wrote carries stored knowledge", "another session moved this surface".
+    #    One tool call late is the same turn and still actionable, which is what makes the
+    #    trade available at all. A gate would not have this property, which is why the write
+    #    gate on `pre_tool_call` stays synchronous and fail-closed.
+    #
+    # session id -> the pending mid-turn card. Keyed by SESSION, not (session, tool): the
+    # thread that computes the card finishes after this tool's result has already been
+    # transformed, so the reader is always a later call and usually a different tool. Keying
+    # on the tool name would strand the card until that same tool happened to run again.
+    # Bounded because a Desktop backend is one long-lived process serving many sessions.
+    midturn_pending: "OrderedDict[str, str]" = OrderedDict()
+    midturn_lock = threading.Lock()
+    MIDTURN_PENDING_MAX = 512
+
+    def post_tool_call(
+        tool_name: str = "",
+        args: Optional[Dict[str, Any]] = None,
+        session_id: str = "",
+        status: Any = None,
+        **_: Any,
+    ) -> None:
+        def collect() -> None:
+            try:
+                data, _code, _err = fire(
+                    "post_tool_call",
+                    session_id,
+                    timeout=POST_TOOL_TIMEOUT_SECONDS,
+                    tool_name=tool_name,
+                    tool_input=args or {},
+                    status=status,
+                )
+                if not (data and isinstance(data.get("context"), str) and data["context"].strip()):
+                    return
+                with midturn_lock:
+                    # Last writer wins. The engine fills this slot with one card at a time and
+                    # picks which by priority, so a newer card supersedes an undelivered older
+                    # one rather than queueing behind it -- stale advice is worth less than the
+                    # advice that replaced it.
+                    midturn_pending[str(session_id)] = _bounded(data["context"])
+                    while len(midturn_pending) > MIDTURN_PENDING_MAX:
+                        midturn_pending.popitem(last=False)
+            except Exception as exc:
+                logger.debug("knowl post_tool_call: %s", exc)
+
         try:
-            fire_async("post_tool_call", session_id, tool_name=tool_name, tool_input=args or {}, status=status)
+            threading.Thread(target=collect, name="knowl-post_tool_call", daemon=True).start()
         except Exception as exc:
             logger.debug("knowl post_tool_call: %s", exc)
 
-    # -- same-turn impact card. After a file write, atoms whose affectedPaths cover that file
-    #    are appended to the tool result, so the model sees "this file carries stored
-    #    knowledge" before its next step instead of on the next turn. Shell hooks cannot do
-    #    this: Hermes only reads a bare string here, which a subprocess cannot return.
+    # -- same-turn impact card and engine mid-turn card.
+    #    Hermes calls transform_tool_result for every tool result. The impact card checks
+    #    affectedPaths on file writes (WRITE_TOOLS: write_file, patch) once per (session, file).
+    #    The engine's mid-turn card (change card, lesson card, fleet card, skill nudges,
+    #    turn-capture prompt, drift reminder) is collected off-thread by post_tool_call and
+    #    parked in midturn_pending. It can ride ANY tool call -- crucially including read and
+    #    shell tools, so the 12-call drift reminder can fire during a run of non-write calls,
+    #    which is exactly the run it exists to interrupt.
+    #    The impact card keeps priority and appears first; the engine card is appended after it.
     # (session, file) pairs already carded, so one file cards once per session. Bounded because
     # a Desktop backend is a long-lived process serving many sessions: an unbounded set here is
     # a slow leak in a plugin whose whole promise is that it costs the host nothing.
@@ -898,36 +960,62 @@ def register(ctx: Any) -> None:
     impact_lock = threading.Lock()
     IMPACT_SEEN_MAX = 512
 
-    def transform_tool_result(tool_name: str = "", args: Optional[Dict[str, Any]] = None, result: Any = None, session_id: str = "", **_: Any):
-        if tool_name not in WRITE_TOOLS or not isinstance(result, str):
+    def transform_tool_result(
+        tool_name: str = "",
+        args: Optional[Dict[str, Any]] = None,
+        result: Any = None,
+        session_id: str = "",
+        **_: Any,
+    ) -> Optional[str]:
+        if not isinstance(result, str):
             return None
         try:
-            written = _written_path(args or {})
-            if not written:
+            # 1. Take any card the observer thread has finished computing for this session.
+            #    Keyed by session, so this is normally the card earned by an EARLIER tool call
+            #    -- see the note on post_tool_call for why one call late is the accepted cost.
+            with midturn_lock:
+                engine_card = midturn_pending.pop(str(session_id), None)
+
+            # 2. Impact card: only for file-writing tools.
+            impact_card: Optional[str] = None
+            if tool_name in WRITE_TOOLS:
+                try:
+                    written = _written_path(args or {})
+                    if written:
+                        cwd = project_cwd()
+                        if cwd is not None:
+                            rel = _relative_to(written, cwd)
+                            impact_key = (str(session_id), rel.lower())
+                            should_query = False
+                            with impact_lock:
+                                if impact_key not in impact_seen:
+                                    impact_seen[impact_key] = None
+                                    while len(impact_seen) > IMPACT_SEEN_MAX:
+                                        impact_seen.popitem(last=False)
+                                    should_query = True
+                            if should_query:
+                                stem = os.path.splitext(os.path.basename(rel))[0].replace("-", " ").replace("_", " ")
+                                items = runner.query(f"{rel} {stem}", cwd, limit=8)
+                                hits = [i for i in items if _covers(i.get("affectedPaths"), rel)]
+                                if hits:
+                                    lines = [f"[Knowl] {len(hits)} stored item(s) depend on {rel}. Check them before you move on:"]
+                                    for item in hits[:5]:
+                                        lines.append(f"- {item.get('title', '')} ({item.get('category', '')} {item.get('id', '')})")
+                                    lines.append("Read one in full with mcp__knowl__knowl_query and its id.")
+                                    impact_card = "\n".join(lines)[:1500]
+                                    logger.info("knowl transform_tool_result: %d dependent atom(s) for %s", len(hits), rel)
+                except Exception as exc:
+                    logger.debug("knowl transform_tool_result (impact): %s", exc)
+
+            # 3. Assemble cards: impact card first (priority), engine card after.
+            cards: List[str] = []
+            if impact_card:
+                cards.append(impact_card)
+            if engine_card:
+                cards.append(engine_card)
+            if not cards:
                 return None
-            cwd = project_cwd()
-            if cwd is None:
-                return None
-            rel = _relative_to(written, cwd)
-            key = (str(session_id), rel.lower())
-            with impact_lock:
-                if key in impact_seen:
-                    return None
-                impact_seen[key] = None
-                while len(impact_seen) > IMPACT_SEEN_MAX:
-                    impact_seen.popitem(last=False)
-            stem = os.path.splitext(os.path.basename(rel))[0].replace("-", " ").replace("_", " ")
-            items = runner.query(f"{rel} {stem}", cwd, limit=8)
-            hits = [i for i in items if _covers(i.get("affectedPaths"), rel)]
-            if not hits:
-                return None
-            lines = [f"[Knowl] {len(hits)} stored item(s) depend on {rel}. Check them before you move on:"]
-            for item in hits[:5]:
-                lines.append(f"- {item.get('title', '')} ({item.get('category', '')} {item.get('id', '')})")
-            lines.append("Read one in full with mcp__knowl__knowl_query and its id.")
-            card = "\n".join(lines)[:1500]
-            logger.info("knowl transform_tool_result: %d dependent atom(s) for %s", len(hits), rel)
-            return result.rstrip() + "\n\n" + card
+            return result.rstrip() + "\n\n" + "\n\n".join(cards)
         except Exception as exc:
             logger.debug("knowl transform_tool_result: %s", exc)
             return None
