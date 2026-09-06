@@ -121,7 +121,12 @@ export const hermesProfile: HostProfile = {
   promptEvent: 'pre_llm_call',
   sharesSessionBinding: true,
   nativeOutput: true,
-  midTurnDeliveryVerified: false,
+  // Observed 2026-09-06: driving the real plugin hooks against the real engine in a real
+  // project, the drift reminder was delivered on tool call 11 (0-indexed) of 14 read_file
+  // calls -- the tick DEFAULT_DRIFT_REMINDER_EVERY = 12 predicts -- appended to the tool
+  // result by `transform_tool_result`. The card the model receives, not merely an envelope
+  // the host accepts.
+  midTurnDeliveryVerified: true,
   // No hooks file: the lifecycle arrives through the plugin, and `knowl init hermes` installs
   // that rather than writing handlers into the person's config.
   hookConfigStyle: 'none',
