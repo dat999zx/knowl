@@ -226,13 +226,15 @@ export function createOpenClawAdapter(environment: AgentEnvironment): AgentAdapt
           scope,
           configPath: pathname,
           message: `Plugin copied to ${target}. Two steps remain, both once:\n`
-            + `  cd "${target}" && npm install @dat999zx/knowl @libsql/client\n`
+            + `  cd "${target}" && npm install @dat999zx/knowl @libsql/client --install-links\n`
             + `  openclaw plugins install --link "${target}" --force --accept-capabilities\n`
-            + 'then restart the gateway. The install is not optional: a linked directory resolves '
-            + 'its own imports, and libsql stays external to the Knowl bundle, so without it the '
-            + "plugin loads to \"Cannot find module\". Both install flags are required too -- "
-            + '--force because the directory is outside ClawHub trust metadata, '
-            + '--accept-capabilities because the plugin declares tool-result middleware.',
+            + 'then restart the gateway. None of that is optional. A linked directory resolves its '
+            + 'own imports and libsql stays external to the Knowl bundle, so without the install '
+            + 'the plugin loads to "Cannot find module". --install-links is required because '
+            + "OpenClaw's safety scan refuses a plugin whose node_modules symlinks outside the "
+            + 'install root, which is exactly what a plain `npm link` produces. --force covers the '
+            + 'directory being outside ClawHub trust metadata, and --accept-capabilities covers '
+            + 'the declared tool-result middleware.',
         };
       } catch (error: any) {
         return {
