@@ -74,16 +74,20 @@ Two hosts have a verified mid-turn channel. The two stubs that matter most are *
 **openclaw**: both deliver the turn-start recall card successfully, so the agent gets memory at
 turn start and can never be corrected for the rest of the turn.
 
-**The MCP fallback does not cover this, and is inverted.** `src/mcp/change-notice.ts:272`:
+**The MCP path cannot cover this, and that is structural.** `src/mcp/change-notice.ts:272`
+gates on `state.reads < MIN_MCP_READS` where `reads` counts *Knowl* tool calls — which is
+correct for what that function is: `consumeCaptureNudge` is the **capture** nudge ("you have
+consulted memory five times and stored nothing"), the MCP twin of the hook path's turn-capture
+prompt, not of the drift reminder.
 
-```ts
-if (state.nudged || state.durableWrites > 0 || state.reads < MIN_MCP_READS) return undefined;
-```
+There is no MCP twin of the drift reminder and there cannot be one. An MCP server receives only
+calls to its own tools; `read_file`, `terminal` and the rest never reach it. Silence is exactly
+what it cannot observe, so "count consecutive non-Knowl calls" has nothing to count. The
+docblock at `:205-212` states this already: *"That signal does not exist here — an MCP server
+sees only its own tool calls."*
 
-`state.reads` counts **Knowl tool calls** (`MIN_MCP_READS = 5`). The nudge fires after five
-Knowl reads with no write. An agent that never calls Knowl never increments the counter and
-never hears anything. The fallback for "the agent is ignoring Knowl" **requires the agent to
-already be using Knowl.** This is why nothing caught the 20-call silent run above.
+So for a genuinely MCP-only host (claude-desktop, cline, generic), the drift reminder is out of
+reach by construction, and the fix for those hosts is a hook channel, not a smarter counter.
 
 ### RC2 — namespace resolution is per-handler, so global sessions read the wrong database
 
