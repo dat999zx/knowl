@@ -83,6 +83,14 @@ describe('an id that lives in the global namespace', () => {
     expect(found.stdout).toContain(globalId);
   });
 
+  it('is reachable from a project that never configured a global namespace', async () => {
+    // The premise of the test above, made explicit: `configuredNamespaces` reads memory.global
+    // from config, and `init` writes no such block. Both search paths must union the store's
+    // known path anyway, or a repo can write an atom it can never read back.
+    const written = await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8');
+    expect(written).not.toContain('"global"');
+  });
+
   it('can be reviewed by that id from a project checkout', () => {
     const reviewed = knowl(['reviewed', globalId]);
     expect(reviewed.status, reviewed.stderr).toBe(0);

@@ -917,8 +917,14 @@ export function registerTools(
         // namespace was written to and never read from. Each namespace now carries its own
         // embedding identity (`namespaceFingerprint`), so vector search spans them; `explain`
         // still falls through, because its per-term reporting is single-store by construction.
+        // The global store is addressed by its known path, not through project config, so
+        // `configuredNamespaces` omits it for every repo that never opted in -- while
+        // `knowl_store namespace:'global'` writes there regardless. Same union as the CLI search
+        // path; without it this tool cannot read back an atom it just wrote. Deduped by path for
+        // a project that DOES configure global.
         const descriptors = projectRoot
-          ? configuredNamespaces(projectRoot, config ?? undefined)
+          ? [...configuredNamespaces(projectRoot, config ?? undefined), ...globalOnlyNamespaces()]
+            .filter((descriptor, index, all) => all.findIndex(other => other.databasePath === descriptor.databasePath) === index)
           : globalOnlyNamespaces();
         const layered = descriptors.length > 0 && !explain;
         const layeredResult = layered
