@@ -6,7 +6,7 @@ import { globalSkillsRoot } from './paths.js';
 import { assertSkillApproved, assertBindingNotSelfApproved, readTrust } from './trust.js';
 import { resolveBinding, interpolate, assertPinned, type SkillBinding } from './bindings.js';
 import { checkPreconditions } from './preconditions.js';
-import { formatRunBanner } from './run-banner.js';
+import { formatRunBanner, writeRunBanner } from './run-banner.js';
 import { loadConfig } from '../core/config.js';
 import type { ProjectConfig } from '../core/types.js';
 import {
@@ -524,7 +524,7 @@ export async function runSkillPackage(
         capabilities: skill.manifest.requires?.capabilities,
         preconditions: interpolatedPreconditions,
       });
-      console.log(banner);
+      writeRunBanner(banner);
       child = runShell(projectRoot, commandText, env);
     } else {
       const scriptPath = resolveSkillFile(skill.path, entrypoint.path);
@@ -542,7 +542,7 @@ export async function runSkillPackage(
         capabilities: skill.manifest.requires?.capabilities,
         preconditions: interpolatedPreconditions,
       });
-      console.log(banner);
+      writeRunBanner(banner);
       child = spawnSync(cmd.command, cmd.args, spawnLimits(projectRoot, env));
     }
 

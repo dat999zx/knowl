@@ -7,6 +7,20 @@
  * The banner prints on every run, not only the first: the person running a shared playbook
  * did not write it, so the fully resolved command and declared capabilities must be visible.
  */
+/**
+ * Where the banner goes, decided here beside what it says.
+ *
+ * **stderr, never stdout.** `runSkillPackage` is reached from the `knowl_skill_run` MCP tool
+ * (`src/mcp/tools.ts`), and an MCP stdio server owns stdout for JSON-RPC frames. A banner written
+ * to stdout there is interleaved into the protocol stream and the client fails to parse the
+ * response -- the skill runs and the caller sees a transport error. `knowl serve` already makes
+ * this exact choice for its own startup banner (`src/mcp/server.ts`, `process.stderr.write`),
+ * and every host shows stderr to the operator running the CLI, so nothing is lost on that path.
+ */
+export function writeRunBanner(banner: string): void {
+  process.stderr.write(`${banner}\n`);
+}
+
 export interface RunBannerInput {
   name: string;
   layer?: 'project' | 'global';

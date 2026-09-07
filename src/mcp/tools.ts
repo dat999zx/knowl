@@ -625,29 +625,50 @@ export function registerTools(
           await ensureGlobalStore();
         }
 
-        const store = () => storeKnowledgeItemDeduped(
-          projectId!,
-          {
-            category,
-            title,
-            content,
-            reasoning,
-            alternatives,
-            tags,
-            source,
-            sourceCommit,
-            affectedPaths,
-            confidence,
-            provenance,
-            conflictKey,
-            conflictScope,
-            conflictExclusive,
-            supersedes,
-            steps,
-          },
-          `Store ${category}: ${title}`,
-          config?.security,
-        );
+        const store = async () => {
+          const written = await storeKnowledgeItemDeduped(
+            projectId!,
+            {
+              category,
+              title,
+              content,
+              reasoning,
+              alternatives,
+              tags,
+              source,
+              sourceCommit,
+              affectedPaths,
+              confidence,
+              provenance,
+              conflictKey,
+              conflictScope,
+              conflictExclusive,
+              supersedes,
+              steps,
+            },
+            `Store ${category}: ${title}`,
+            config?.security,
+          );
+
+          // Inside the write's own scope, which is what makes it reach the atom.
+          //
+          // After the write, which is the only order available: the id does not exist until the
+          // row does. The auto-stage seam may therefore have queued it a moment ago, so the
+          // exclusion is paired with an unstage rather than trusting it to have lost the race.
+          //
+          // And in the SAME database, which is why this is not left to the caller. Both
+          // `excludeFromPublish` and `unstagePublish` write through the ambient handle, so a
+          // non-project namespace -- global, organization, session -- put the atom in the
+          // namespace store and its `cloud_excluded` row in the project store. The two never
+          // met: the namespace store's publisher reads its own exclusion table, finds nothing,
+          // and stages an atom the caller was told would never be published. Of every flag on
+          // this tool, `local` is the one that has to be true.
+          if (local === true && written.action !== 'duplicate') {
+            await excludeFromPublish(written.item.id, 'knowl_store local');
+            if (config?.cloud) await unstagePublish(written.item.id, config.cloud.workspaceId);
+          }
+          return written;
+        };
 
         let result;
         if (!projectRoot || namespace === 'global') {
@@ -664,14 +685,6 @@ export function registerTools(
             // treatment as every other stored value that reaches the agent.
             content: [{ type: 'text', text: `NOT STORED — this ${category} is already held verbatim as item ${result.item.id} ("${inlineUntrusted(result.item.title)}"), so nothing was written and nothing was lost. No action needed.` }],
           };
-        }
-
-        // After the write, which is the only order available: the id does not exist until the
-        // row does. The auto-stage seam may therefore have queued it a moment ago, so the
-        // exclusion is paired with an unstage rather than trusting it to have lost the race.
-        if (local === true) {
-          await excludeFromPublish(result.item.id, 'knowl_store local');
-          if (config?.cloud) await unstagePublish(result.item.id, config.cloud.workspaceId);
         }
 
         return {

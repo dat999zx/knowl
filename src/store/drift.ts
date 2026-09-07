@@ -82,6 +82,22 @@ export interface DriftCheckResult {
   updatedCount: number;
 }
 
+/**
+ * Everything after this is an operand, never an option.
+ *
+ * The revision range these helpers build is caller-controlled -- `knowl_drift`'s `since` reaches
+ * it from an MCP tool argument that accepts any string -- and it sits in an OPTION position. A
+ * value beginning with `-` is therefore parsed by git as a flag, and `git diff --output=<path>`
+ * exits 0 while writing the diff over a file of the caller's choosing. `spawnSync` is called
+ * without a shell, so this is git-option injection rather than command injection, and the
+ * separator closes it completely.
+ *
+ * `--end-of-options` and NOT `--`: to `git diff`, `--` means "paths follow", so it would demote
+ * the range to a pathspec and silently return nothing instead of the range's changed files.
+ * Supported since git 2.24 (2019).
+ */
+const END_OF_OPTIONS = '--end-of-options';
+
 function runGit(args: string[], cwd: string): string {
   const result = spawnSync('git', args, {
     cwd,
@@ -106,7 +122,7 @@ export function getCurrentGitCommit(projectRoot: string): string | null {
 
 export function listChangedFilesSince(projectRoot: string, sinceCommit: string, currentCommit?: string | null): string[] {
   const range = currentCommit ? `${sinceCommit}..${currentCommit}` : sinceCommit;
-  const output = runGit(['diff', '--name-only', range], projectRoot);
+  const output = runGit(['diff', '--name-only', END_OF_OPTIONS, range], projectRoot);
   if (!output) return [];
   return Array.from(new Set(
     output
@@ -136,7 +152,7 @@ export function listRenamedPathsSince(
   const sources = new Set<string>();
   let output: string;
   try {
-    output = runGit(['diff', '--name-status', '-M', range], projectRoot);
+    output = runGit(['diff', '--name-status', '-M', END_OF_OPTIONS, range], projectRoot);
   } catch {
     return sources;
   }
