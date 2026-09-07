@@ -110,7 +110,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^22.10.7",
+    "@types/node": "^26.4.1",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.9.1",
     "tsup": "^8.3.5",
