@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.22.1 — 2026-09-07
 
 **The skill run banner no longer corrupts the MCP transport.** `runSkillPackage` wrote its banner with `console.log`, and it has two callers that disagree about what stdout is: on the CLI it is the operator's terminal, under `knowl serve` it is the JSON-RPC frame stream. `knowl_skill_run` calls the same function inside a stdio MCP server, so the banner was interleaved into the protocol and the client failed to parse the response to a call whose skill had actually run — an action taken, reported as a transport error. It goes to stderr now, the choice `knowl serve` already makes for its own startup banner.
 
