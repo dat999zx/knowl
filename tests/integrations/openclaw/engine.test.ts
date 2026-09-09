@@ -7,11 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   OpenClawEngineManager,
   checkMigrationLevel,
+  pathIsWithin,
   safely,
   withDeadline,
   type HostLogger,
 } from '../../../integrations/openclaw/src/engine.js';
 import { KNOWL_MIGRATION_LEVEL } from '@dat999zx/knowl/plugin';
+import * as pluginModule from '@dat999zx/knowl/plugin';
+import type { ProjectHandle } from '@dat999zx/knowl/plugin';
 
 const CLI_PATH = path.resolve('dist/index.js');
 
@@ -126,5 +129,110 @@ describe('OpenClaw engine wrapper failure modes', () => {
     // Subsequent handle request returns null immediately without attempting to open
     const cachedAttempt = await manager.getHandle(projectDir);
     expect(cachedAttempt).toBeNull();
+  });
+});
+
+describe('OpenClaw engine manager: a workspace is a path, not a prefix', () => {
+  let scratchDir: string;
+  let dbPath: string;
+  let released: string[];
+
+  // Fixture roots are built with `path.resolve` rather than typed as `C:\...` literals: a
+  // Windows literal is a single relative segment on Linux, so `path.relative` inside
+  // `pathIsWithin` would compare nonsense and the suite would pass here and fail on CI.
+  const under = (...segments: string[]) => path.resolve(scratchDir, ...segments);
+
+  /**
+   * A handle standing in for a real project, so the cache can be loaded with the exact pair of
+   * roots this is about without initialising two repositories per assertion.
+   *
+   * `projectRoot` is the directory it was opened at, which is what `openProject` answers when a
+   * workspace is warmed at its own root -- the case `session_start` always produces.
+   */
+  const stubHandle = (projectRoot: string): ProjectHandle => ({
+    projectRoot,
+    databasePath: dbPath,
+    lifecycle: async () => ({ accepted: true }) as never,
+    query: async () => [],
+    store: async () => ({ action: 'created' }) as never,
+    release: async () => {
+      released.push(projectRoot);
+    },
+  });
+
+  beforeEach(async () => {
+    scratchDir = path.join(os.tmpdir(), `knowl-openclaw-roots-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await fs.mkdir(scratchDir, { recursive: true });
+    dbPath = path.join(scratchDir, 'migration-probe.db');
+    released = [];
+    vi.spyOn(pluginModule, 'openProject').mockImplementation(async (cwd: string) => stubHandle(cwd));
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(scratchDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('pathIsWithin refuses a sibling that merely shares a prefix, and accepts a real descendant', () => {
+    const root = under('knowl');
+    expect(pathIsWithin(root, root)).toBe(true);
+    expect(pathIsWithin(root, path.join(root, 'src', 'index.ts'))).toBe(true);
+    // The whole defect in one line: string-prefixed, not path-contained.
+    expect(pathIsWithin(root, under('knowl-cloud'))).toBe(false);
+    expect(pathIsWithin(root, under('knowl.old'))).toBe(false);
+    expect(pathIsWithin(path.join(root, 'src'), root)).toBe(false);
+  });
+
+  it.runIf(process.platform === 'win32')('pathIsWithin folds case on Windows, where the same directory arrives spelled two ways', () => {
+    const root = under('Knowl');
+    expect(pathIsWithin(root, root.toLowerCase())).toBe(true);
+    expect(pathIsWithin(root.toLowerCase(), path.join(root, 'src'))).toBe(true);
+  });
+
+  it('does not answer a hook from knowl-cloud with the handle warmed for knowl', async () => {
+    const manager = new OpenClawEngineManager();
+    const knowl = under('knowl');
+    const knowlCloud = under('knowl-cloud');
+
+    // knowl warms first, which is what makes the prefix bug fire: `'…/knowl-cloud'
+    // .startsWith('…/knowl')` is true, so the cached handle was returned for the wrong repo.
+    expect((await manager.warmWorkspace(knowl))?.projectRoot).toBe(knowl);
+
+    const handle = await manager.getHandle(knowlCloud);
+    expect(handle?.projectRoot).toBe(knowlCloud);
+
+    // And a file inside it resolves to the same handle, not to the neighbour.
+    const nested = await manager.getHandle(path.join(knowlCloud, 'web', 'app'));
+    expect(nested?.projectRoot).toBe(knowlCloud);
+  });
+
+  it('resolves a nested workspace to the longest matching root, not the first one warmed', async () => {
+    const manager = new OpenClawEngineManager();
+    const mono = under('mono');
+    const api = path.join(mono, 'packages', 'api');
+
+    await manager.warmWorkspace(mono);
+    await manager.warmWorkspace(api);
+
+    const handle = await manager.getHandle(path.join(api, 'src', 'server.ts'));
+    expect(handle?.projectRoot).toBe(api);
+
+    // The outer repository still owns everything the inner one does not.
+    const outer = await manager.getHandle(path.join(mono, 'docs'));
+    expect(outer?.projectRoot).toBe(mono);
+  });
+
+  it('releaseWorkspace releases only the workspace it was given, not its prefix neighbour', async () => {
+    const manager = new OpenClawEngineManager();
+    const knowl = under('knowl');
+    const knowlCloud = under('knowl-cloud');
+
+    await manager.warmWorkspace(knowl);
+    await manager.warmWorkspace(knowlCloud);
+
+    await manager.releaseWorkspace(knowlCloud);
+
+    expect(released).toEqual([knowlCloud]);
+    expect(released).not.toContain(knowl);
   });
 });

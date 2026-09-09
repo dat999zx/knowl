@@ -101,6 +101,11 @@ export async function openProject(cwd: string): Promise<ProjectHandle | null> {
 
 export { normalizeHostHook } from './cli/agents/host-hook.js';
 export { readLifecyclePayloadObject } from './cli/agents/lifecycle.js';
+// The one folding used anywhere in this codebase for a path that will be compared or used as a
+// key. Exported because an in-process host plugin holds several project roots open at once and
+// has to decide which of them a working directory belongs to -- a question no plugin should be
+// answering with a second convention of its own.
+export { canonicalProjectRoot } from './core/project-path.js';
 export { KNOWL_MIGRATION_LEVEL } from './store/schema-version.js';
 export { ProjectNotFoundError } from './core/errors.js';
 export { MissingKnowledgeDatabaseError } from './cli/database-presence.js';

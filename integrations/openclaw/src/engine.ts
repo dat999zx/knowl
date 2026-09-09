@@ -1,5 +1,7 @@
+import path from 'node:path';
 import { createClient } from '@libsql/client';
 import {
+  canonicalProjectRoot,
   openProject,
   KNOWL_MIGRATION_LEVEL,
   type ProjectHandle,
@@ -100,6 +102,32 @@ export async function checkMigrationLevel(
 }
 
 /**
+ * Is `candidate` the directory `root`, or a directory inside it?
+ *
+ * `String.prototype.startsWith` is not this question and never was. It has no separator
+ * boundary, so on a machine holding `C:/Code/knowl` and `C:/Code/knowl-cloud` -- an ordinary
+ * pair, since a project and its satellite share a prefix by convention -- the second answers
+ * true against the first. The handle that answer selects carries query, the write gate and
+ * lifecycle capture, so a hook fired in one repository reads the other's atoms, is judged
+ * against the other's constraints, and writes capture rows into the other's store, with every
+ * layer reporting success.
+ *
+ * `canonicalProjectRoot` is the folding the engine already applies to a path used as a key:
+ * `path.resolve` plus a case fold on Windows only, because a hook payload's `cwd` reports
+ * `D:\project` where `process.cwd()` reports `d:\project`, while POSIX paths are genuinely
+ * case-sensitive and must not be folded together. `path.relative` then supplies the separator
+ * boundary that the string comparison lacked: a sibling yields a relative path that climbs out.
+ */
+export function pathIsWithin(root: string, candidate: string): boolean {
+  if (!root || !candidate) return false;
+  const canonicalRoot = canonicalProjectRoot(root);
+  const canonicalCandidate = canonicalProjectRoot(candidate);
+  if (canonicalRoot === canonicalCandidate) return true;
+  const relative = path.relative(canonicalRoot, canonicalCandidate);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+/**
  * Manages project handles across multiple workspaces in an in-process OpenClaw gateway.
  *
  * Handles are keyed by resolved project root.
@@ -128,9 +156,33 @@ export class OpenClawEngineManager {
   }
 
   async getHandle(cwd: string): Promise<ProjectHandle | null> {
-    const cached = Array.from(this.handles.values()).find((h) => cwd.startsWith(h.projectRoot));
+    const cached = this.findCachedHandle(cwd);
     if (cached) return cached;
     return await this.warmWorkspace(cwd);
+  }
+
+  /**
+   * The open handle whose project root contains `cwd`, preferring the LONGEST such root.
+   *
+   * First-match-wins is the wrong answer for nested repositories, and the map's order is warm
+   * order rather than depth order: a monorepo at `C:/Code/mono` and a project of its own at
+   * `C:/Code/mono/packages/api` both contain a file under the second, and the file belongs to
+   * the repository that owns it, not to whichever of the two the gateway happened to open
+   * first. Longest wins, which is the same rule `findProjectRoot` applies when it walks up from
+   * a directory and stops at the nearest marker.
+   */
+  private findCachedHandle(cwd: string): ProjectHandle | undefined {
+    let best: ProjectHandle | undefined;
+    let bestLength = -1;
+    for (const handle of this.handles.values()) {
+      if (!pathIsWithin(handle.projectRoot, cwd)) continue;
+      const length = canonicalProjectRoot(handle.projectRoot).length;
+      if (length > bestLength) {
+        best = handle;
+        bestLength = length;
+      }
+    }
+    return best;
   }
 
   async warmWorkspace(cwd: string): Promise<ProjectHandle | null> {
@@ -181,8 +233,10 @@ export class OpenClawEngineManager {
   }
 
   async releaseWorkspace(cwd: string): Promise<void> {
+    // Same containment test as `findCachedHandle`, and for the same reason: released by string
+    // prefix, closing a session in `knowl-cloud` also tore down the live handle for `knowl`.
     const matching = Array.from(this.handles.entries()).filter(
-      ([root]) => cwd === root || cwd.startsWith(root),
+      ([root]) => pathIsWithin(root, cwd),
     );
     for (const [root, handle] of matching) {
       this.handles.delete(root);
