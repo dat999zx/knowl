@@ -1667,8 +1667,12 @@ export function registerTools(
 
       else if (name === 'knowl_gc_preview') {
         const result = await previewKnowledgeGc(projectId!);
+        // Every purge id, not the first three. Purge is the one action `knowl_gc_apply` will
+        // not take unless it is handed the ids a preview named, so a truncated list here would
+        // make the approvable set unknowable from the response that is meant to supply it.
+        const purgeItemIds = result.candidates.filter(entry => entry.action === 'purge').map(entry => entry.itemId);
         return {
-          content: [{ type: 'text', text: compactMcpJson({ summary: result.summary, candidateCount: result.candidates.length, candidates: result.candidates.slice(0, 3) }) }],
+          content: [{ type: 'text', text: compactMcpJson({ summary: result.summary, candidateCount: result.candidates.length, candidates: result.candidates.slice(0, 3), purgeItemIds }) }],
         };
       }
 
@@ -1716,9 +1720,24 @@ export function registerTools(
       }
 
       else if (name === 'knowl_gc_apply') {
-        const result = await applyKnowledgeGc(projectId!);
+        const { purgeItemIds } = args as { purgeItemIds?: string[] };
+        const result = await applyKnowledgeGc(projectId!, {
+          ...(Array.isArray(purgeItemIds) ? { approvedPurgeIds: purgeItemIds } : {}),
+        });
         return {
-          content: [{ type: 'text', text: compactMcpJson({ summary: result.summary, candidateCount: result.candidates.length, candidates: result.candidates.slice(0, 3) }) }],
+          content: [{
+            type: 'text',
+            text: compactMcpJson({
+              summary: result.summary,
+              candidateCount: result.candidates.length,
+              candidates: result.candidates.slice(0, 3),
+              // Named rather than silently dropped: fewer deletions than the preview showed is
+              // a result the caller has to be able to see and act on.
+              ...(result.unapprovedPurges?.length
+                ? { unapprovedPurges: result.unapprovedPurges.map(entry => entry.itemId) }
+                : {}),
+            }),
+          }],
         };
       }
 

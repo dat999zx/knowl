@@ -3717,6 +3717,10 @@ program
   .option('--min-bytes <bytes>', 'Minimum content bytes before compressing an archived item (default 180)')
   .option('--ignore-access', 'Archive stale state even if it was recently or frequently retrieved (hot)')
   .option('--tombstone-days <days>', 'Remove delete records older than this many days (default 90)')
+  // Purge is the one action with no undo, and `knowl gc` and `knowl gc --apply` are two
+  // processes: the second cannot know what the first printed. So the ids the user read are
+  // handed back by name, and an --apply that names none deletes nothing.
+  .option('--purge <ids>', 'Comma-separated item ids from a `knowl gc` preview, approved for deletion')
   .action(async (options) => {
     try {
       const root = await findProjectRoot(process.cwd());
@@ -3730,6 +3734,9 @@ program
         minCompressBytes: numericOption(options.minBytes, '--min-bytes', { min: 0 }),
         ignoreAccess: Boolean(options.ignoreAccess),
         tombstoneDays: numericOption(options.tombstoneDays, '--tombstone-days', { min: 0 }),
+        ...(typeof options.purge === 'string'
+          ? { approvedPurgeIds: options.purge.split(',').map((id: string) => id.trim()).filter(Boolean) }
+          : {}),
       };
       const result = options.apply
         ? await applyKnowledgeGc(project.id, gcOptions)
@@ -3770,6 +3777,19 @@ program
           }
           console.log(`  Bytes: ${candidate.beforeBytes} -> ${candidate.afterBytes}`);
         }
+      }
+
+      // The line that turns a preview into an approvable one. Printed on a preview so the ids
+      // can be copied, and on an apply so a declined deletion is never silent.
+      const declined = result.unapprovedPurges ?? (options.apply ? [] : result.candidates.filter(c => c.action === 'purge'));
+      if (declined.length > 0) {
+        console.log('');
+        console.log(
+          options.apply
+            ? `Purged nothing: ${declined.length} item(s) were candidates but --purge did not name them.`
+            : `${declined.length} item(s) would be PERMANENTLY deleted. They are not deleted unless named:`,
+        );
+        console.log(`  knowl gc --apply --purge ${declined.map(candidate => candidate.itemId).join(',')}`);
       }
 
       await closeDb();

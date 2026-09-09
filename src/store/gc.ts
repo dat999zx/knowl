@@ -32,13 +32,35 @@ export interface KnowledgeGcOptions {
   ignoreAccess?: boolean;
   /** Remove delete records older than this many days. Defaults to 90. */
   tombstoneDays?: number;
+  /**
+   * Ids a preview named as `purge`, approved by whoever read that preview.
+   *
+   * Apply recomputes its candidates -- it has to, because the store may have moved since the
+   * preview and acting on a stale plan is its own bug -- so it purges the INTERSECTION of what
+   * it recomputes and what this names. An atom written between the preview and the apply is
+   * therefore never destroyed by an apply that could not have named it.
+   *
+   * Omitted, nothing is purged. `archive` and `compress` still run: both leave the item, its
+   * id, its assertions and its evidence links in place, so a wrong one is recoverable and
+   * gating them would leave an argument-less apply doing nothing at all. Purge is the one
+   * action with no undo -- the row is gone and only a forget-log entry records that it was --
+   * so it is the one that must be named.
+   */
+  approvedPurgeIds?: readonly string[];
 }
 
 export interface KnowledgeGcResult {
   /** Delete records removed by retention; present only on apply. */
   prunedTombstones?: number;
+  /** On apply, what was actually acted on -- never what was merely considered. */
   candidates: KnowledgeGcCandidate[];
   summary: Record<KnowledgeGcAction, number>;
+  /**
+   * Purge candidates apply declined because `approvedPurgeIds` did not name them. Reported so
+   * a caller learns the items exist and can approve them, rather than silently getting fewer
+   * deletions than the preview showed.
+   */
+  unapprovedPurges?: KnowledgeGcCandidate[];
 }
 
 const DEFAULT_STALE_STATE_DAYS = 60;
@@ -316,15 +338,30 @@ export async function applyKnowledgeGc(
   // Measured separately (2026-08-04): this call is NOT exposed to the wrapper's exit crash.
   // That crash counts `db.transaction()` calls, not statements, and collection makes exactly
   // one of them however many candidates it has -- 5,000 purges, 10,000 statements, clean exit.
+  // A purge acts on the intersection of what apply recomputes and what a preview named, so an
+  // atom written between the two is never destroyed by an apply that could not have named it.
+  // The MCP tool took no arguments at all: `knowl_gc_preview` reported `purge: 0`, a write
+  // landed, and `knowl_gc_apply` hard-deleted an item nobody had ever seen listed.
+  const approvedPurges = options.approvedPurgeIds ? new Set(options.approvedPurgeIds) : new Set<string>();
   return withClientTransaction(async (tx) => {
     const items = await repo.listKnowledgeItems(tx);
     const candidates = buildCandidates(items, options, access, await loadItemHistory(tx));
     const byId = new Map(items.map(item => [item.id, item]));
     const changes: CommitChange[] = [];
+    // What was acted on, never what was merely considered -- the summary has to describe the
+    // writes that happened or a declined purge reads as a completed one.
+    const acted: KnowledgeGcCandidate[] = [];
+    const unapprovedPurges: KnowledgeGcCandidate[] = [];
 
     for (const candidate of candidates) {
       const before = byId.get(candidate.itemId);
       if (!before) continue;
+
+      if (candidate.action === 'purge' && !approvedPurges.has(candidate.itemId)) {
+        unapprovedPurges.push(candidate);
+        continue;
+      }
+      acted.push(candidate);
 
       if (candidate.action === 'purge') {
         // The reason and the retrieval evidence exist here and nowhere else. Before the forget
@@ -387,9 +424,10 @@ export async function applyKnowledgeGc(
     const prunedTombstones = await pruneTombstones(options.tombstoneDays ?? 90, undefined, tx);
 
     return {
-      candidates,
-      summary: summarizeCandidates(candidates),
+      candidates: acted,
+      summary: summarizeCandidates(acted),
       prunedTombstones,
+      ...(unapprovedPurges.length ? { unapprovedPurges } : {}),
     };
   });
 }

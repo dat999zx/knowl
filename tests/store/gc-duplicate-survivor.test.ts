@@ -20,6 +20,18 @@ async function setUpdatedAt(itemId: string, iso: string) {
 const OLDER = new Date(Date.now() - 5 * 86_400_000).toISOString();
 const NEWER = new Date(Date.now() - 1 * 86_400_000).toISOString();
 
+/**
+ * Collection as a caller performs it: preview, then approve exactly what the preview named.
+ * An apply that names nothing purges nothing, because purge is the one action with no undo.
+ */
+async function collect(projectId: string) {
+  const preview = await previewKnowledgeGc(projectId, { now: NOW });
+  return applyKnowledgeGc(projectId, {
+    now: NOW,
+    approvedPurgeIds: preview.candidates.filter(entry => entry.action === 'purge').map(entry => entry.itemId),
+  });
+}
+
 describe('GC never purges the richer of two twins', () => {
   let projectId = '';
   beforeEach(async () => {
@@ -59,7 +71,7 @@ describe('GC never purges the richer of two twins', () => {
     const purged = preview.candidates.filter(candidate => candidate.action === 'purge').map(candidate => candidate.itemId);
     expect(purged).toEqual([bare.id]);
 
-    await applyKnowledgeGc(projectId, { now: NOW });
+    await collect(projectId);
     const survivor = await repo.getKnowledgeItem(rich.id);
     expect(survivor).not.toBeNull();
     expect(survivor!.tags).toEqual(['api', 'limits']);
@@ -79,7 +91,7 @@ describe('GC never purges the richer of two twins', () => {
     await setUpdatedAt(evidenced.id, OLDER);
     await setUpdatedAt(bare.id, NEWER);
 
-    await applyKnowledgeGc(projectId, { now: NOW });
+    await collect(projectId);
 
     expect(await repo.getKnowledgeItem(evidenced.id)).not.toBeNull();
     expect(await listEvidenceForItem(evidenced.id)).toHaveLength(1);
@@ -101,7 +113,7 @@ describe('GC never purges the richer of two twins', () => {
     const preview = await previewKnowledgeGc(projectId, { now: NOW });
     expect(preview.candidates.filter(candidate => candidate.action === 'purge')).toHaveLength(0);
 
-    await applyKnowledgeGc(projectId, { now: NOW });
+    await collect(projectId);
     expect(await repo.getKnowledgeItem(tagged.id)).not.toBeNull();
     expect(await repo.getKnowledgeItem(pathed.id)).not.toBeNull();
   });

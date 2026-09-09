@@ -7,7 +7,7 @@ import { closeDb, getClient, getDb, initDb } from '../../src/store/database.js';
 import { bootstrapSchema } from '../../src/store/bootstrap.js';
 import * as repo from '../../src/store/repository.js';
 import { recordKnowledgeAccess } from '../../src/store/access-feedback.js';
-import { applyKnowledgeGc } from '../../src/store/gc.js';
+import { applyKnowledgeGc, previewKnowledgeGc } from '../../src/store/gc.js';
 import { listForgetLog, pruneForgetLog } from '../../src/store/forget-log.js';
 import { listTombstones, pruneTombstones } from '../../src/store/tombstones.js';
 import { exportKnowledge } from '../../src/store/portability.js';
@@ -20,6 +20,17 @@ async function seedDuplicatePair(projectId: string, title: string, content: stri
   const first = await repo.createKnowledgeItem(projectId, { category: 'fact', title, content });
   const second = await repo.createKnowledgeItem(projectId, { category: 'fact', title, content });
   return { first, second };
+}
+
+/**
+ * Collection as a caller performs it: preview, then approve exactly what the preview named.
+ * An apply that names nothing purges nothing, because purge is the one action with no undo.
+ */
+async function collect(projectId: string) {
+  const preview = await previewKnowledgeGc(projectId);
+  return applyKnowledgeGc(projectId, {
+    approvedPurgeIds: preview.candidates.filter(entry => entry.action === 'purge').map(entry => entry.itemId),
+  });
 }
 
 describe('forget log', () => {
@@ -53,7 +64,7 @@ describe('forget log', () => {
       await recordKnowledgeAccess({ itemId: second.id, query: `q${hit}`, surface: 'mcp', rank: 0 });
     }
 
-    const result = await applyKnowledgeGc(projectId);
+    const result = await collect(projectId);
     expect(result.summary.purge).toBeGreaterThan(0);
 
     const log = await listForgetLog();
@@ -85,7 +96,7 @@ describe('forget log', () => {
    */
   it('names the rule in a code and the survivor in a column, not only in a sentence', async () => {
     const { first, second } = await seedDuplicatePair(projectId, 'Absorbed fact', 'Collapsed into its twin.');
-    await applyKnowledgeGc(projectId);
+    await collect(projectId);
 
     const [entry] = await listForgetLog();
     const survivor = entry.itemId === first.id ? second.id : first.id;
@@ -167,7 +178,7 @@ describe('forget log', () => {
 
   it('outlives the tombstone that pruning removes', async () => {
     await seedDuplicatePair(projectId, 'Prunable fact', 'Collected then forgotten about.');
-    await applyKnowledgeGc(projectId);
+    await collect(projectId);
 
     expect(await listTombstones()).toHaveLength(1);
     expect(await listForgetLog()).toHaveLength(1);
@@ -191,7 +202,7 @@ describe('forget log', () => {
     for (let hit = 0; hit < 5; hit++) {
       await recordKnowledgeAccess({ itemId: second.id, query: `q${hit}`, surface: 'mcp', rank: 0 });
     }
-    await applyKnowledgeGc(projectId);
+    await collect(projectId);
     const [entry] = await listForgetLog();
 
     const out = path.join(os.tmpdir(), `knowl-forget-log-export-${process.pid}.jsonl`);

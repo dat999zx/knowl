@@ -1077,10 +1077,22 @@ describe('MCP Server Layer', () => {
     expect(preview.summary.purge).toBe(1);
     expect(preview.candidates[0].itemId).toBe(duplicateA.id);
     expect(preview.candidates[0].duplicateOfId).toBe(duplicateB.id);
+    // The preview names every purge id in full, because it is what apply has to be handed.
+    expect(preview.purgeItemIds).toEqual([duplicateA.id]);
+
+    // An apply that names nothing purges nothing, and says which items it declined.
+    const declinedRes = await runRpcRequest('tools/call', {
+      name: 'knowl_gc_apply',
+      arguments: {},
+    });
+    const declined = JSON.parse(declinedRes.result.content[0].text);
+    expect(declined.summary.purge).toBe(0);
+    expect(declined.unapprovedPurges).toEqual([duplicateA.id]);
+    expect(await repo.getKnowledgeItem(duplicateA.id)).not.toBeNull();
 
     const applyRes = await runRpcRequest('tools/call', {
       name: 'knowl_gc_apply',
-      arguments: {},
+      arguments: { purgeItemIds: preview.purgeItemIds },
     });
 
     expect(applyRes.error).toBeUndefined();

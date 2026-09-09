@@ -749,7 +749,10 @@ export async function importKnowledge(
     `SELECT id, conflict_key, conflict_scope FROM knowledge_items
      WHERE status = 'active' AND conflict_exclusive = 1 AND conflict_key IS NOT NULL`,
   )).rows) {
-    let scope: unknown = null;
+    let scope: unknown;
+    // A scope that will not parse is treated as no scope rather than failing the import: the
+    // audit reports the malformed row, and refusing every import until someone fixes it would
+    // be a worse answer than comparing it on its key alone.
     try { scope = row.conflict_scope === null ? null : JSON.parse(String(row.conflict_scope)); } catch { scope = null; }
     const identity = exclusiveIdentity(row.conflict_key, scope);
     if (identity) heldExclusive.set(identity, String(row.id));
