@@ -2834,6 +2834,7 @@ program
 
         if (result.action === 'duplicate') {
           console.log(`NOT STORED — already held verbatim as ${result.item.id}. Nothing was written and nothing was lost.`);
+          if (options.local) console.log(`  Not marked local: restating an atom cannot unpublish a shared one. Run \`knowl cloud unstage ${result.item.id} --forever\` to keep it off the team store.`);
           return;
         }
 
