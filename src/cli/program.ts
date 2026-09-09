@@ -107,6 +107,7 @@ import { captureMemorySessionEvent } from '../store/session-capture.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { isLifecycleEvent, isSessionEventType, readLifecyclePayload, stringPayloadValue } from './agents/lifecycle.js';
 import { runAgentHook } from './agent-hook.js';
+import { HOOK_HOSTS, REMINDER_HOSTS } from './agents/hook-failure.js';
 import { assertDatabasePresentForCommand } from './database-presence.js';
 import { bootstrapAgentSession } from '../store/context-bootstrap.js';
 import { listAssertions } from '../store/assertions.js';
@@ -118,7 +119,7 @@ import { importOwnershipNotice } from './import-ownership-notice.js';
 import { synthesizeKnowledge } from '../store/synthesis.js';
 import { startViewer } from '../viewer/server.js';
 import { atomEditUrl, resolveAtomId } from './edit-link.js';
-import { positiveInt } from './parse-options.js';
+import { positiveInt, positiveNumber } from './parse-options.js';
 import { formatListRows, selectListRows } from './list-report.js';
 import { rebuildTranscriptIndex } from '../transcripts/backfill.js';
 import { closeTranscriptDbs, openTranscriptDb } from '../transcripts/database.js';
@@ -1778,9 +1779,13 @@ cloudCommand
         config,
         itemIds,
         senderLabel: options.from ?? config.cloud?.repo ?? 'a colleague',
-        expiresInHours: Number(options.expiresIn),
-        // Validated rather than coerced: `Number('six')` is NaN, and a code length that fell
-        // through to a default would weaken the one secret in this feature without saying so.
+        // Validated rather than coerced, both of them: `Number('six')` is NaN, and a bundle
+        // whose expiry is NaN is compared with `>` against a timestamp, so every such comparison
+        // is false and the bundle either never expires or expires at once depending on which way
+        // the check is written. A code length that fell through to a default would weaken the one
+        // secret in this feature without saying so.
+        // Non-null: `--expires-in` declares a default, so the option is always present.
+        expiresInHours: numericOption(options.expiresIn, '--expires-in')!,
         words: numericOption(options.words, '--words', { min: 5 }),
       });
 
@@ -3291,7 +3296,7 @@ program
   .description('Rebuild derived search indexes')
   .option('--vectors', 'Rebuild optional vector embeddings')
   .option('--transcripts', 'Build or update the optional session transcript index')
-  .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', parseFloat)
+  .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', positiveNumber('--budget'))
   .option('--force', 'With --vectors, re-embed every item instead of only the stale ones')
   .action(async (options) => {
     try {
@@ -3343,7 +3348,7 @@ transcripts
   .command('extract')
   .description('Run the configured model over unextracted sessions and stage what it finds')
   .option('--limit <n>', `Sessions to extract in this run (default ${DEFAULT_EXTRACT_LIMIT})`, positiveInt('--limit'))
-  .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', parseFloat)
+  .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', positiveNumber('--budget'))
   .option('--yes', 'Skip the cost estimate and run')
   .action(async (options) => {
     try {
@@ -3922,19 +3927,16 @@ program
 program
   .command('agent-reminder')
   .description('Emit workflow guidance for an agent host prompt hook, on the drift schedule')
-  .argument('<host>', 'a host that declares a prompt event: claude, codex, copilot, openhands')
-  .option('--json')
+  // Derived, not listed. This said "claude, codex, copilot, openhands" while six profiles
+  // declared a prompt event -- hermes and openclaw were missing and both emit real cards.
+  .argument('<host>', `a host that declares a prompt event: ${REMINDER_HOSTS.join(', ')}`)
+  .option('--json', 'also write a parseable envelope to stdout when the command fails')
   // Registered so `knowl --help` still describes it, but a real hook invocation never reaches
   // here: `src/index.ts` dispatches straight to `runAgentReminder`, for the same reason it
   // does for `agent-hook`. See that module.
-  .action(async host => {
-    try {
-      const { runAgentReminder } = await import('./agents/reminder.js');
-      await runAgentReminder(host);
-    } catch (error: any) {
-      console.error(`Error emitting agent reminder: ${error.message}`);
-      process.exit(1);
-    }
+  .action(async (host, options) => {
+    const { runAgentReminder } = await import('./agents/reminder.js');
+    await runAgentReminder(host, { json: options.json });
   });
 
 program
@@ -3950,13 +3952,13 @@ program
 program
   .command('agent-hook')
   .description('Translate a project-local agent host hook into bounded Knowl memory events')
-  .argument('<host>', 'claude, codex, copilot, cursor, openhands, antigravity, windsurf, cline, hermes, claude-desktop, openclaw, or generic')
+  .argument('<host>', HOOK_HOSTS.join(', '))
   .argument('<event>', 'host lifecycle event name')
-  .option('--json')
+  .option('--json', 'also write a parseable envelope to stdout when the command fails')
   // Registered so `knowl --help` still describes it, but a real hook invocation never
   // reaches here: `src/index.ts` dispatches straight to `runAgentHook` so that a hook
   // process does not construct the whole command surface first. See that module.
-  .action(async (host, event) => runAgentHook(host, event));
+  .action(async (host, event, options) => runAgentHook(host, event, { json: options.json }));
 
 // --- 14. TASK COMMAND ---
 const taskCommand = program

@@ -9,6 +9,7 @@ import { conversationKey, readCaptureOutcome } from '../../store/capture-outcome
 import { assertKnowledgeDatabasePresent } from '../database-presence.js';
 import { fleetTurnStartBestEffort } from '../../session/fleet-lifecycle.js';
 import { readLifecyclePayload } from './lifecycle.js';
+import { HookOutputOptions, REMINDER_HOSTS, reportHookFailure } from './hook-failure.js';
 
 /**
  * Hosts whose key does not title-case into their own name.
@@ -70,7 +71,23 @@ export function createAgentReminderOutput(host: string, text: string = promptRem
  * silently switch guidance off for the rest of a session -- it degrades to the old behaviour,
  * which was wasteful but never wrong.
  */
-export async function runAgentReminder(host: string): Promise<void> {
+export async function runAgentReminder(host: string, options: HookOutputOptions = {}): Promise<void> {
+  // Enforced here because nothing else does. `src/index.ts` dispatches straight to this function
+  // for the speed reason its own comment gives, which means commander never parses the argument
+  // and the `<host>` it declares is not required of anybody: `knowl agent-reminder` with no host
+  // reached `hostLabel(undefined)` and exited with `TypeError: Cannot read properties of
+  // undefined (reading 'charAt')` and a stack trace through the bundle. In an editor that is not
+  // untidiness -- it is a hook process crashing inside somebody's session.
+  if (!isHookHost(host) || !hostProfile(host).promptEvent) {
+    const said = host
+      ? `"${host}" does not declare a prompt event.`
+      : 'agent-reminder requires a host argument.';
+    if (reportHookFailure(host ?? '', options, 'Error emitting agent reminder', new Error(
+      `${said} Hosts that declare one: ${REMINDER_HOSTS.join(', ')}.`,
+    ))) process.exitCode = 1;
+    return;
+  }
+
   let send = true;
   // The fleet's half of the prompt event: this turn's ask goes into the fleet store, and in
   // maximal posture the digest of what other sessions moved on to comes back. It shares the
@@ -110,6 +127,15 @@ export async function runAgentReminder(host: string): Promise<void> {
   }
   // Silence is an empty stdout, not an empty envelope: a host that reads `hookSpecificOutput`
   // with a blank `additionalContext` may still spend a line on it.
-  const parts = [send ? promptReminderFor(hostLabel(host)) : undefined, digest].filter((part): part is string => Boolean(part));
-  if (parts.length > 0) console.log(JSON.stringify(createAgentReminderOutput(host, parts.join('\n\n'))));
+  //
+  // Inside a try of its own, and deliberately not inside the fail-open one above: that one
+  // answers "the store could not be read", whose correct response is to emit the card anyway.
+  // This one answers "the card could not be emitted", where emitting it again is the failure
+  // repeating. These two lines used to sit outside every try in the function.
+  try {
+    const parts = [send ? promptReminderFor(hostLabel(host)) : undefined, digest].filter((part): part is string => Boolean(part));
+    if (parts.length > 0) console.log(JSON.stringify(createAgentReminderOutput(host, parts.join('\n\n'))));
+  } catch (error) {
+    if (reportHookFailure(host, options, 'Error emitting agent reminder', error)) process.exitCode = 1;
+  }
 }

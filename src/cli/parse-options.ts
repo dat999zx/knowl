@@ -14,6 +14,29 @@ import { InvalidArgumentError } from 'commander';
  * Any bare stdlib function handed to commander is suspect for the same reason. `parseFloat` is
  * arity 1 and safe; `parseInt` and `Number.parseInt` are not.
  */
+/**
+ * `positiveInt` for a quantity that is legitimately fractional, which is what `--budget` is.
+ *
+ * `parseFloat` alone is arity-safe -- the docblock above says so and that is why it was chosen --
+ * but arity was never the whole hazard. `parseFloat('abc')` is `NaN`, and a budget is spent as
+ * `Date.now() >= deadline` where `deadline` is `Date.now() + NaN * 60_000`: every comparison
+ * against `NaN` is false, so the deadline never arrives. On `transcripts extract` that flag is
+ * what bounds a paid model, and its sibling `--limit` on the same command already refuses a typo
+ * loudly. `knowl transcripts extract --budget abc` ran unbounded.
+ *
+ * Not `positiveInt`: `<minutes>` is documented as minutes and half a minute is a real budget, so
+ * requiring a whole number would refuse valid input to catch invalid input.
+ */
+export function positiveNumber(label: string): (value: string) => number {
+  return (value: string) => {
+    const parsed = Number.parseFloat(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new InvalidArgumentError(`${label} must be a number greater than 0, not "${value}".`);
+    }
+    return parsed;
+  };
+}
+
 export function positiveInt(label: string): (value: string) => number {
   return (value: string) => {
     const parsed = Number.parseInt(value, 10);

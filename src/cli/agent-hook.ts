@@ -6,7 +6,8 @@ import { handleHostLifecycleEvent } from '../session/host-lifecycle.js';
 import { assertKnowledgeDatabasePresent } from './database-presence.js';
 import { readLifecyclePayload } from './agents/lifecycle.js';
 import { IncompleteHostHookPayloadError, normalizeHostHook } from './agents/host-hook.js';
-import { hostProfile, isHookHost } from '../session/hosts/index.js';
+import { hostProfile } from '../session/hosts/index.js';
+import { HookOutputOptions, reportHookFailure } from './agents/hook-failure.js';
 
 /**
  * The agent lifecycle hook, in its own module and off the CLI's import graph.
@@ -26,7 +27,7 @@ import { hostProfile, isHookHost } from '../session/hosts/index.js';
  * inside the one branch that uses it, because it reaches the embedding provider and only
  * turn-stop and session-stop events ever get there.
  */
-export async function runAgentHook(host: string, event: string): Promise<void> {
+export async function runAgentHook(host: string, event: string, options: HookOutputOptions = {}): Promise<void> {
   try {
     const payload = await readLifecyclePayload();
     const normalized = normalizeHostHook(host, event, payload);
@@ -96,11 +97,15 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
       await closeDb().catch(() => {});
       return;
     }
-    console.error(`Error handling agent hook: ${error.message}`);
     await closeDb().catch(() => {});
-    // See `refusesOnAnyNonZeroExit`: on those hosts this exit would deny the agent's edit
-    // rather than report our own crash. The error still reaches stderr; only the status goes.
-    if (isHookHost(host) && hostProfile(host).refusesOnAnyNonZeroExit) return;
-    process.exit(1);
+    // Both streams under `--json`, and the `refusesOnAnyNonZeroExit` rule, now live in
+    // `reportHookFailure` so the reminder obeys the same two. On those hosts a non-zero exit
+    // would deny the agent's edit rather than report our own crash, so the error still reaches
+    // stderr and only the status goes.
+    //
+    // `exitCode`, not `exit`: this path now writes an envelope to stdout first, and `process.exit`
+    // can truncate a pipe mid-write. The store is already closed, so nothing holds the loop -- as
+    // the refusing-host branch has relied on since it was added.
+    if (reportHookFailure(host, options, 'Error handling agent hook', error)) process.exitCode = 1;
   }
 }
