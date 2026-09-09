@@ -882,7 +882,12 @@ async function evaluatePendingLessonStop(input: NormalizedHostHook): Promise<Rec
     }
 
     const profile = hostProfile(input.host);
-    if (!profile.stopContext) return undefined;
+    if (!profile.stopContext) {
+      // Same monotonicity rule as `evaluateSilenceNudge`: a host with no stop channel under
+      // `enforce` records what `shadow` would have, rather than leaving the rows open forever.
+      await markPendingLessons(open.map(lesson => lesson.id), 'shadow');
+      return undefined;
+    }
     if (!await claimLessonBlock(conversation)) {
       // Budget exhausted: settle silently so the rows cannot pile up behind a gate that will
       // never speak again, and record that silence as what it was.

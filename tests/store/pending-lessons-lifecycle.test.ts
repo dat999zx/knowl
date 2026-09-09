@@ -141,6 +141,22 @@ describe('the pending-lesson gate, through the hook path', () => {
     expect((await openPendingLessons(conversationKey(hook(root, {})))).map(lesson => lesson.kind)).toContain('correction');
   });
 
+  it('in enforce on a host with no stop channel: settles as shadow, never leaves rows open', async () => {
+    // Same monotonicity rule as the silence nudge: `enforce` must record at least what `shadow`
+    // records. Before, this branch returned having written nothing, so the lesson stayed open
+    // on every stop for the rest of the conversation on every host but Claude.
+    const { root, projectId } = await withRepo('enforce');
+    await handleHostLifecycleEvent(projectId, hook(root, { host: 'generic', event: 'session-start' }));
+    await handleHostLifecycleEvent(projectId, hook(root, { host: 'generic', event: 'turn-start' }));
+    await handleHostLifecycleEvent(projectId, command(root, 'pkill -f node', { host: 'generic' }));
+    const conversation = conversationKey(hook(root, { host: 'generic' }));
+    expect(await openPendingLessons(conversation)).toHaveLength(1);
+
+    const stop = await handleHostLifecycleEvent(projectId, hook(root, { host: 'generic', event: 'turn-stop', status: 'finished' }));
+    expect(stop.hostOutput).toBeUndefined();
+    expect(await openPendingLessons(conversation)).toHaveLength(0);
+  });
+
   it('never withholds a subagent stop, whatever is pending', async () => {
     const { root, projectId } = await withRepo('enforce');
     await handleHostLifecycleEvent(projectId, command(root, 'pkill -f node'));
