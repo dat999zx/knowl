@@ -237,7 +237,30 @@ describe('the write-side negative signal, through the hook path', () => {
 
     expect(result?.hostOutput).toBeUndefined();
     // And the claim was not spent on a delivery that could not happen: turning this on for an
-    // unsupported host must not look identical to it having fired.
-    expect(await readCaptureOutcome(conversationKey(hook(root, { host: 'generic' })))).toMatchObject({ nudged: null });
+    // unsupported host must not look identical to it having fired. `shadow` is the withheld
+    // nudge, which is what this was; `enforce` would be the delivery, which it was not.
+    expect(await readCaptureOutcome(conversationKey(hook(root, { host: 'generic' })))).toMatchObject({ nudged: 'shadow' });
+  });
+
+  it('records under enforce at least what it records under shadow', async () => {
+    // The ladder has to be monotone. `enforce` is the stricter setting, so whatever `shadow`
+    // observes it must observe too -- and on a host with no stop channel it observed nothing
+    // at all, because the capability check returned before anything was written. Turning the
+    // feature UP therefore turned the measurement OFF, silently, on every host but Claude.
+    const talkOn = async (mode: CaptureNudgeMode, host: 'claude' | 'generic') => {
+      const { root, projectId } = await withRepo(mode);
+      await handleHostLifecycleEvent(projectId, hook(root, { host, event: 'session-start' }));
+      for (let turn = 0; turn < MIN_SUBSTANTIVE_TURNS; turn += 1) {
+        await handleHostLifecycleEvent(projectId, hook(root, { host, event: 'turn-start' }));
+        await handleHostLifecycleEvent(projectId, hook(root, { host, event: 'turn-stop', status: 'finished' }));
+      }
+      return (await readCaptureOutcome(conversationKey(hook(root, { host }))))?.nudged ?? null;
+    };
+
+    const shadowed = await talkOn('shadow', 'generic');
+    const enforced = await talkOn('enforce', 'generic');
+
+    expect(shadowed).toBe('shadow');
+    expect(enforced).not.toBeNull();
   });
 });
