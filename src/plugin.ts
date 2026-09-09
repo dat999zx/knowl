@@ -103,6 +103,7 @@ export { normalizeHostHook } from './cli/agents/host-hook.js';
 export { readLifecyclePayloadObject } from './cli/agents/lifecycle.js';
 export { KNOWL_MIGRATION_LEVEL } from './store/schema-version.js';
 export { ProjectNotFoundError } from './core/errors.js';
+export { canonicalProjectRoot } from './core/project-path.js';
 export { MissingKnowledgeDatabaseError } from './cli/database-presence.js';
 export type { NormalizedHostHook, NormalizedHookEventName, HookHost } from './core/host-hook-types.js';
 export type { LifecyclePayload } from './cli/agents/lifecycle.js';

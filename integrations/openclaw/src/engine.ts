@@ -1,14 +1,21 @@
 import path from 'node:path';
 import { createClient } from '@libsql/client';
 import {
+  canonicalProjectRoot,
   openProject,
   KNOWL_MIGRATION_LEVEL,
   type ProjectHandle,
 } from '@dat999zx/knowl/plugin';
 
-/** True when `cwd` is `root` or somewhere beneath it -- a path boundary, not a string prefix. */
+/**
+ * True when `cwd` is `root` or somewhere beneath it -- a path boundary, not a string prefix.
+ *
+ * Both sides are canonical so the check agrees with the keys of `handles` and `disabledRoots`.
+ * `path.relative` already folds case on win32, so the fold here is not what makes `D:\project`
+ * match `d:\project`; it is what keeps this one rule the same as the map lookups.
+ */
 function isWithin(root: string, cwd: string): boolean {
-  const rel = path.relative(root, cwd);
+  const rel = path.relative(canonicalProjectRoot(root), canonicalProjectRoot(cwd));
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
@@ -127,11 +134,11 @@ export class OpenClawEngineManager {
   }
 
   isDisabled(projectRoot: string): boolean {
-    return this.disabledRoots.has(projectRoot);
+    return this.disabledRoots.has(canonicalProjectRoot(projectRoot));
   }
 
   getDisabledReason(projectRoot: string): string | undefined {
-    return this.disabledRoots.get(projectRoot);
+    return this.disabledRoots.get(canonicalProjectRoot(projectRoot));
   }
 
   async getHandle(cwd: string): Promise<ProjectHandle | null> {
@@ -141,7 +148,7 @@ export class OpenClawEngineManager {
   }
 
   async warmWorkspace(cwd: string): Promise<ProjectHandle | null> {
-    if (this.disabledRoots.has(cwd)) {
+    if (this.disabledRoots.has(canonicalProjectRoot(cwd))) {
       return null;
     }
 
@@ -155,7 +162,10 @@ export class OpenClawEngineManager {
 
     if (!handle) return null;
 
-    const root = handle.projectRoot;
+    // Keyed by the canonical root: on Windows a hook payload's `cwd` reports `D:\project`
+    // while `process.cwd()` reports `d:\project`, and a raw key would open the same project
+    // twice and split one session across two handles.
+    const root = canonicalProjectRoot(handle.projectRoot);
     if (this.disabledRoots.has(root)) {
       await handle.release();
       return null;

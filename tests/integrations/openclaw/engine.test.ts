@@ -159,6 +159,34 @@ describe('OpenClaw engine wrapper failure modes', () => {
       await manager.releaseAll();
     }
   });
+
+  it.runIf(process.platform === 'win32')(
+    'a Windows cwd in different casing reuses the warmed handle instead of opening the project twice',
+    async () => {
+      // A hook payload's `cwd` reports `D:\project` while `process.cwd()` reports `d:\project`.
+      // `path.relative` already folds case, so `isWithin` was never the gap; the handle map was
+      // keyed by the raw root, so a second warm in the other casing opened a second handle.
+      const dirProject = path.join(scratchDir, 'CasedProject');
+      await fs.mkdir(dirProject, { recursive: true });
+      execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirProject, encoding: 'utf8' });
+
+      const manager = new OpenClawEngineManager();
+      try {
+        const warmed = await manager.warmWorkspace(dirProject);
+        expect(warmed).toBeDefined();
+
+        const swapCase = (s: string) =>
+          s.replace(/[a-zA-Z]/g, (c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
+        const recased = swapCase(dirProject);
+        expect(recased).not.toBe(dirProject);
+
+        expect(await manager.warmWorkspace(recased)).toBe(warmed);
+        expect(await manager.getHandle(path.join(recased, 'src'))).toBe(warmed);
+      } finally {
+        await manager.releaseAll();
+      }
+    },
+  );
 });
 
 describe('OpenClaw engine manager: an unverifiable database is not opened', () => {
