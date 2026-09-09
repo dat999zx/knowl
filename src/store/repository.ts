@@ -139,7 +139,8 @@ export async function createKnowledgeItem(
   dbConnection?: DbConnection,
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<KnowledgeItem> {
-  validateKnowledgeWrite(item, validationOptions);
+  // `steps` travels as its own parameter, so it has to be joined back on or it is never scanned.
+  validateKnowledgeWrite({ ...item, ...(steps !== undefined ? { steps } : {}) }, validationOptions);
   // The last door before the row, so the invariant is stated here rather than at each caller.
   // `knowledge-writer` checks it earlier as well -- deliberately, so a batch is refused before
   // a transaction the caller was never told about is opened -- but merge, synthesis,
@@ -370,6 +371,7 @@ export async function updateKnowledgeItem(
     const written = {
       ...scannableFields(updates),
       ...(updates.affectedPaths !== undefined ? { affectedPaths } : {}),
+      ...(steps !== undefined ? { steps } : {}),
     };
     validateKnowledgeWrite(written, validationOptions);
     const shouldRefreshHash = updates.contentHash === undefined && (

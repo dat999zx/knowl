@@ -116,10 +116,11 @@ function stringFields(input: KnowledgeWriteInput): Array<[string, string]> {
       : [];
 
   const anyInput = input as unknown as Record<string, unknown>;
-  // A skill step is an object; its instruction is the part a caller writes prose into.
+  // A skill step is an object whose instruction is the prose -- or, on the repository's own
+  // `steps` parameter, the bare instruction string.
   const steps = Array.isArray(anyInput.steps)
     ? anyInput.steps.flatMap((step, index): Array<[string, string]> => {
-      const instruction = (step as Record<string, unknown> | null)?.instruction;
+      const instruction = typeof step === 'string' ? step : (step as Record<string, unknown> | null)?.instruction;
       return typeof instruction === 'string' ? [[`steps[${index}].instruction`, instruction]] : [];
     })
     : [];

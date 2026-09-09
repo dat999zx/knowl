@@ -2020,7 +2020,12 @@ lands. Best-effort vector indexing after import uses only the locally available 
 ```bash
 knowl gc
 knowl gc --apply
+knowl gc --apply --purge <id,id,...>
 ```
+
+Apply archives and compresses on its own, but purges nothing unless `--purge` names ids the
+preview listed; only ids that are still candidates are deleted, and the rest are reported.
+`knowl_gc_apply` takes the same approval as `purgeItemIds`, which `knowl_gc_preview` returns.
 
 The default policy:
 
@@ -2719,7 +2724,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl park --goal <goal> [--next-action <a>] [--completed <c...>] [--blocker <b>] [--artifact <p...>] [--verified\|--unverified]` | Park a workstream and get a key back; hand the key to the user verbatim |
 | `knowl handoff --goal <goal> --next-action <a> [--completed <c...>] [--blocker <b>] [--artifact <p...>] [--verified\|--unverified]` | Leave a baton the next session in this project receives once |
 | `knowl resume [key]` | Resume a parked workstream from its key, or list what is parked here |
-| `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply duplicate, archive, compression, and tombstone maintenance |
+| `knowl gc [--apply] [--purge <ids>] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply duplicate, archive, compression, and tombstone maintenance |
 | `knowl forget-log [--limit N] [--repo <name>] [--json] [--prune-days N]` | Show why knowledge items were destroyed — policy, reason, and the retrieval evidence it overruled — or prune those records |
 | `knowl pr --since <commit> [--dry-run]` | Find drift candidates and, unless dry-run, mark them for review |
 | `knowl reviewed <itemId> [--note <text>]` | Record that an item was re-read and still holds, clearing its review flag here and on the team's copy |

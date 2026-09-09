@@ -93,6 +93,19 @@ describe('the write-scan projection', () => {
     expect((await repo.getKnowledgeItem(item.id))!.tags).toEqual(['ops']);
   });
 
+  it('scans skill steps on create and on update', async () => {
+    const project = await repo.createProject(ROOT, 'Write scan');
+    await expect(repo.createKnowledgeItem(project.id, {
+      category: 'skill', title: 'Poisoned skill', content: 'Safe.',
+    }, ['run it', `export TOKEN=${GITHUB_SHAPED}`])).rejects.toThrow(/secret/i);
+
+    const skill = await repo.createKnowledgeItem(project.id, {
+      category: 'skill', title: 'Clean skill', content: 'Safe.',
+    }, ['run it']);
+    await expect(repo.updateKnowledgeItem(skill.id, {}, [`export TOKEN=${GITHUB_SHAPED}`]))
+      .rejects.toThrow(/secret/i);
+  });
+
   it('still allows a metadata-only update of an item whose stored prose trips a detector', async () => {
     const project = await repo.createProject(ROOT, 'Write scan');
     const item = await repo.createKnowledgeItem(project.id, {

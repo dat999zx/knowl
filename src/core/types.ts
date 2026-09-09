@@ -582,7 +582,7 @@ export type KnowledgeWriteInput = {
    */
   tags?: string[] | null;
   alternatives?: string[] | null;
-  steps?: Array<{ instruction?: string | null } | null> | null;
+  steps?: Array<string | { instruction?: string | null } | null> | null;
 };
 
 export type KnowledgeWriteValidationOptions = {
