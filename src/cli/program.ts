@@ -78,7 +78,7 @@ import {
 } from '../cloud/send/transfer.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
-import { GLOBAL_REPO_IDENTITY, resolveCloudTarget, scopeNotice } from './cloud-target.js';
+import { GLOBAL_REPO_IDENTITY, resolveCloudTarget, scopeNotice, shouldUseGlobalStore } from './cloud-target.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -810,8 +810,22 @@ program.command('query').argument('[query]').description('Search project memory 
       if (!project) throw new Error('Project not found in database.');
       projectId = project.id;
     } catch (err: any) {
+      // Discriminated, not blanket. This `try` spans three failures and only the first of them
+      // means "there is no project here": `findProjectRoot` raises `ProjectNotFoundError`, while
+      // `initDb` raises on a store that will not open and the line above raises on a project that
+      // is not registered. An untyped guard answered all three from the machine-wide personal
+      // defaults -- so a repository whose `.knowl/knowl.db` was corrupt had `status` and `list`
+      // exit 1 with `SQLITE_NOTADB` while `query` returned somebody's cross-project atom under
+      // that repository's name and exited 0, with `visibility: "repo"` in the payload and nothing
+      // marking it foreign. docs/reference.md promises the opposite in as many words: "If a
+      // project directory *is* present but fails resolution, Knowl raises an error rather than
+      // falling back to global."
+      //
+      // `shouldUseGlobalStore` rather than a fourth copy of the rule: `resolveCloudTarget` draws
+      // the same line for the same reason, and so does `shouldServeGlobalOnly` in the MCP server.
+      // The query path was the last holdout.
       const { globalOnlyNamespaces } = await import('../store/namespaces.js');
-      if (globalOnlyNamespaces().length > 0) {
+      if (shouldUseGlobalStore(err, globalOnlyNamespaces().length > 0)) {
         root = undefined;
         projectId = 'local';
       } else {
