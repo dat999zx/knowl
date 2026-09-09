@@ -26,8 +26,13 @@ import { hostString, toolNameIsShell } from './profile.js';
  * `gateway_stop` maps to `session-stop`: Full gateway shutdown closing the active session
  * and releasing cached project handles.
  *
- * `session_start` maps to `session-start`: Binds session identity and warms the project
- * handle cache in memory so subsequent write gates never suffer cold client initialization.
+ * **`session_start` is deliberately absent from the event map, and its absence is what delivers
+ * the bootstrap card.** Binding the session there spends the card on an event whose return
+ * value OpenClaw discards, and the first real `before_prompt_build` then arrives on a session the
+ * engine has already seen, so it emits nothing. Letting the first `before_prompt_build` bind the
+ * session puts the card where OpenClaw actually injects it. Warming the project handle cache
+ * still happens on `session_start` in the plugin (`integrations/openclaw/src/index.ts`) so
+ * subsequent write gates avoid cold open latency, but without touching the engine lifecycle.
  */
 const OPENCLAW_EVENT_MAP: Record<string, NormalizedHookEventName> = {
   before_prompt_build: 'turn-start',
@@ -37,7 +42,6 @@ const OPENCLAW_EVENT_MAP: Record<string, NormalizedHookEventName> = {
   session_end: 'turn-stop',
   agent_end: 'turn-stop',
   gateway_stop: 'session-stop',
-  session_start: 'session-start',
 };
 
 const openclawBlock = (blockReason: string): HostOutput => ({ block: true, blockReason });

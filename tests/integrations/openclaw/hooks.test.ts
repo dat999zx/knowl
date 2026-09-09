@@ -146,6 +146,31 @@ describe('OpenClaw hooks: recall card', () => {
 
     expect(result).toBeUndefined();
   });
+
+  it('session_start does not spend the card: the first before_prompt_build after it still carries context', async () => {
+    const dir = path.join(scratchDir, 'repo-n2');
+    await fs.mkdir(dir, { recursive: true });
+
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dir, encoding: 'utf8' });
+
+    const noFleetConfig = JSON.stringify({ fleet: { enabled: false } }, null, 2);
+    await fs.writeFile(path.join(dir, '.knowl', 'config.json'), noFleetConfig, 'utf8');
+
+    knowlPlugin.register(api);
+
+    const sessionStart = registeredHooks.get('session_start')?.[0]?.handler;
+    const promptHook = registeredHooks.get('before_prompt_build')?.[0]?.handler;
+    expect(sessionStart).toBeDefined();
+    expect(promptHook).toBeDefined();
+
+    const ctx = { workspaceDir: dir, sessionId: 'oc-n2-1', sessionKey: 'main' };
+
+    await sessionStart!({}, ctx);
+    const r = (await promptHook!({ prompt: 'hi' }, ctx)) as { prependContext?: string } | undefined;
+
+    expect(typeof r?.prependContext).toBe('string');
+    expect(r?.prependContext?.length).toBeGreaterThan(0);
+  });
 });
 
 describe('OpenClaw hooks: write gate', () => {
