@@ -3,6 +3,12 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+**The OpenClaw bootstrap card was being thrown away, on every session.** The profile registered `session_start`, so the engine bound the session and spent the bootstrap card on an event whose return value OpenClaw discards — and the first real turn (`before_prompt_build`) then arrived on a session the engine had already seen, with nothing to say. Measured: a fresh session whose first event is `before_prompt_build` gets the orientation card; the same session preceded by `session_start` got an empty answer with zero prepend context. That event is no longer mapped to the engine lifecycle, so the first `before_prompt_build` binds the session and carries the card. The plugin continues to register `session_start` solely to warm the workspace handle cache in memory so the initial write gate avoids cold open latency.
+
+**A workspace is a path, not a prefix.** `OpenClawEngineManager` matched cached workspace handles by string prefix (`cwd.startsWith(root)`), so sibling directories that share a name prefix (such as `knowl` and `knowl-cloud`) collided on lookup: whichever warmed first captured subsequent requests for the other, reading and writing atoms to the wrong project's database. Workspace matching in `getHandle` and `releaseWorkspace` now enforces a path boundary via `path.relative`, ensuring a workspace matches only itself or directories beneath it.
+
 ## 5.22.1 — 2026-09-07
 
 **The skill run banner no longer corrupts the MCP transport.** `runSkillPackage` wrote its banner with `console.log`, and it has two callers that disagree about what stdout is: on the CLI it is the operator's terminal, under `knowl serve` it is the JSON-RPC frame stream. `knowl_skill_run` calls the same function inside a stdio MCP server, so the banner was interleaved into the protocol and the client failed to parse the response to a call whose skill had actually run — an action taken, reported as a transport error. It goes to stderr now, the choice `knowl serve` already makes for its own startup banner.
