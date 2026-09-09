@@ -292,6 +292,11 @@ export const WORKSPACE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_dissent',
+          // Not `readOnlyHint`: `list` reads, but `record`, `reject`, `withdraw` and `reopen`
+          // all write rows, and annotations are read before arguments -- a hint that is true
+          // for only some actions is a hint that lies. `destructiveHint` is left at its
+          // default: every action is additive, and nothing here retires or deletes an atom.
+          annotations: { title: "Contest a linked repo's item", openWorldHint: false },
           description: "Contest a linked repo's knowledge item without editing it. Use when a query returns another repo's item you believe is wrong: editing it is refused, and a dissent is the way the finding reaches its owner instead of being lost. Recording one writes only in THIS repo and changes nothing in theirs, but from then on every query returning that item -- in any repo here -- carries the dispute, so the next reader sees the objection before relying on it. The owner ends it by superseding the item (which is why there is no accept action) or by rejecting the dissent. Workspace-local: an item owned by a cloud workspace is refused, because that dissent could never reach its owner.",
           inputSchema: {
             type: 'object',
