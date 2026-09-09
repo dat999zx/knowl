@@ -68,6 +68,25 @@ export function createMcpServer(
       version: PACKAGE_VERSION,
     },
     {
+      // Exactly what is implemented, and nothing that merely could be.
+      //
+      // A host trusts this card: it decides from these flags whether to subscribe, whether to
+      // re-list after a change, and what to stop asking for. A capability declared and not
+      // implemented is worse than the gap it papers over, because the client's fallback is
+      // never taken and the failure surfaces as silence rather than as an error.
+      //
+      // Both entries are deliberately bare:
+      //
+      // - `resources: {}` already covers `resources/templates/list`, which the SDK gates on the
+      //   resources capability alone -- there is no separate template flag to add. Neither
+      //   sub-flag is claimed: nothing here answers `resources/subscribe`, and nothing sends
+      //   `notifications/resources/list_changed`.
+      // - `tools: {}` withholds `listChanged` even though the tool list genuinely varies with
+      //   live config -- connecting to the cloud or joining a workspace changes it mid-session.
+      //   knowl does not notify; it absorbs the staleness instead, which is why the gated
+      //   handlers in `tools.ts` re-check their own gate rather than trusting the listing. That
+      //   is the honest pairing. Claiming `listChanged` without sending the notification would
+      //   tell a host to wait for a signal that never arrives.
       capabilities: {
         tools: {},
         resources: {},
