@@ -173,7 +173,25 @@ export class OpenClawEngineManager {
         return null;
       }
     } catch (err: unknown) {
-      this.logger?.warn?.(`[knowl] Could not verify migration level for ${handle.databasePath}: ${err}`);
+      // Fail CLOSED, and not sticky.
+      //
+      // This branch means the level could not be READ -- on Windows a concurrent `knowl serve`
+      // holding the file is the ordinary cause -- so the one thing actually known is that the
+      // database is unverified. Warning and continuing to `handles.set` defeated the check
+      // entirely: an older plugin writing into a store a newer Knowl migrated finds every table
+      // it expects, because the schema is `CREATE TABLE IF NOT EXISTS` plus additive `ALTER`s,
+      // and then writes rows the newer schema's invariants do not hold for. Nothing reports it.
+      //
+      // The root is deliberately NOT added to `disabledRoots`: a lock clears. A transient
+      // failure costs this warm attempt, and the next hook in that workspace tries again --
+      // where the sticky list is for the one condition that cannot resolve itself, a database
+      // stamped past what this plugin understands.
+      this.logger?.warn?.(
+        `[knowl] Could not verify the migration level of "${handle.databasePath}", so this workspace ` +
+        `is not being opened. Knowl will try again on the next event: ${err}`,
+      );
+      await safely(() => handle.release(), this.logger);
+      return null;
     }
 
     this.handles.set(root, handle);

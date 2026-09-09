@@ -148,6 +148,46 @@ describe('plugin export and built artifact verification', () => {
     );
   });
 
+  it('a library write is validated by the project own security settings, not by the defaults', async () => {
+    // `handle.store` called `storeKnowledgeItemDeduped(projectId, atom)` and stopped there,
+    // while the MCP tool and the CLI both pass `config.security` as the fourth argument. Left
+    // out, `secretPatterns` falls back to the empty list -- so a repository that added a
+    // detector got DEFAULT validation on every library write, and the same atom was accepted
+    // by the plugin and refused by `knowl store` in the same repository.
+    const repo = path.join(scratchDir, 'configured-security-repo');
+    await fs.mkdir(repo, { recursive: true });
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: repo, encoding: 'utf8' });
+
+    const configPath = path.join(repo, '.knowl', 'config.json');
+    const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    config.security = { rejectSecrets: true, secretPatterns: ['zzz-house-token'] };
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
+
+    const handle = await pluginModule.openProject(repo);
+    expect(handle).not.toBeNull();
+
+    try {
+      await expect(
+        handle!.store({
+          category: 'fact',
+          title: 'Staging deploy reads a house token',
+          content: 'The staging deploy reads zzz-house-token from the environment at boot.',
+        }),
+      ).rejects.toThrow(/configured-pattern/i);
+
+      // And the same repository still accepts what its own configuration does not object to,
+      // so this is the project's rule being applied rather than everything being refused.
+      const accepted = await handle!.store({
+        category: 'fact',
+        title: 'Staging deploy reads its configuration from the environment',
+        content: 'The staging deploy takes every setting from the environment at boot.',
+      });
+      expect(accepted.action).toBe('inserted');
+    } finally {
+      await handle!.release();
+    }
+  });
+
   it('multi-project regression: writes to project A land in project A and never in project B', async () => {
     const projectADir = path.join(scratchDir, 'projectA');
     const projectBDir = path.join(scratchDir, 'projectB');
