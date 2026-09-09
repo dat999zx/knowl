@@ -51,16 +51,25 @@ vi.mock('../../src/store/queries.js', async importOriginal => {
 const { registerResources } = await import('../../src/mcp/resources.js');
 const { UNTRUSTED_NOTICE_BRIEF } = await import('../../src/core/untrusted.js');
 
-/** The read handler the SDK would install, captured instead of connected. */
+/**
+ * The read handler the SDK would install, captured instead of connected.
+ *
+ * Selected by the schema it was registered against rather than by position: this used to take
+ * `handlers[1]` on the strength of "list is registered first, read second", which stopped being
+ * true the moment `resources/templates/list` was added between them. A registration order is
+ * not a contract, and reading the method off the schema costs one line.
+ */
 function readHandler(): (request: { params: { uri: string } }) => Promise<any> {
-  const handlers: Array<(request: any) => Promise<any>> = [];
+  const handlers = new Map<string, (request: any) => Promise<any>>();
   registerResources(
-    { setRequestHandler: (_schema: unknown, handler: any) => handlers.push(handler) } as never,
+    {
+      setRequestHandler: (schema: any, handler: any) =>
+        handlers.set(schema.shape.method.value, handler),
+    } as never,
     () => 'project-1',
     () => null,
   );
-  // List is registered first, read second.
-  return handlers[1]!;
+  return handlers.get('resources/read')!;
 }
 
 /**
