@@ -76,7 +76,7 @@ there: `npm pack --ignore-scripts` skips `prepack` and produces a tarball contai
 | `registerAgentToolResultMiddleware` | The impact card, injected before the model sees tool output. |
 | `after_tool_call` | Capture. |
 | `before_compaction` | Checkpoint before the conversation is compressed. |
-| `session_start` / `session_end` / `agent_end` / `gateway_stop` | Bind, close, release. |
+| `session_start` / `session_end` / `agent_end` / `gateway_stop` | Warm, close, release. |
 
 **`before_prompt_build` does not dispatch on every surface.** On OpenClaw 2026.9.1 it fires under
 the `claude-cli` backend and does not fire on the embedded runner — for bundled and non-bundled

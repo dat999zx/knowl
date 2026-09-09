@@ -131,6 +131,93 @@ describe('OpenClaw engine wrapper failure modes', () => {
     const cachedAttempt = await manager.getHandle(projectDir);
     expect(cachedAttempt).toBeNull();
   });
+
+  it('getHandle does not let a sibling directory that shares a prefix capture the lookup', async () => {
+    const dirKnowl = path.join(scratchDir, 'knowl');
+    const dirKnowlCloud = path.join(scratchDir, 'knowl-cloud');
+    await fs.mkdir(dirKnowl, { recursive: true });
+    await fs.mkdir(dirKnowlCloud, { recursive: true });
+
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirKnowl, encoding: 'utf8' });
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirKnowlCloud, encoding: 'utf8' });
+
+    const manager = new OpenClawEngineManager();
+    try {
+      await manager.warmWorkspace(dirKnowl);
+
+      const h = await manager.getHandle(dirKnowlCloud);
+      expect(h).toBeDefined();
+      expect(path.resolve(h!.projectRoot)).toBe(path.resolve(dirKnowlCloud));
+
+      const dirKnowlSrc = path.join(dirKnowl, 'src');
+      await fs.mkdir(dirKnowlSrc, { recursive: true });
+
+      const hNested = await manager.getHandle(dirKnowlSrc);
+      expect(hNested).toBeDefined();
+      expect(path.resolve(hNested!.projectRoot)).toBe(path.resolve(dirKnowl));
+    } finally {
+      await manager.releaseAll();
+    }
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'a Windows cwd in different casing reuses the warmed handle instead of opening the project twice',
+    async () => {
+      // A hook payload's `cwd` reports `D:\project` while `process.cwd()` reports `d:\project`.
+      // `path.relative` already folds case, so `isWithin` was never the gap; the handle map was
+      // keyed by the raw root, so a second warm in the other casing opened a second handle.
+      const dirProject = path.join(scratchDir, 'CasedProject');
+      await fs.mkdir(dirProject, { recursive: true });
+      execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirProject, encoding: 'utf8' });
+
+      const manager = new OpenClawEngineManager();
+      try {
+        const warmed = await manager.warmWorkspace(dirProject);
+        expect(warmed).toBeDefined();
+
+        const swapCase = (s: string) =>
+          s.replace(/[a-zA-Z]/g, (c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
+        const recased = swapCase(dirProject);
+        expect(recased).not.toBe(dirProject);
+
+        expect(await manager.warmWorkspace(recased)).toBe(warmed);
+        expect(await manager.getHandle(path.join(recased, 'src'))).toBe(warmed);
+      } finally {
+        await manager.releaseAll();
+      }
+    },
+  );
+
+  it('getHandle prefers the longest containing root, so a nested project resolves by ownership not open order', async () => {
+    const dirMono = path.join(scratchDir, 'mono');
+    const dirApi = path.join(dirMono, 'packages', 'api');
+    await fs.mkdir(dirApi, { recursive: true });
+
+    // `knowl init` refuses to nest under an initialized ancestor, so the inner project is
+    // created first -- the state a subpackage that predates its monorepo's memory ends up in.
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirApi, encoding: 'utf8' });
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirMono, encoding: 'utf8' });
+
+    const manager = new OpenClawEngineManager();
+    try {
+      // Outer warmed first: first-match-wins would hand the outer handle to a cwd inside `api`.
+      const outer = await manager.warmWorkspace(dirMono);
+      const inner = await manager.warmWorkspace(dirApi);
+      expect(outer).toBeDefined();
+      expect(inner).toBeDefined();
+      expect(inner).not.toBe(outer);
+
+      const dirApiSrc = path.join(dirApi, 'src');
+      await fs.mkdir(dirApiSrc, { recursive: true });
+
+      expect(await manager.getHandle(dirApiSrc)).toBe(inner);
+      expect(await manager.getHandle(dirApi)).toBe(inner);
+      expect(await manager.getHandle(path.join(dirMono, 'packages'))).toBe(outer);
+      expect(await manager.getHandle(dirMono)).toBe(outer);
+    } finally {
+      await manager.releaseAll();
+    }
+  });
 });
 
 describe('OpenClaw engine manager: an unverifiable database is not opened', () => {

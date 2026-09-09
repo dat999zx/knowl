@@ -1,9 +1,38 @@
+import path from 'node:path';
 import { createClient } from '@libsql/client';
 import {
+  canonicalProjectRoot,
   openProject,
   KNOWL_MIGRATION_LEVEL,
   type ProjectHandle,
 } from '@dat999zx/knowl/plugin';
+
+/**
+ * True when `cwd` is `root` or somewhere beneath it -- a path boundary, not a string prefix.
+ *
+ * Both sides are canonical so the check agrees with the keys of `handles` and `disabledRoots`.
+ * `path.relative` already folds case on win32, so the fold here is not what makes `D:\project`
+ * match `d:\project`; it is what keeps this one rule the same as the map lookups.
+ */
+function isWithin(root: string, cwd: string): boolean {
+  const rel = path.relative(canonicalProjectRoot(root), canonicalProjectRoot(cwd));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * The cached handle whose root is the nearest ancestor of `cwd` -- the longest containing
+ * root wins, so a project nested inside another (`mono` and `mono/packages/api`) resolves by
+ * ownership rather than by which one was warmed first. Same rule `findProjectRoot` applies
+ * walking up to the nearest marker.
+ */
+function findCachedHandle(handles: Iterable<ProjectHandle>, cwd: string): ProjectHandle | undefined {
+  let best: ProjectHandle | undefined;
+  for (const handle of handles) {
+    if (!isWithin(handle.projectRoot, cwd)) continue;
+    if (!best || handle.projectRoot.length > best.projectRoot.length) best = handle;
+  }
+  return best;
+}
 
 export interface HostLogger {
   warn(message: string, ...args: unknown[]): void;
@@ -120,21 +149,21 @@ export class OpenClawEngineManager {
   }
 
   isDisabled(projectRoot: string): boolean {
-    return this.disabledRoots.has(projectRoot);
+    return this.disabledRoots.has(canonicalProjectRoot(projectRoot));
   }
 
   getDisabledReason(projectRoot: string): string | undefined {
-    return this.disabledRoots.get(projectRoot);
+    return this.disabledRoots.get(canonicalProjectRoot(projectRoot));
   }
 
   async getHandle(cwd: string): Promise<ProjectHandle | null> {
-    const cached = Array.from(this.handles.values()).find((h) => cwd.startsWith(h.projectRoot));
+    const cached = findCachedHandle(this.handles.values(), cwd);
     if (cached) return cached;
     return await this.warmWorkspace(cwd);
   }
 
   async warmWorkspace(cwd: string): Promise<ProjectHandle | null> {
-    if (this.disabledRoots.has(cwd)) {
+    if (this.disabledRoots.has(canonicalProjectRoot(cwd))) {
       return null;
     }
 
@@ -148,7 +177,10 @@ export class OpenClawEngineManager {
 
     if (!handle) return null;
 
-    const root = handle.projectRoot;
+    // Keyed by the canonical root: on Windows a hook payload's `cwd` reports `D:\project`
+    // while `process.cwd()` reports `d:\project`, and a raw key would open the same project
+    // twice and split one session across two handles.
+    const root = canonicalProjectRoot(handle.projectRoot);
     if (this.disabledRoots.has(root)) {
       await handle.release();
       return null;
@@ -200,7 +232,7 @@ export class OpenClawEngineManager {
 
   async releaseWorkspace(cwd: string): Promise<void> {
     const matching = Array.from(this.handles.entries()).filter(
-      ([root]) => cwd === root || cwd.startsWith(root),
+      ([root]) => isWithin(root, cwd),
     );
     for (const [root, handle] of matching) {
       this.handles.delete(root);

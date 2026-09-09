@@ -449,30 +449,13 @@ export default definePluginEntry({
       }, api.logger);
     });
 
-    // Session start: maps session_start -> session-start.
-    // Warms workspace handle in memory so initial write gate avoids cold open latency.
+    // Session start: warms the handle so the first gate is not a cold open; does NOT
+    // touch the lifecycle because OpenClaw discards this hook's return and the card would
+    // be lost -- the first before_prompt_build binds the session and carries it.
     api.on('session_start', async (event, ctx) => {
       await safely(async () => {
         const cwd = resolveWorkspace(event, ctx);
-
-        const handle = await manager.warmWorkspace(cwd);
-        if (!handle) return;
-
-        const raw: Record<string, unknown> = {
-          cwd,
-          sessionId: ctx?.sessionId ?? ctx?.sessionKey ?? (event as Record<string, unknown>)?.sessionId ?? (event as Record<string, unknown>)?.sessionKey ?? 'openclaw-session',
-          agentId: ctx?.agentId ?? (event as Record<string, unknown>)?.agentId,
-          agentType: (event as Record<string, unknown>)?.agentType,
-        };
-
-        const payload = readLifecyclePayloadObject(raw);
-        const normalized = normalizeHostHook('openclaw', 'session_start', payload as Record<string, unknown>);
-
-        await withDeadline(
-          manager.getObserverDeadlineMs(),
-          () => handle.lifecycle(normalized),
-          null,
-        );
+        await manager.warmWorkspace(cwd);
       }, api.logger);
     });
 
