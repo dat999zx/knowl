@@ -1147,7 +1147,13 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       // later reads zero when it means "I no longer know". Keyed on the conversation and not on
       // `started.session.id`, which is turn-scoped and would scatter one conversation's writes
       // across a row per turn.
-      if (isDurableWriteTool(input.knowlToolName)) {
+      //
+      // A failed call is not a write. `knowl_store` that was refused for a secret, or that threw,
+      // produced nothing and stored nothing -- counting it silences the silence nudge for the
+      // rest of the conversation and settles pending lessons as though the correction had been
+      // recorded, which is the one outcome those two features exist to prevent. The turn counter
+      // below already excludes failures for exactly this reason; this counter did not.
+      if (input.status !== 'failed' && isDurableWriteTool(input.knowlToolName)) {
         await recordDurableWrite(conversationKey(input));
         // A durable write settles the pending lessons that were already on the table when it
         // landed -- temporal, not blanket. Clearing everything on any write would be the same
