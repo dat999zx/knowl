@@ -105,4 +105,39 @@ describe('knowl_query response bound', () => {
     expect(result.content).toHaveLength(1);
     expect(JSON.parse(String(result.content[0].text))).toHaveLength(2);
   });
+
+  /**
+   * The historical branch answers from a different code path and used to answer without a
+   * ceiling at all -- measured at 43,001 characters against 10,545 on the live path for the
+   * same store. A default limit narrowed the opening to callers who name a `limit`, which is
+   * precisely the caller who reaches the ceiling. An argument about WHEN should not decide how
+   * much comes back.
+   */
+  it('bounds a historical read the same way it bounds a live one', async () => {
+    const asOf = new Date(Date.now() + 60_000).toISOString();
+    const result = await call('knowl_query', {
+      query: 'deployment rollback procedure', limit: SEEDED_ITEMS, asOf,
+    });
+    const [block, notice] = result.content;
+    const items = JSON.parse(String(block.text));
+
+    expect(block.text.length).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
+    // Bodies before results, exactly as the live path trades them: nothing is dropped.
+    expect(items).toHaveLength(SEEDED_ITEMS);
+    expect(items[items.length - 1].truncated).toBe(true);
+    expect(items[items.length - 1].id).toBeTruthy();
+
+    // And the same sentence, so an agent meeting a short page learns the same way out of it
+    // whichever branch produced it.
+    expect(String(notice.text)).toContain('RESPONSE BOUNDED');
+    expect(String(notice.text)).toContain('`id`');
+  });
+
+  it('leaves a historical read that already fits as one parseable block', async () => {
+    const asOf = new Date(Date.now() + 60_000).toISOString();
+    const result = await call('knowl_query', { query: 'deployment rollback procedure', limit: 2, asOf });
+
+    expect(result.content).toHaveLength(1);
+    expect(JSON.parse(String(result.content[0].text))).toHaveLength(2);
+  });
 });
