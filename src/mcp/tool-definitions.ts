@@ -795,7 +795,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_gc_preview',
           annotations: { title: 'Preview retired-memory collection', readOnlyHint: true, openWorldHint: false },
-          description: 'Preview knowledge garbage collection recommendations without changing the database. Use to find duplicate, stale, or cold memory before applying GC.',
+          description: 'Preview knowledge garbage collection recommendations without changing the database. Use to find duplicate, stale, or cold memory before applying GC. Returns `purgeItemIds`: the ids knowl_gc_apply will not delete unless they are handed back to it.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -893,10 +893,16 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_gc_apply',
           annotations: { title: 'Delete retired memory', destructiveHint: true, openWorldHint: false },
-          description: 'Apply knowledge garbage collection only after knowl_gc_preview and explicit user approval; this may purge, archive, or compress records.',
+          description: 'Apply knowledge garbage collection only after knowl_gc_preview and explicit user approval; this may purge, archive, or compress records. Purge is the one action with no undo, so it deletes nothing unless `purgeItemIds` names the ids the preview listed and the user approved. Archive and compress still run without it.',
           inputSchema: {
             type: 'object',
-            properties: {},
+            properties: {
+              purgeItemIds: {
+                type: 'array',
+                items: { type: 'string', minLength: 1 },
+                description: 'Item ids from the `purgeItemIds` of a knowl_gc_preview run, approved by the user. Only ids that are STILL purge candidates are deleted, so an item written since that preview is never destroyed by this call. Omit to archive and compress without deleting anything.',
+              },
+            },
           },
         },
         {

@@ -222,7 +222,13 @@ describe('GC protections', () => {
     });
     await setUpdatedAt(older.id, daysAgo(5));
 
-    const result = await applyKnowledgeGc(projectId, { now: NOW_ISO });
+    // Approved from a preview, because purge is the one action an apply will not take on a
+    // set nobody read: an atom written between the two would otherwise be destroyed unseen.
+    const preview = await previewKnowledgeGc(projectId, { now: NOW_ISO });
+    const result = await applyKnowledgeGc(projectId, {
+      now: NOW_ISO,
+      approvedPurgeIds: preview.candidates.filter(c => c.action === 'purge').map(c => c.itemId),
+    });
     expect(result.summary.purge).toBeGreaterThanOrEqual(1);
     expect(result.prunedTombstones).toBe(0);
     expect((await listTombstones()).map(tombstone => tombstone.id)).toContain(older.id);

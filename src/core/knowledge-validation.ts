@@ -71,6 +71,35 @@ function reject(code: string, message: string): never {
 }
 
 /**
+ * The scan set as a projection, so a caller cannot hand over less than it writes.
+ *
+ * `stringFields` below reads `tags`, `alternatives` and `steps`, but three callers built the
+ * object they passed as an object literal of exactly five fields -- title, content, reasoning,
+ * source, affectedPaths -- and the two array columns fell on the floor. An absent field is not
+ * a clean field: `arrayField` returns `[]` for it and the scan silently covers nothing, so the
+ * store-wide audit answered "no integrity findings" over a row whose `tags` held a live
+ * credential, `restoreSnapshot` certified such a snapshot, and import accepted it from a peer.
+ *
+ * Take the projection off the record rather than retyping the literal: a column added later is
+ * then one entry in `SCANNED_FIELDS` instead of four literals that have to be found again.
+ * Only keys the record actually carries are copied, which is what lets the update path pass
+ * `updates` directly and still scan exactly what it is about to write.
+ */
+const SCANNED_FIELDS = [
+  'title', 'content', 'reasoning', 'source', 'affectedPaths', 'tags', 'alternatives', 'steps',
+  'rawOutput',
+] as const;
+
+export function scannableFields(record: unknown): KnowledgeWriteInput {
+  const source = (record ?? {}) as Record<string, unknown>;
+  const projected: Record<string, unknown> = {};
+  for (const field of SCANNED_FIELDS) {
+    if (source[field] !== undefined) projected[field] = source[field];
+  }
+  return projected as KnowledgeWriteInput;
+}
+
+/**
  * Every field a secret can arrive in, not just the prose ones.
  *
  * `tags`, `alternatives` and skill `steps` are all writable from the MCP surface, and all
@@ -87,10 +116,11 @@ function stringFields(input: KnowledgeWriteInput): Array<[string, string]> {
       : [];
 
   const anyInput = input as unknown as Record<string, unknown>;
-  // A skill step is an object; its instruction is the part a caller writes prose into.
+  // A skill step is an object whose instruction is the prose -- or, on the repository's own
+  // `steps` parameter, the bare instruction string.
   const steps = Array.isArray(anyInput.steps)
     ? anyInput.steps.flatMap((step, index): Array<[string, string]> => {
-      const instruction = (step as Record<string, unknown> | null)?.instruction;
+      const instruction = typeof step === 'string' ? step : (step as Record<string, unknown> | null)?.instruction;
       return typeof instruction === 'string' ? [[`steps[${index}].instruction`, instruction]] : [];
     })
     : [];

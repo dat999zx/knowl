@@ -1176,10 +1176,18 @@ describe('Storage Layer', () => {
     } as any);
     await setKnowledgeItemUpdatedAt(archived.id, '2026-01-03T00:00:00.000Z');
 
-    const result = await applyKnowledgeGc(projectId, {
+    const gcOptions = {
       now: '2026-07-05T00:00:00.000Z',
       staleStateDays: 0,
       compressArchivedDays: 0,
+    };
+    // Approved from a preview, because purge is the one action apply will not take on a set
+    // nobody read: an atom written between preview and apply would otherwise be destroyed
+    // unseen, and purge is the one action with no undo.
+    const preview = await previewKnowledgeGc(projectId, gcOptions);
+    const result = await applyKnowledgeGc(projectId, {
+      ...gcOptions,
+      approvedPurgeIds: preview.candidates.filter(entry => entry.action === 'purge').map(entry => entry.itemId),
     });
 
     expect(result.summary.purge).toBeGreaterThanOrEqual(1);

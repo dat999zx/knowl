@@ -5,9 +5,10 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { normalizeSkillFilePath, validateSkillName } from '../core/skill-paths.js';
 import { createKnowledgeCommit, listKnowledgeItems } from './repository.js';
+import { normalizeConflictKey, normalizeConflictScope } from './conflicts.js';
 import { listAssertions } from './assertions.js';
 import { getClient } from './database.js';
-import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
+import { scannableFields, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { listEvidenceForItem } from './evidence-repository.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 import { listTombstones } from './tombstones.js';
@@ -159,6 +160,14 @@ export type ImportResult = {
    * asked for: divergence was decided on the content rather than on what the file claimed.
    */
   hashRepaired?: number;
+  /**
+   * Incoming items refused because an active local item already holds their exclusive
+   * identity. Named rather than counted alone: `--on-divergence` cannot resolve this one, so
+   * the message that tells a user to try another policy would be wrong without the ids.
+   *
+   * Counted in `conflicts`, which is what makes the import decline rather than apply.
+   */
+  exclusiveConflicts?: Array<{ id: string; title: string; heldBy: string }>;
   /** Present only on a dry run: what the counts WOULD have been. */
   wouldApply?: { inserted: number; identical: number; updated: number; keptLocal: number };
 };
@@ -654,7 +663,10 @@ export async function importKnowledge(
   }
 
   for (const incoming of items) {
-    validateKnowledgeWrite({ title: incoming.title, content: incoming.content, reasoning: incoming.reasoning, source: incoming.source, affectedPaths: incoming.affectedPaths });
+    // The whole incoming record's scannable columns, not the five prose ones. A peer's export
+    // is the likeliest carrier of a row written before `tags` and `alternatives` were scanned
+    // at all, and this is the door that decides whether it lands here.
+    validateKnowledgeWrite(scannableFields(incoming));
     // The lifecycle fields come along so `classifyIncomingItem` can derive a fingerprint for
     // a row whose `lifecycle_hash` is NULL -- which is every row written before the column
     // was added, since it is not backfilled.
@@ -715,6 +727,65 @@ export async function importKnowledge(
     });
   }
 
+  /**
+   * One active value per exclusive identity, held on this door too.
+   *
+   * `conflictExclusive` means exactly one active item may claim a key within a scope, and a
+   * direct second write is refused with `KNOWLEDGE_CONFLICT`. Import wrote raw SQL and called
+   * nothing, so a peer's export landed the second active row and reported `conflicts: 0` --
+   * the invariant broken silently, by the one path that carries a whole store at a time.
+   *
+   * Identities are normalised on both sides. A key written through an older update path was
+   * stored raw, so comparing the stored forms lets one logical identity sit in two rows and
+   * never collide, which is the same hole `auditConflictIdentities` repairs.
+   */
+  const exclusiveIdentity = (key: unknown, scope: unknown): string | null => {
+    if (typeof key !== 'string' || key.trim() === '') return null;
+    const normalized = normalizeConflictScope(scope as Record<string, unknown> | null | undefined);
+    return `${normalizeConflictKey(key)} ${normalized ? JSON.stringify(normalized) : ''}`;
+  };
+  const heldExclusive = new Map<string, string>();
+  for (const row of (await client.execute(
+    `SELECT id, conflict_key, conflict_scope FROM knowledge_items
+     WHERE status = 'active' AND conflict_exclusive = 1 AND conflict_key IS NOT NULL`,
+  )).rows) {
+    let scope: unknown;
+    // A scope that will not parse is treated as no scope rather than failing the import: the
+    // audit reports the malformed row, and refusing every import until someone fixes it would
+    // be a worse answer than comparing it on its key alone.
+    try { scope = row.conflict_scope === null ? null : JSON.parse(String(row.conflict_scope)); } catch { scope = null; }
+    const identity = exclusiveIdentity(row.conflict_key, scope);
+    if (identity) heldExclusive.set(identity, String(row.id));
+  }
+  // A holder this import retires, archives or deletes releases its identity first, or an
+  // export that replaces a value would be refused for colliding with the value it replaces.
+  const released = new Set<string>(tombstones.map(tombstone => String(tombstone.id)));
+  for (const entry of plan) {
+    if (entry.action === 'keep-local' || entry.action === 'identical') continue;
+    if (entry.item.status !== 'active') released.add(String(entry.item.id));
+  }
+  for (const [identity, holder] of [...heldExclusive]) {
+    if (released.has(holder)) heldExclusive.delete(identity);
+  }
+
+  const exclusiveConflicts: ImportResult['exclusiveConflicts'] = [];
+  for (const entry of plan) {
+    if (entry.action === 'keep-local' || entry.action === 'identical') continue;
+    const item = entry.item;
+    if (!item.conflictExclusive || item.status !== 'active') continue;
+    const identity = exclusiveIdentity(item.conflictKey, item.conflictScope);
+    if (!identity) continue;
+    const holder = heldExclusive.get(identity);
+    // Two incoming items claiming one identity collide with each other for the same reason,
+    // which is why the winner is recorded rather than only the local rows being consulted.
+    if (holder !== undefined && holder !== String(item.id)) {
+      exclusiveConflicts.push({ id: String(item.id), title: String(item.title ?? ''), heldBy: holder });
+      continue;
+    }
+    heldExclusive.set(identity, String(item.id));
+  }
+  conflicts += exclusiveConflicts.length;
+
   const counts = {
     inserted: plan.filter(entry => entry.action === 'insert').length,
     identical: plan.filter(entry => entry.action === 'identical').length,
@@ -734,6 +805,7 @@ export async function importKnowledge(
       conflicts, blockedByTombstone, applied: false, ownership,
       divergent: options.dryRun ? divergent : [],
       ...(hashRepaired ? { hashRepaired } : {}),
+      ...(exclusiveConflicts.length ? { exclusiveConflicts } : {}),
       ...(options.dryRun ? { wouldApply: counts } : {}),
     };
   }

@@ -702,6 +702,28 @@ async function foreignKeyTargets(client: Client, table: string): Promise<string[
   return rows.rows.map(row => String(row.table));
 }
 
+/**
+ * Rebuild the skill tables onto the right parent, WITHOUT carrying rows the new key forbids.
+ *
+ * The rows this drops are the ones the wrong foreign key let accumulate: their skill was
+ * deleted and nothing cascaded, which is the whole reason the key is being replaced. The
+ * replacement is `ON DELETE CASCADE`, so copying them across writes rows the schema says
+ * cannot exist -- and every read of a skill joins through `knowledge_items`, so they were
+ * already unreachable. This completes the cascade that never ran rather than destroying
+ * anything a caller could still see.
+ *
+ * Not carrying them is also what keeps the bootstrap survivable. This runs inside the
+ * migration transaction under `defer_foreign_keys`, so a copied orphan is a deferred violation
+ * and a deferred violation fails the COMMIT -- which rolls back the ENTIRE bootstrap, leaving
+ * `application_id` at 0 and ~40 tables uncreated. Every later open then runs the same repair
+ * and fails in the same place, `knowl doctor` included, because doctor opens the store too.
+ *
+ * Whether that failure announced itself was luck. `DROP TABLE` decrements the deferred counter
+ * once per violating row it deletes, so a stale key pointing at a table that no longer exists
+ * cancelled its own violation and committed with the forbidden row in place; a stale key
+ * pointing at a table that still exists cancelled nothing and bricked the store permanently.
+ * Filtering removes both outcomes -- the counter never moves.
+ */
 async function repairSkillForeignKeys(client: Client): Promise<void> {
   const staleSteps = (await foreignKeyTargets(client, 'skill_steps'))
     .some(target => target !== 'knowledge_items');
@@ -712,7 +734,11 @@ async function repairSkillForeignKeys(client: Client): Promise<void> {
     return;
   }
 
-  await client.execute('PRAGMA foreign_keys = OFF;');
+  // No `PRAGMA foreign_keys = OFF` here. The only caller runs inside the migration
+  // transaction, where that pragma is a documented no-op -- see the comment at the BEGIN --
+  // so it read as protection this rebuild never had. `defer_foreign_keys` is what actually
+  // governs, and it postpones every check to COMMIT, where a failure rolls back the entire
+  // bootstrap rather than this function.
 
   if (staleSteps) {
     await client.execute('ALTER TABLE skill_steps RENAME TO skill_steps_stale_fk;');
@@ -726,7 +752,8 @@ async function repairSkillForeignKeys(client: Client): Promise<void> {
     await client.execute(`
       INSERT INTO skill_steps (id, knowledge_item_id, step_order, instruction, created_at)
       SELECT id, knowledge_item_id, step_order, instruction, created_at
-      FROM skill_steps_stale_fk;
+      FROM skill_steps_stale_fk
+      WHERE knowledge_item_id IN (SELECT id FROM knowledge_items);
     `);
     await client.execute('DROP TABLE skill_steps_stale_fk;');
   }
@@ -742,12 +769,11 @@ async function repairSkillForeignKeys(client: Client): Promise<void> {
     await client.execute(`
       INSERT INTO skill_metadata (knowledge_item_id, usage_count, success_count, last_used)
       SELECT knowledge_item_id, usage_count, success_count, last_used
-      FROM skill_metadata_stale_fk;
+      FROM skill_metadata_stale_fk
+      WHERE knowledge_item_id IN (SELECT id FROM knowledge_items);
     `);
     await client.execute('DROP TABLE skill_metadata_stale_fk;');
   }
-
-  await client.execute('PRAGMA foreign_keys = ON;');
 }
 
 /**
