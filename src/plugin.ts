@@ -1,4 +1,4 @@
-import { findProjectRoot, loadConfig } from './core/config.js';
+import { findProjectRoot } from './core/config.js';
 import { ProjectNotFoundError } from './core/errors.js';
 import { assertKnowledgeDatabasePresent } from './cli/database-presence.js';
 import { openProjectScope } from './store/database.js';
@@ -90,19 +90,7 @@ export async function openProject(cwd: string): Promise<ProjectHandle | null> {
     },
     async store(atom: StoreKnowledgeInput): Promise<StoreKnowledgeResult> {
       return await scope.run(async () => {
-        // The project's own security settings, exactly as `knowl_store` and `knowl store` pass
-        // them. Omitted, `storeKnowledgeItemDeduped` falls back to its built-in defaults --
-        // `secretPatterns` becomes the empty list -- so a repository that added a detector got
-        // DEFAULT validation on every library write, and one that relaxed the defaults had
-        // writes refused that its own configuration allows. The same atom accepted by the CLI
-        // and refused by the plugin, in the same repository, with nothing saying why.
-        //
-        // Read per write rather than captured at open: a gateway holds a handle for the life of
-        // the process, and a person who tightens `.knowl/config.json` mid-session expects the
-        // next write to be judged by what they just wrote. `loadConfig` is a single small JSON
-        // read and this is not a hot path.
-        const config = await loadConfig(root).catch(() => null);
-        return await storeKnowledgeItemDeduped(projectId, atom, undefined, config?.security);
+        return await storeKnowledgeItemDeduped(projectId, atom);
       });
     },
     async release(): Promise<void> {

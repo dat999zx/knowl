@@ -626,9 +626,39 @@ async function resolveSupersedeTarget(
  */
 let workspaceCache: { root: string; workspace: ActiveWorkspace | null } | null = null;
 
-/** Tests only: the cache is process-lifetime and would otherwise leak between fixtures. */
+/** Tests only: the caches are process-lifetime and would otherwise leak between fixtures. */
 export function resetWriteWorkspaceCache(): void {
   workspaceCache = null;
+  securityCache = null;
+}
+
+/**
+ * The project's own secret detectors, for a caller that passed none.
+ *
+ * Three callers omitted `validationOptions` -- the library plugin, the skill indexer and
+ * session-candidate promotion -- and each fell through to `validateKnowledgeWrite`'s built-in
+ * default, where `secretPatterns` is the empty list. That is weaker than `DEFAULT_CONFIG`, so an
+ * atom the CLI refused was accepted by the plugin in the same repository. Defaulting here, where
+ * every write passes, fixes all of them at once and any caller added later.
+ *
+ * Cached per config root for the reason `activeWorkspaceForWrite` is: a config read per write
+ * crashed a 2500-write run. A config edited mid-process is seen at the next process, which is
+ * what the MCP server already does by capturing config at startup.
+ */
+let securityCache: { root: string; security: KnowledgeWriteValidationOptions } | null = null;
+
+async function securityForWrite(): Promise<KnowledgeWriteValidationOptions | undefined> {
+  let root: string;
+  try {
+    root = getConfigRoot();
+  } catch {
+    return undefined; // no open store: the built-in checks still run
+  }
+  if (securityCache?.root === root) return securityCache.security;
+  const { DEFAULT_CONFIG, loadConfig } = await import('../core/config.js');
+  const security = await loadConfig(root).then(config => config.security).catch(() => DEFAULT_CONFIG.security);
+  securityCache = { root, security };
+  return security;
 }
 
 /**
@@ -760,6 +790,7 @@ export async function storeKnowledgeItemDeduped(
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<StoreKnowledgeResult> {
   assertConfidenceInRange(input.confidence, input.title);
+  validationOptions ??= await securityForWrite();
   const conflicts = await checkKnowledgeConflict(input);
   if (conflicts.length) throw new KnowledgeConflictError(conflicts.map(item => ({ id: item.id, title: item.title })));
   const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, input);
@@ -862,6 +893,7 @@ export async function storeKnowledgeAtomsDeduped(
   // guard is hoisted out of the loop. A batch is all-or-nothing, so a per-atom check would
   // refuse the batch after opening a transaction the caller was told nothing about.
   for (const atom of atoms) assertConfidenceInRange(atom.confidence, atom.title);
+  validationOptions ??= await securityForWrite();
   // Resolved once for the whole batch, not once per atom. Ten atoms against three peers is
   // thirty workspace resolutions inside the loop, for something that cannot change mid-batch.
   const workspace = await activeWorkspaceForWrite();
