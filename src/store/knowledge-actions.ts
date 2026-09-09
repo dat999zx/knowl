@@ -7,6 +7,7 @@ import { getCurrentGitCommit } from './drift.js';
 import { KnowledgeWriteValidationOptions } from '../core/types.js';
 import { attachEvidenceToKnowledge } from './evidence-repository.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
+import { withClientTransaction } from './database.js';
 
 /**
  * Queue a committed write for the team, if this repo is connected.
@@ -194,34 +195,47 @@ export async function updateKnowledgeItemWithCommit(
     : (options?.sourceCommit !== undefined ? options.sourceCommit
     : autoSourceCommit);
 
-  const updated = await repo.updateKnowledgeItem(id, {
-    ...updates,
-    ...(resolvedSourceCommit !== undefined ? { sourceCommit: resolvedSourceCommit } : {}),
-    ...(shouldRefreshFreshness || options?.freshness ? { freshness: options?.freshness || 'fresh' } : {}),
-  }, undefined, undefined, options?.validationOptions);
-  let action: CommitChange['action'] = 'update';
-  if (updates.status && updates.status !== beforeItem.status) {
-    if (updates.status === 'active') {
-      action = 'restore';
-    } else if (updates.status === 'archived') {
-      action = 'archive';
-    } else if (updates.status === 'deprecated') {
-      action = 'deprecate';
-    } else if (updates.status === 'rejected') {
-      action = 'reject';
-    } else if (updates.status === 'superseded') {
-      action = 'supersede';
+  // The row and the record of the change land together or not at all -- the invariant
+  // `storeKnowledgeItemDeduped` already holds for a write and its supersession.
+  //
+  // They used to be two transactions on two connections. If `createKnowledgeCommit` threw,
+  // the caller was told the update failed while the row had already changed: an item left
+  // `superseded` with `supersededById` set and nothing logging it. Everything that reads the
+  // change LOG rather than the row then misses the retirement -- the workspace change notice,
+  // so a teammate goes on reading a retired atom as current; blast radius, which decides what
+  // to re-check when something turns out to be wrong; and `readCommitHead`, which is
+  // `MAX(rowid)` of that table and so tells the next session nothing happened.
+  const updated = await withClientTransaction(async (conn) => {
+    const written = await repo.updateKnowledgeItem(id, {
+      ...updates,
+      ...(resolvedSourceCommit !== undefined ? { sourceCommit: resolvedSourceCommit } : {}),
+      ...(shouldRefreshFreshness || options?.freshness ? { freshness: options?.freshness || 'fresh' } : {}),
+    }, undefined, conn, options?.validationOptions);
+    let action: CommitChange['action'] = 'update';
+    if (updates.status && updates.status !== beforeItem.status) {
+      if (updates.status === 'active') {
+        action = 'restore';
+      } else if (updates.status === 'archived') {
+        action = 'archive';
+      } else if (updates.status === 'deprecated') {
+        action = 'deprecate';
+      } else if (updates.status === 'rejected') {
+        action = 'reject';
+      } else if (updates.status === 'superseded') {
+        action = 'supersede';
+      }
     }
-  }
 
-  await repo.createKnowledgeCommit(projectId, options?.commitMessage ?? `Update item: ${updated.title}`, [
-    {
-      itemId: id,
-      action,
-      before: beforeItem,
-      after: updated,
-    },
-  ]);
+    await repo.createKnowledgeCommit(projectId, options?.commitMessage ?? `Update item: ${written.title}`, [
+      {
+        itemId: id,
+        action,
+        before: beforeItem,
+        after: written,
+      },
+    ], conn);
+    return written;
+  });
 
   // Demotion to deprecated/rejected says "this was wrong", which implicates the batch
   // that produced it — unlike a supersede, which as often means "this is outdated" and
@@ -243,8 +257,10 @@ export async function updateKnowledgeItemWithCommit(
     await indexKnowledgeItemsBestEffort(projectId, [updated]);
   }
 
-  // `repo.updateKnowledgeItem` above is called with no `dbConnection`, so it committed on its
-  // own connection before this line -- this is genuinely post-commit rather than merely late.
+  // Outside the transaction above, which has committed by this line -- genuinely post-commit
+  // rather than merely late. Staging a row a rollback then removed is the failure this
+  // ordering prevents, and it is the reason the three best-effort side effects sit here
+  // rather than inside.
   //
   // A published atom re-stages here, which is how a correction reaches the team at all: an atom
   // edited in place would otherwise stay at the version the workspace already holds.
