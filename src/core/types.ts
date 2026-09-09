@@ -575,6 +575,14 @@ export type KnowledgeWriteInput = {
   source?: string | null;
   affectedPaths?: string[] | null;
   rawOutput?: string | null;
+  /**
+   * Declared, not merely read off `any`. The scanner has always looked at these three, but the
+   * type stopped short at the prose fields -- so a caller assembling an input by hand got no
+   * signal that leaving them out narrows the scan, and three of them left them out.
+   */
+  tags?: string[] | null;
+  alternatives?: string[] | null;
+  steps?: Array<{ instruction?: string | null } | null> | null;
 };
 
 export type KnowledgeWriteValidationOptions = {

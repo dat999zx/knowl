@@ -29,7 +29,7 @@ import {
 import { DatabaseError, KnowledgeConflictError } from '../core/errors.js';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, hashKnowledgeLifecycle, normalizeAffectedPaths } from './freshness.js';
 import { currentAuthorRepo, resolveWriteDefaults } from './write-ownership.js';
-import { assertConfidenceInRange, KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
+import { assertConfidenceInRange, KnowledgeValidationError, scannableFields, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
 export const LOCAL_PROJECT_ID = 'local';
 
@@ -360,11 +360,15 @@ export async function updateKnowledgeItem(
     // callers of a metadata-only change have no config to pass. `supersedeKnowledgeItem`
     // writes just a status, so an item whose accepted content happened to trip a detector
     // -- a hyphenated model name reads as a high-entropy token -- could never be retired.
+    //
+    // Projected off `updates` rather than retyped as a literal, because the literal listed five
+    // fields while `dbUpdates` below spreads the whole argument: `tags` and `alternatives` were
+    // written and never scanned. Creating an item with a credential in `tags` was refused;
+    // creating it clean and then updating it with the same credential in `tags` was accepted.
+    // `scannableFields` copies only the keys the caller actually supplied, so "only what this
+    // update writes" still holds.
     const written = {
-      ...(updates.title !== undefined ? { title: updates.title } : {}),
-      ...(updates.content !== undefined ? { content: updates.content } : {}),
-      ...(updates.reasoning !== undefined ? { reasoning: updates.reasoning } : {}),
-      ...(updates.source !== undefined ? { source: updates.source } : {}),
+      ...scannableFields(updates),
       ...(updates.affectedPaths !== undefined ? { affectedPaths } : {}),
     };
     validateKnowledgeWrite(written, validationOptions);

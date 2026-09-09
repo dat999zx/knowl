@@ -7,7 +7,7 @@ import { normalizeSkillFilePath, validateSkillName } from '../core/skill-paths.j
 import { createKnowledgeCommit, listKnowledgeItems } from './repository.js';
 import { listAssertions } from './assertions.js';
 import { getClient } from './database.js';
-import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
+import { scannableFields, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { listEvidenceForItem } from './evidence-repository.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 import { listTombstones } from './tombstones.js';
@@ -654,7 +654,10 @@ export async function importKnowledge(
   }
 
   for (const incoming of items) {
-    validateKnowledgeWrite({ title: incoming.title, content: incoming.content, reasoning: incoming.reasoning, source: incoming.source, affectedPaths: incoming.affectedPaths });
+    // The whole incoming record's scannable columns, not the five prose ones. A peer's export
+    // is the likeliest carrier of a row written before `tags` and `alternatives` were scanned
+    // at all, and this is the door that decides whether it lands here.
+    validateKnowledgeWrite(scannableFields(incoming));
     // The lifecycle fields come along so `classifyIncomingItem` can derive a fingerprint for
     // a row whose `lifecycle_hash` is NULL -- which is every row written before the column
     // was added, since it is not backfilled.

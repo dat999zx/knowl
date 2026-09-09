@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { KnowledgeWriteValidationOptions } from '../core/types.js';
-import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
+import { KnowledgeValidationError, scannableFields, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { getDb } from './database.js';
 import { isNormalizedConflictKey, normalizeConflictKey } from './conflicts.js';
 import { supersedeKnowledgeItem } from './repository.js';
@@ -128,13 +128,19 @@ export async function auditKnowledgeStore(
       findings.push({ code: 'invalid-status', severity: 'error', itemId: String(row.id), detail: 'Knowledge item has an invalid status.' });
     }
     try {
-      validateKnowledgeWrite({
+      // Every column the row holds, not the five prose ones. The audit exists to find the
+      // rows written before `tags` and `alternatives` were scanned at all -- and it was the
+      // one caller that could not, because it handed the validator an object those two
+      // columns were never copied into.
+      validateKnowledgeWrite(scannableFields({
         title: row.title,
         content: row.content,
         reasoning: row.reasoning,
         source: row.source,
         affectedPaths: affectedPaths ?? undefined,
-      }, validationOptions);
+        tags: tags ?? undefined,
+        alternatives: alternatives ?? undefined,
+      }), validationOptions);
     } catch (error) {
       if (error instanceof KnowledgeValidationError) {
         findings.push({ code: 'secret', severity: 'error', itemId: String(row.id), detail: `Knowledge validation failed: ${error.code}.` });
