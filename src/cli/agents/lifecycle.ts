@@ -22,9 +22,11 @@ export const ROOT_FIELDS = new Set([
   // shared main-thread row and SubagentStart/Stop cannot resolve an agent at all.
   'agent_id', 'agentId', 'agent_type', 'agentType',
   // The turn's ask and the turn's answer, for the fleet's one-line "what is this session on".
-  // `prompt` was already read by the correction-signal classifier in `host-hook.ts`, which
-  // could never fire in production because this list dropped the field before it arrived --
-  // a hook that computes from a field it never receives passes every test that bypasses stdin.
+  // `prompt` is also read by the correction-signal classifier in `host-hook.ts`, which this
+  // list dropped before it arrived -- a hook that computes from a field it never receives
+  // passes every test that bypasses stdin. Allowlisting it made the classifier REACHABLE, not
+  // live: on claude/codex/copilot/openhands the prompt event runs `agent-reminder`, which never
+  // calls the classifier, and Hermes sent the text under `extra` until its plugin hoisted it.
   // Neither reaches `payload`; see `errorText` / `assistantMessage` on NormalizedHostHook.
   'prompt', 'last_assistant_message',
   // Antigravity's payload is protojson: every key camelCase, the session under

@@ -79,7 +79,9 @@ const hermesBlock = (reason: string): HostOutput => ({ decision: 'block', reason
  * `agent/shell_hooks.py`): `hook_event_name`, `tool_name`, `tool_input`, `session_id`, `cwd`, and
  * the rest under `extra`. Those top-level keys are the ones the normaliser reads, so this profile
  * stays Claude's dialect on the way in, and `extra` still never reaches the engine -- the stdin
- * allowlist keeps root fields only.
+ * allowlist keeps root fields only. Which is why the plugin hoists the four other root keys the
+ * normaliser reads -- `prompt`, `status`, `error`, `last_assistant_message` -- out of `extra`
+ * itself (`_ROOT_KEYS` in the plugin): each was being sent, dropped, and read as absent.
  *
  * **Refusal**: `{"decision": "block", "reason"}` **and** exit 2, because the plugin reads both.
  * Same pair as OpenHands.
@@ -135,6 +137,11 @@ export const hermesProfile: HostProfile = {
   writeTools: ['write_file', 'patch'],
   readsFiles: (_event, tool) => tool === 'read_file',
   identity(raw): HostIdentity {
+    // Session only, on purpose. Hermes sends `turn_id` on pre_llm_call, the tool events and
+    // on_session_end but NOT on pre_verify (`get_pre_verify_continue_message` has no such
+    // kwarg), so keying turns on it would split one turn across two bindings and the stop
+    // nudge pre_verify carries would find neither. The engine resets a reused turn key's
+    // counters at every turn-start, which is what a per-turn key would have bought.
     return { externalSessionId: hostString(raw.session_id) };
   },
   normalizedEvent(hostEvent) {

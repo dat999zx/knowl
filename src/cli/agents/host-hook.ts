@@ -230,13 +230,25 @@ function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: 
   // Shell events already fingerprint on the command itself, so they were never affected.
   if (isShell) {
     const command = commandEvent(projectRoot, raw);
-    const failed = typeof raw.exit_code === 'number' && raw.exit_code !== 0;
+    const failed = (typeof raw.exit_code === 'number' && raw.exit_code !== 0) || stringValue(raw.status) === 'failed';
     // A non-zero exit is a problem this session hit, and the text is the only way to tell
     // whether another session hit the same one. Attached only on failure, so a passing
     // command's output never leaves the hook process at all.
     const exitedNonZero = failed || (typeof command.payload.exitCode === 'number' && command.payload.exitCode !== 0);
-    const errorText = exitedNonZero ? failedCommandOutput(raw) : undefined;
+    const errorText = exitedNonZero ? (failedCommandOutput(raw) ?? stringValue(raw.error)) : undefined;
     return { ...command, status: failed ? 'failed' : undefined, ...named, knowlTool, ...changeKeys, ...(errorText ? { errorText } : {}) };
+  }
+
+  // Claude names a failed tool call by event (PostToolUseFailure, handled by the caller);
+  // plugin hosts (Hermes, OpenClaw) report one tool event with `status: 'failed'` and the reason
+  // under `error`. Same outcome: an error event, never a checkpoint crediting a write that did
+  // not happen.
+  if (stringValue(raw.status) === 'failed') {
+    const errorText = stringValue(raw.error) ?? stringValue(recordValue(raw.error)?.message);
+    return {
+      type: 'error', status: 'failed', payload: { message: errorText ?? 'Tool failed' },
+      ...named, knowlTool, ...changeKeys, ...(errorText ? { errorText } : {}),
+    };
   }
 
   const captureKey = toolCaptureKey(toolName, input);
