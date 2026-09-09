@@ -208,8 +208,23 @@ export const KNOWL_SCHEMA_VERSION = 1;
  *
  * `KNOWL_SCHEMA_VERSION` again does not move: an older build selects the columns it knows and is
  * unaffected by one it never names.
+ *
+ * Level 17 adds `dissents` and `dissent_resolutions` with their two target indexes -- one repo's
+ * recorded disagreement with an atom another repo owns, and the owning repo's answer to it. Two
+ * new tables, no altered column, no backfill, so `KNOWL_SCHEMA_VERSION` stays at 1 on the same
+ * reasoning as levels 3, 4, 7 and 9: an older build opens this database, finds every table it
+ * knows intact, and never looks at these two.
+ *
+ * A backfill is not merely skipped but meaningless -- a dissent is an act someone performs, and
+ * no past act of disagreement was ever recorded anywhere to recover.
+ *
+ * The bump is load-bearing rather than bookkeeping, and in the direction level 6 records. Both
+ * tables are read on the hot path: `annotateDisputes` runs over every returned atom in a
+ * workspace. A store already stamped at level 16 by an installed build would skip
+ * `SCHEMA_STATEMENTS`, never create them, and every read would then hit "no such table" -- on
+ * ordinary queries, not just on the new command.
  */
-export const KNOWL_MIGRATION_LEVEL = 16;
+export const KNOWL_MIGRATION_LEVEL = 17;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

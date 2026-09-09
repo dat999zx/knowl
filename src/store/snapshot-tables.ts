@@ -47,6 +47,18 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // since -- which is precisely the window someone asking "was that threshold right?" is
   // asking about. An audit trail a restore can silently truncate is not one.
   knowledge_forget_log: 'preserved',
+  // What this repo currently believes is wrong about a NEIGHBOUR's item, and its answers to what
+  // neighbours believe about its own. Both are live positions rather than knowledge, and both
+  // belong to now rather than to the snapshot: restoring older knowledge is not a statement that
+  // anyone changed their mind, so `restored` would resurrect dissents already withdrawn and
+  // un-reject disputes the owner had already settled -- re-marking atoms as disputed on the
+  // strength of a file that predates the answer.
+  //
+  // A dissent left pointing at an item the restore removed costs nothing: the overlay drops a
+  // dispute whose target it cannot find. And one whose target reverts to the disputed text
+  // becomes live again, which is correct -- the objection was to what the item said.
+  dissents: 'preserved',
+  dissent_resolutions: 'preserved',
   // Sessions and their events belong to hosts that are running now. A restored session is a
   // session no host is in.
   memory_sessions: 'preserved',

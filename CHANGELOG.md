@@ -5,6 +5,47 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### A repo can say a linked repo's item is wrong
+
+One repo owns an item and only that repo may change it. That rule is what stops a neighbour
+silently retiring knowledge its owner had good reason to hold — but on its own it left the repo
+that *noticed* an error with nowhere to put what it found. The write was refused, and the finding
+was lost.
+
+`knowl dissent record` is that place:
+
+```
+knowl dissent record 5fdbe969633c418d --claim "The TTL is five minutes; measured on staging."
+```
+
+Nothing in the other repo is touched. What changes is that every query returning that item — in
+any repo in the workspace — now carries the dispute beside it, so the next agent to rely on it
+reads the objection first instead of discovering it later. That is the whole point: a dissent that
+only sat in a queue would leave the system knowingly serving a fact one of its own repos has
+flagged as wrong.
+
+The owner sees it with `knowl dissent list --incoming` and ends it in one of two ways. **Accept**
+by superseding the item, exactly as they always could — the dispute clears itself, which is why
+there is no accept verb. **Reject** with `knowl dissent reject`, and the item stands and stops
+reading as disputed; the other repo keeps its own record of disagreeing, because rejecting answers
+it rather than deleting it. A rejection can be undone with `knowl dissent reopen`, since it is a
+judgement made on partial information and reconsidering has to stay possible.
+
+A dispute also ends quietly when the owner simply rewrites the item: a dissent is pinned to the
+revision it was raised against, because the objection was to what the item *said*.
+
+**Neither repo ever writes the other's database.** The dissent lives in the store of the repo that
+raised it and the resolution in the store of the repo that owns the item, joined only when
+something is read. The single-owner rule is not weakened anywhere — `knowl_update` on another
+repo's item is refused exactly as before, and now says what to do instead.
+
+Dissent is workspace-local. An item owned by a cloud workspace is refused rather than recorded,
+because that dissent could never reach its owner and would sit on one machine looking as though
+something had been done.
+
+Agents get `knowl_dissent` in a linked repo, and a `disputed` block on every query result that has
+one.
+
 **The OpenClaw bootstrap card was being thrown away, on every session.** The profile registered `session_start`, so the engine bound the session and spent the bootstrap card on an event whose return value OpenClaw discards — and the first real turn (`before_prompt_build`) then arrived on a session the engine had already seen, with nothing to say. Measured: a fresh session whose first event is `before_prompt_build` gets the orientation card; the same session preceded by `session_start` got an empty answer with zero prepend context. That event is no longer mapped to the engine lifecycle, so the first `before_prompt_build` binds the session and carries the card. The plugin continues to register `session_start` solely to warm the workspace handle cache in memory so the initial write gate avoids cold open latency.
 
 **A workspace is a path, not a prefix.** `OpenClawEngineManager` matched cached workspace handles by string prefix (`cwd.startsWith(root)`), so sibling directories that share a name prefix (such as `knowl` and `knowl-cloud`) collided on lookup: whichever warmed first captured subsequent requests for the other, reading and writing atoms to the wrong project's database. Workspace matching in `getHandle` and `releaseWorkspace` now enforces a path boundary via `path.relative`, ensuring a workspace matches only itself or directories beneath it.

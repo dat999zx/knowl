@@ -1715,6 +1715,39 @@ setting its `visibility`. Nothing leaves the machine.
 `knowl cloud stage` and `knowl cloud push` share it with **the team, over the network**, and that
 state lives in a local ledger rather than in `visibility`.
 
+### Contesting a linked repo's knowledge
+
+One repo owns an item and only that repo may change it. That rule is what keeps a neighbour from
+silently retiring knowledge its owner had good reason to hold — but on its own it leaves the repo
+that *noticed* an error with nowhere to put what it found.
+
+`knowl dissent record` is that place. It writes one row, in **your** store, saying which of
+another repo's items you believe is wrong and why:
+
+```
+knowl dissent record 5fdbe969633c418d --claim "The TTL is five minutes; measured on the staging box."
+```
+
+Nothing in the other repo is touched. What changes is that every query returning that item — in
+any repo in the workspace — now carries the dispute beside it, so the next agent to rely on it
+reads your objection first rather than discovering it later.
+
+The owning repo sees it with `knowl dissent list --incoming` and ends it in one of two ways:
+
+- **Accept** — supersede the item, as it always could. The dispute clears itself, because a
+  retired item is no longer returned. There is deliberately no `accept` verb.
+- **Reject** — `knowl dissent reject <dissentId> --target <itemId>`. The item stands and stops
+  reading as disputed. The other repo keeps its own record of disagreeing; rejecting answers it
+  rather than deleting it. Reversible with `knowl dissent reopen <dissentId>`, because a
+  rejection is a judgement made on partial information and reconsidering has to stay possible.
+
+A dispute also ends quietly when the owner simply rewrites the item, because a dissent is pinned
+to the revision it was raised against — the objection was to what the item *said*.
+
+Dissent is workspace-local. An item owned by a cloud workspace is refused rather than recorded,
+because a dissent that cannot reach its owner would sit on one machine forever while reading as
+though something had been done.
+
 Neither implies the other. Promoting publishes nothing, and publishing does not make your other
 local repositories see it.
 
@@ -1767,16 +1800,27 @@ for knowledge that is only true of this machine.
 
 #### The local workspace, from an agent
 
-A repository linked into a local workspace offers one more tool:
+A repository linked into a local workspace offers two more tools:
 
 - **`knowl_workspace`** — `action: "status"` names the workspace, this repo's name in it, and every
   linked repo with whether its database is present. `action: "demand"` reports what the linked
   repos have queried each other for, most-repeated first — the readout that says which knowledge
   this repo owes its peers.
+- **`knowl_dissent`** — contest a linked repo's item without editing it. `action: "record"` states
+  that another repo's item is wrong and why; `action: "list"` (the default) shows disputes against
+  this repo's items and disputes it has raised; `action: "reject"` says one of this repo's items
+  stands as written; `action: "withdraw"` takes back a dissent this repo raised; `action: "reopen"`
+  undoes a rejection. There is no `accept`: accepting is superseding the item, which the owner
+  could always do, and the dispute clears itself once the item is retired or rewritten.
 
-Read-only, on the same line the cloud tool draws. `knowl workspace promote` is absent because it
-shares in one step with no second command to complete, so it stays yours; linking and unlinking
-repos are machine setup and stay yours for the reason `knowl init` does.
+`knowl_workspace` is read-only, on the same line the cloud tool draws. `knowl workspace promote` is
+absent because it shares in one step with no second command to complete, so it stays yours; linking
+and unlinking repos are machine setup and stay yours for the reason `knowl init` does.
+
+`knowl_dissent` writes, and is an agent's to run for the reason `promote` is not: it changes only
+this repo's store, reaches no network, and every action it takes has an inverse. Recording a
+dissent is precisely the "record an intent, let the owner complete it" shape — the finding lands
+where the owner will see it, and what happens to their item stays their decision.
 
 #### Doing a linked repo's work from here
 
@@ -2658,6 +2702,11 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl workspace demand [--limit <n>] [--json]` | What the linked repos have queried each other for — the readout that says which knowledge this repo owes its peers |
 | `knowl workspace repin-embedding [--yes]` | Repoint the workspace at this repository's embedding profile |
 | `knowl workspace set [--role <text>] [--default-visibility <repo\|workspace>] [--kin <group>]` | Change this repo's recorded nature in the workspace manifest; bare prints the current values |
+| `knowl dissent record <itemId> --claim <text> [--replacement <id>]` | Record that a linked repo's item is wrong, without editing it. The item is not changed; only its owner can supersede or retire it |
+| `knowl dissent list [--incoming] [--outgoing]` | Disputes raised against this repo's items, and disputes this repo has raised. Neither flag shows both |
+| `knowl dissent reject <dissentId> --target <itemId> [--reason <text>]` | Reject a dispute raised against one of this repo's items. The item stands and stops reading as disputed |
+| `knowl dissent reopen <dissentId>` | Undo a rejection and put the dispute back in front of this repo |
+| `knowl dissent withdraw <dissentId>` | Take back a dispute this repo raised |
 
 ### Memory and retrieval
 

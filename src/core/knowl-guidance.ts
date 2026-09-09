@@ -112,7 +112,8 @@ const WORKSPACE = `### Linked repositories
 - A \`WORKSPACE:\` notice names linked repos that matched but were not shown, with counts. Re-query with \`repos\` to read them.
 - Whether a new write is shared is this repo's recorded default, not a fixed rule: joining a linked workspace sets it to workspace visibility, while \`--default-visibility repo\` keeps writes private. \`knowl workspace set\` with no flags prints the current value.
 - Knowledge already written privately stays private until someone runs \`knowl workspace promote\`. Only the owning repo can promote, update, or retire its own items.
-- When the work you are doing belongs to a LINKED repo, pass \`repo: "<name>"\` on the call instead of writing it here. The call then applies to that repo exactly as if it had been run there -- what you write is stamped as its own, and retiring its knowledge is allowed, because the repo is correcting itself. Without it a write lands here, attributed here, which is how a finding ends up in the wrong drawer.`;
+- When the work you are doing belongs to a LINKED repo, pass \`repo: "<name>"\` on the call instead of writing it here. The call then applies to that repo exactly as if it had been run there -- what you write is stamped as its own, and retiring its knowledge is allowed, because the repo is correcting itself. Without it a write lands here, attributed here, which is how a finding ends up in the wrong drawer.
+- A result carrying \`disputed\` is contested by the repo named there: read the claim before relying on it. When a linked repo's item is wrong, record a dissent rather than trying to edit it -- the write is refused, and the dissent reaches the owner, who resolves it by superseding the item or rejecting the dissent.`;
 
 export function renderFullKnowlGuidance(): string {
   const table = [

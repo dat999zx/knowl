@@ -10,6 +10,10 @@ import { assertOwnedItem, findForeignItem } from '../workspace/ownership.js';
 import { withRepoContext } from '../workspace/act-as.js';
 import { getProjectRoot as ambientProjectRoot, withDbPath } from '../store/database.js';
 import { globalStorePath, knowlHome } from '../core/paths.js';
+import {
+  annotateDisputes, createDissent, listIncomingDissents, listOutgoingDissents, rejectDissent,
+  reopenDissent, withdrawDissent, type Dispute,
+} from '../workspace/dissents.js';
 import { flattenGroups, queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { hasAiConfigured } from '../core/config.js';
@@ -815,13 +819,11 @@ export function registerTools(
               const { getKnowledgeItem } = await import('../store/repository.js');
               return getKnowledgeItem(String(id));
             });
-          // Resolved only on a local miss, so an ordinary fetch pays nothing for the workspace
-          // lookup -- the property `assertOwnedTargets` keeps on the write side, for the same
-          // reason. `findForeignItem` returns null for a null workspace, so the hit path needs
-          // no second guard of its own.
-          const active = local === null && projectRoot
-            ? await resolveWorkspace(projectRoot, config ?? undefined)
-            : null;
+          // Resolved on both paths now, where reaching a linked repo alone would only need it on
+          // a miss: a LOCAL item can be disputed too, and its owner fetching it whole is exactly
+          // who needs to be told. `findForeignItem` returns null for a null workspace, so the
+          // hit path still needs no second guard of its own.
+          const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
           const foreign = await findForeignItem(String(id), active);
           const item = local ?? foreign?.item ?? null;
           if (!item) {
@@ -877,6 +879,10 @@ export function registerTools(
               },
             } : {}),
           };
+          // Whoever is reading this atom whole is the reader most likely to act on it, so a
+          // standing objection belongs here more than anywhere.
+          const [disputed] = await annotateDisputes([{ id: item.id }], active);
+          const withDisputes = disputed.disputed?.length ? { ...full, disputed: disputed.disputed } : full;
           const evidenceWithStale = async (itemId: string) => Promise.all(
             (await listEvidenceForItem(itemId)).map(async evidence => ({
               ...evidence,
@@ -889,8 +895,8 @@ export function registerTools(
           // list and a staleness verdict about the wrong checkout. Omitting beats answering
           // wrongly, and the `foreign` note above says which it is.
           const payload = includeEvidence && !foreign
-            ? [{ ...full, evidence: boundedEvidence(await evidenceWithStale(item.id)) }]
-            : [full];
+            ? [{ ...withDisputes, evidence: boundedEvidence(await evidenceWithStale(item.id)) }]
+            : [withDisputes];
           // An array of one, not a bare object: every existing caller parses the first block as
           // an array, and a fetch that changed the shape would break each of them.
           return { content: [{ type: 'text', text: compactMcpJson(payload) }] };
@@ -1153,6 +1159,17 @@ export function registerTools(
             }
           })).catch(() => {});
         }
+        // What the linked repos are contesting about these exact rows. Resolved once for the
+        // result set rather than per item, and attached after compaction the same way
+        // `affectedPaths` and `explanation` are -- the compact shape is an allowlist, so a field
+        // set on the item alone never reaches the agent.
+        //
+        // Never reorders anything. `annotateDisputes` preserves input order and this only reads
+        // the map it returns; a dispute adds a line to a result and must not move it.
+        const disputeMap = new Map<string, Dispute[]>();
+        for (const annotated of await annotateDisputes(resolvedItems.map((item: any) => ({ id: String(item.id) })), active)) {
+          if (annotated.disputed?.length) disputeMap.set(annotated.id, annotated.disputed);
+        }
         const compact = (item: any) => {
           const score = scoreOf(item);
           const cosine = cosineOf(item);
@@ -1171,6 +1188,7 @@ export function registerTools(
             ...(affectedPaths && !isForeign(item) ? { affectedPaths } : {}),
             // Absent when clean, so a row that says nothing still means what it always meant.
             ...(pathsChangedNotes.has(item.id) ? { pathsChanged: pathsChangedNotes.get(item.id) } : {}),
+            ...(disputeMap.has(String(item.id)) ? { disputed: disputeMap.get(String(item.id)) } : {}),
             ...(explain && item.explanation ? { explanation: item.explanation } : {}),
           };
         };
@@ -1514,6 +1532,39 @@ export function registerTools(
           conflictBlocks.push({ type: 'text', text: `CONFLICTS TRUNCATED: ${hidden.join(', ')} not shown.` });
         }
         return { content: conflictBlocks };
+      }
+
+      else if (name === 'knowl_dissent') {
+        const { action, itemId, claim, replacement, dissentId, targetItemId, reason } = args as any;
+        const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try {
+          // Read-only by default. Every other action changes something, and an omitted enum
+          // should never be the one that writes.
+          const verb = String(action ?? 'list');
+          if (verb === 'record') {
+            const result = await createDissent(
+              { targetItemId: String(itemId), claim: String(claim), replacementItemId: replacement ? String(replacement) : undefined, provenance: 'inferred' },
+              active,
+            );
+            return { content: [{ type: 'text', text: `Recorded dissent ${result.id} against ${itemId}, owned by "${inlineUntrusted(result.targetRepo)}". Nothing in that repo changed -- only its owner can supersede or retire the item. Every query returning it now carries this dispute.` }] };
+          }
+          if (verb === 'reject') {
+            await rejectDissent(String(dissentId), String(targetItemId), reason ? String(reason) : undefined, active);
+            return { content: [{ type: 'text', text: `Rejected dissent ${dissentId}. ${targetItemId} stands as written and no longer reads as disputed. The other repo keeps its own record of disagreeing; this answered it rather than deleting it. Undo with action "reopen".` }] };
+          }
+          if (verb === 'withdraw') {
+            await withdrawDissent(String(dissentId));
+            return { content: [{ type: 'text', text: `Withdrew dissent ${dissentId}. It no longer marks the item it named.` }] };
+          }
+          if (verb === 'reopen') {
+            await reopenDissent(String(dissentId));
+            return { content: [{ type: 'text', text: `Reopened dissent ${dissentId}. It is in front of this repo again and marks the item once more.` }] };
+          }
+          const [incoming, outgoing] = await Promise.all([listIncomingDissents(active), listOutgoingDissents()]);
+          return { content: [{ type: 'text', text: compactMcpJson({ incoming, outgoing }) }] };
+        } catch (error: any) {
+          return { isError: true, content: [{ type: 'text', text: String(error?.message ?? error) }] };
+        }
       }
 
       else if (name === 'knowl_context') {

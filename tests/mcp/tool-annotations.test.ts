@@ -57,6 +57,8 @@ const READ_ONLY: Record<string, boolean> = {
   knowl_ingest_atoms: false,
   knowl_store: false,
   knowl_decide: false,
+  // `list` reads; `record`, `reject`, `withdraw` and `reopen` all write.
+  knowl_dissent: false,
   knowl_update: false,
   knowl_synthesize: false,
   knowl_feedback: false,
