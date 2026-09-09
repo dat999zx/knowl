@@ -17,8 +17,21 @@ export { OpenClawEngineManager, safely, withDeadline };
  *
  * So the event is asked first (it carries `cwd` on the hooks that know one), the context
  * second, and `process.cwd()` last -- and the caller decides what an unresolvable workspace
- * means. `getHandle` answers `null` for a directory that is not a Knowl project, so a wrong
- * guess degrades to "no memory this turn" rather than to another project's database.
+ * means.
+ *
+ * **The last step is a real guess, and it does not always degrade to silence.** This docblock
+ * used to claim it did, on the grounds that `getHandle` answers `null` for a directory that is
+ * not a Knowl project. That is true only when the gateway was started outside every repository.
+ * Started INSIDE one -- the ordinary case for anyone who launches OpenClaw from a project
+ * directory -- `process.cwd()` names a real project, `getHandle` opens it, and the hook is
+ * answered from a repository the event never mentioned: its atoms are read, its constraints
+ * judge the write gate, and its store takes the capture rows.
+ *
+ * The fallback stays anyway, because the alternative is worse: returning nothing whenever a
+ * context carries no directory would silence the plugin on every surface that identifies a run
+ * by `sessionKey`/`agentId` alone, which is half the hooks. What was wrong here was the claim,
+ * not the fallback -- and the containment fix in `engine.ts` narrows the blast radius to this
+ * one path, where before any prefix neighbour could be selected as well.
  */
 function resolveWorkspace(event: unknown, ctx: unknown): string {
   const fromEvent = (event as { cwd?: unknown } | undefined)?.cwd;
@@ -43,9 +56,54 @@ const MIDTURN_PENDING_MAX = 256;
 const MIDTURN_CARD_MAX = 1500;
 const midturnPending = new Map<string, string>();
 
+/**
+ * The engine's session-start card, parked by `session_start` for the first prompt to deliver.
+ *
+ * `session_start` is an observer here: the gateway ignores what the handler returns, which is
+ * exactly what the host profile already says by answering an envelope for `turn-start` and
+ * nothing for `session-start`. So the card the engine composed on that event had no channel at
+ * all and was computed and dropped -- and the loss was silent in both directions, because by
+ * the time `before_prompt_build` ran, the session binding `session_start` had just created made
+ * the engine take its `turn` branch with `includeContext: false`. Every later turn returned
+ * nothing too. An OpenClaw user got zero engine memory while every layer reported success.
+ *
+ * Parked rather than re-requested, because the card is not idempotent: the pending handoff it
+ * merges in is CONSUMED as it is composed, so asking again returns a card missing the one part
+ * a new session most needs.
+ *
+ * Bounded and insertion-ordered like `midturnPending`, and for the same reason -- a gateway is a
+ * long-lived process serving many sessions, and a session whose prompt hook never fires (the
+ * embedded runner, see the README) would otherwise leave its card here forever.
+ */
+const SESSION_PENDING_MAX = 256;
+const SESSION_CARD_MAX = 8000;
+const pendingSessionCards = new Map<string, string>();
+
+/**
+ * Park `text` under `key`, evicting the oldest entries past `max`.
+ *
+ * The delete-then-set is what makes the map insertion-ordered by *freshness* rather than by
+ * first sight, so the eviction below drops the stalest card instead of the one most recently
+ * refreshed.
+ */
+function parkCard(store: Map<string, string>, key: string, text: string, max: number, cap: number): void {
+  store.delete(key);
+  store.set(key, text.slice(0, cap));
+  while (store.size > max) {
+    const oldest = store.keys().next().value;
+    if (oldest === undefined) break;
+    store.delete(oldest);
+  }
+}
+
 /** Test seam: the pending cards do not survive a run, and a leaked one would cross tests. */
 export function resetMidturnPendingForTest(): void {
   midturnPending.clear();
+}
+
+/** Test seam, as above: a session card parked by one test must not be read by the next. */
+export function resetSessionCardsForTest(): void {
+  pendingSessionCards.clear();
 }
 
 /**
@@ -225,9 +283,19 @@ export default definePluginEntry({
           null,
         );
 
-        if (!result) return undefined;
+        // Read before the early return below, and consumed whether or not it is used: a card
+        // left parked would be delivered later, out of the session it orients.
+        const sessionKey = String(raw.sessionId);
+        const parked = pendingSessionCards.get(sessionKey);
+        if (parked !== undefined) pendingSessionCards.delete(sessionKey);
 
-        const card = (result.hostOutput?.prependContext as string | undefined) ?? result.context;
+        // The engine's own answer first when it has one -- it is composed for this turn -- and
+        // the session-start card otherwise. On the first prompt of a session the engine has
+        // nothing to say precisely because `session_start` already bound the session, so this
+        // is the ordinary path rather than the exceptional one.
+        const card = (result?.hostOutput?.prependContext as string | undefined)
+          ?? result?.context
+          ?? parked;
         if (card) {
           return { prependContext: card };
         }
@@ -409,14 +477,7 @@ export default definePluginEntry({
         // every tool call, including the overwhelming majority carrying no card at all.
         const card = result?.hostOutput?.appendContent;
         if (typeof card === 'string' && card.trim()) {
-          const key = String(raw.sessionId);
-          midturnPending.delete(key);
-          midturnPending.set(key, card.slice(0, MIDTURN_CARD_MAX));
-          while (midturnPending.size > MIDTURN_PENDING_MAX) {
-            const oldest = midturnPending.keys().next().value;
-            if (oldest === undefined) break;
-            midturnPending.delete(oldest);
-          }
+          parkCard(midturnPending, String(raw.sessionId), card, MIDTURN_PENDING_MAX, MIDTURN_CARD_MAX);
         }
       }, api.logger);
     });
@@ -468,11 +529,21 @@ export default definePluginEntry({
         const payload = readLifecyclePayloadObject(raw);
         const normalized = normalizeHostHook('openclaw', 'session_start', payload as Record<string, unknown>);
 
-        await withDeadline(
+        const result = await withDeadline(
           manager.getObserverDeadlineMs(),
           () => handle.lifecycle(normalized),
           null,
         );
+
+        // Park the session card for the first `before_prompt_build` of this session, which is
+        // the only hook OpenClaw reads a context contribution from. `hostOutput` is undefined
+        // here by design -- the profile answers an envelope for `turn-start` alone -- so the
+        // host-neutral `context` is where the card is, and taking it is what stops it being
+        // computed and dropped. See `pendingSessionCards`.
+        const card = (result?.hostOutput?.prependContext as string | undefined) ?? result?.context;
+        if (typeof card === 'string' && card.trim()) {
+          parkCard(pendingSessionCards, String(raw.sessionId), card, SESSION_PENDING_MAX, SESSION_CARD_MAX);
+        }
       }, api.logger);
     });
 

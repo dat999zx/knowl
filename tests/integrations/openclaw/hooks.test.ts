@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import knowlPlugin, { resetImpactSeenForTest, resetMidturnPendingForTest } from '../../../integrations/openclaw/src/index.js';
+import knowlPlugin, {
+  resetImpactSeenForTest,
+  resetMidturnPendingForTest,
+  resetSessionCardsForTest,
+} from '../../../integrations/openclaw/src/index.js';
 import type { NormalizedHostHook } from '../../../src/core/host-hook-types.js';
 import * as pluginModule from '@dat999zx/knowl/plugin';
 
@@ -15,6 +19,7 @@ describe('OpenClaw hooks: recall card', () => {
   let api: any;
 
   beforeEach(async () => {
+    resetSessionCardsForTest();
     scratchDir = path.join(os.tmpdir(), `knowl-openclaw-hooks-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await fs.mkdir(scratchDir, { recursive: true });
 
@@ -131,6 +136,39 @@ describe('OpenClaw hooks: recall card', () => {
       expect(payloadStr).not.toContain('population of Tokyo');
       expect(payloadStr).not.toContain('Another follow-up message');
     }
+  });
+
+  it('delivers the session_start card on the first prompt instead of computing and dropping it', async () => {
+    // The session-start card had no channel of its own: `session_start` is an observer whose
+    // return value the gateway ignores, which is what the host profile says by answering an
+    // envelope for `turn-start` alone. So it was computed and dropped -- and because the
+    // binding it created made every later `turn-start` take the `includeContext: false`
+    // branch, the prompt hook returned nothing too. Zero memory, reported as success at every
+    // layer. The prompt hook alone was already covered above, and passed, which is exactly why
+    // this went unnoticed: the defect only appears once session_start has run first.
+    const repo = path.join(scratchDir, 'session-card-repo');
+    await fs.mkdir(repo, { recursive: true });
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: repo, encoding: 'utf8' });
+
+    knowlPlugin.register(api);
+
+    const sessionStart = registeredHooks.get('session_start')?.[0]?.handler;
+    const promptHook = registeredHooks.get('before_prompt_build')?.[0]?.handler;
+    expect(sessionStart).toBeDefined();
+    expect(promptHook).toBeDefined();
+
+    const ctx = { workspaceDir: repo, sessionId: 'sess-start-card', sessionKey: 'main' };
+    await sessionStart!({ cwd: repo }, ctx);
+
+    const first = (await promptHook!({ prompt: 'first turn' }, ctx)) as { prependContext?: string } | undefined;
+    expect(first?.prependContext).toBeDefined();
+    expect(first?.prependContext?.length).toBeGreaterThan(0);
+
+    // Delivered once. The slot is consumed on read, and the engine's turn branch has nothing
+    // to add for a session it has already bootstrapped -- so a second prompt is silent rather
+    // than repeating the card.
+    const second = (await promptHook!({ prompt: 'second turn' }, ctx)) as { prependContext?: string } | undefined;
+    expect(second?.prependContext).toBeUndefined();
   });
 
   it('returns undefined cleanly when run outside a knowl project directory', async () => {

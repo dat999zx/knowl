@@ -89,6 +89,11 @@ run normally.
 
 Three of these carry constraints that are not obvious from the catalog:
 
+- **The session-start card also leaves through `before_prompt_build`.** OpenClaw ignores what a
+  `session_start` handler returns, so the card the engine composes there is parked in the plugin
+  and prepended to the first prompt of that session. It has to be: the session binding
+  `session_start` creates is what makes the engine's own turn-start answer empty, so a card left
+  unclaimed there is one nothing else ever produces.
 - **Recall never reads the prompt.** `before_prompt_build` emits a *fixed* orientation card. Building
   a query from the user's sentence is the defect fixed in knowl#257 on another host, and the
   "never prompts, never transcripts" promise depends on it not recurring here.

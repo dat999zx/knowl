@@ -28,6 +28,13 @@ import { hostString, toolNameIsShell } from './profile.js';
  *
  * `session_start` maps to `session-start`: Binds session identity and warms the project
  * handle cache in memory so subsequent write gates never suffer cold client initialization.
+ *
+ * **The session-start card leaves through `before_prompt_build`, not through this event.**
+ * `startContext` below deliberately answers an envelope for `turn-start` alone, because
+ * OpenClaw ignores what a `session_start` handler returns -- so the plugin parks the
+ * host-neutral `context` this event produces and hands it to the first prompt of the session.
+ * The binding created here is what makes the engine's own `turn-start` answer empty, so
+ * without that hand-off the card is composed and lost and the user gets no memory at all.
  */
 const OPENCLAW_EVENT_MAP: Record<string, NormalizedHookEventName> = {
   before_prompt_build: 'turn-start',
