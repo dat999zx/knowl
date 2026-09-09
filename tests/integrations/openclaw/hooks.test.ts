@@ -479,6 +479,100 @@ describe('OpenClaw hooks: impact card and capture (Task 9)', () => {
     expect(await middleware!(readEvent, ctx)).toBeUndefined();
   });
 
+  it('a card parked by one session is not consumed by a sibling that shares its sessionKey', async () => {
+    // Two runs in one gateway with no `sessionId` between them -- the shape OpenClaw's tool and
+    // session contexts have, which identify a run by `sessionKey`/`agentId`. Both used to
+    // resolve to `sessionKey` and, failing that, to the literal `'openclaw-session'`, so they
+    // shared one slot; and the slot deletes on read, so whichever asked first CONSUMED the
+    // other's card. Neither session could see it happen.
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: scratchDir, encoding: 'utf8' });
+
+    const origOpenProject = pluginModule.openProject;
+    vi.spyOn(pluginModule, 'openProject').mockImplementation(async (cwd: string) => {
+      const handle = await origOpenProject(cwd);
+      if (!handle) return null;
+      handle.query = async () => [];
+      handle.lifecycle = async () => ({
+        hostOutput: { appendContent: '[Knowl] 12 tool calls without memory. Query before you continue.' },
+      } as any);
+      return handle;
+    });
+
+    knowlPlugin.register(api);
+    const middleware = registeredMiddleware[0]?.handler;
+    const afterToolCall = registeredHooks.get('after_tool_call')?.[0]?.handler;
+    expect(middleware).toBeDefined();
+    expect(afterToolCall).toBeDefined();
+
+    const ctxA = { runtime: 'openclaw', sessionKey: 'main', agentId: 'agent-a' };
+    const ctxB = { runtime: 'openclaw', sessionKey: 'main', agentId: 'agent-b' };
+    const readEvent = {
+      toolName: 'read_file',
+      args: { path: 'src/core.ts' },
+      cwd: scratchDir,
+      result: { content: [{ type: 'text', text: 'file contents' }] },
+      toolCallId: 'call-read-shared-key',
+    };
+
+    // Session A's observer parks a card.
+    await afterToolCall!({ toolName: 'read_file', params: {}, cwd: scratchDir, durationMs: 3 }, ctxA);
+
+    // Session B's next tool result must not carry it, and must not clear it.
+    expect(await middleware!(readEvent, ctxB)).toBeUndefined();
+
+    // Session A still has its own card.
+    const delivered = (await middleware!(readEvent, ctxA)) as any;
+    expect(delivered?.result?.content).toHaveLength(2);
+    expect(delivered.result.content[1].text).toContain('12 tool calls without memory');
+  });
+
+  it('the impact cache does not tell a second session that a file was already carded', async () => {
+    // `impactSeen` is keyed `${sessionId}:${file}`, so the collision above suppressed the impact
+    // card too -- session B was told its write had already been reported when nothing had told
+    // it anything.
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: scratchDir, encoding: 'utf8' });
+
+    const origOpenProject = pluginModule.openProject;
+    vi.spyOn(pluginModule, 'openProject').mockImplementation(async (cwd: string) => {
+      const handle = await origOpenProject(cwd);
+      if (!handle) return null;
+      handle.query = async () => [
+        {
+          id: 'atom-core-invariant',
+          title: 'Database connection pooling invariant',
+          category: 'architecture',
+          affectedPaths: ['src/core.ts'],
+        } as any,
+      ];
+      return handle;
+    });
+
+    knowlPlugin.register(api);
+    const middleware = registeredMiddleware[0]?.handler;
+    expect(middleware).toBeDefined();
+
+    const event = {
+      toolName: 'apply_patch',
+      args: { path: 'src/core.ts' },
+      cwd: scratchDir,
+      result: { content: [{ type: 'text', text: 'Patch applied successfully' }] },
+      toolCallId: 'call-impact-shared-key',
+    };
+    const ctxA = { runtime: 'openclaw', sessionKey: 'main', agentId: 'agent-a' };
+    const ctxB = { runtime: 'openclaw', sessionKey: 'main', agentId: 'agent-b' };
+
+    const firstRun = (await middleware!(event, ctxA)) as any;
+    expect(firstRun?.result?.content?.[1]?.text).toContain('[Knowl] 1 stored item(s) depend on src/core.ts');
+
+    // A different session writing the same file is a different agent that has been told
+    // nothing, so it gets the card too.
+    const otherSession = (await middleware!(event, ctxB)) as any;
+    expect(otherSession?.result?.content?.[1]?.text).toContain('[Knowl] 1 stored item(s) depend on src/core.ts');
+
+    // The per-session suppression itself still holds.
+    expect(await middleware!(event, ctxA)).toBeUndefined();
+  });
+
   it('Step 2: appends impact card to result.content (never only details) and cards once per (session, file)', async () => {
     execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: scratchDir, encoding: 'utf8' });
 

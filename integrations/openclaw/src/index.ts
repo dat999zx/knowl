@@ -42,6 +42,50 @@ function resolveWorkspace(event: unknown, ctx: unknown): string {
   return process.cwd();
 }
 
+function firstNonEmptyString(...candidates: unknown[]): string | undefined {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * The session a hook event belongs to, or `undefined` when OpenClaw named none.
+ *
+ * Six copies of `ctx?.sessionId ?? ctx?.sessionKey ?? event?.sessionId ?? event?.sessionKey ??
+ * 'openclaw-session'` used to answer this, and the literal at the end was the defect. A gateway
+ * is one process serving many sessions, so two runs that both fell through to it shared every
+ * slot keyed by the answer: `midturnPending` deletes on read, so the second session CONSUMED
+ * the first's card, and `impactSeen` marks `${sessionId}:${file}`, so the second was told a file
+ * had already been carded when it had not been. Neither failure is visible from inside either
+ * session.
+ *
+ * `sessionKey` is a fallback and not an equal. OpenClaw's contexts identify a run by
+ * `sessionKey`/`agentId` TOGETHER -- the key alone is a name, and two live sessions in this
+ * plugin's own tests both carry `main` -- so the pair is preferred whenever both are present.
+ */
+export function resolveSessionId(event: unknown, ctx: unknown): string | undefined {
+  const e = event as Record<string, unknown> | undefined;
+  const c = ctx as Record<string, unknown> | undefined;
+  const sessionId = firstNonEmptyString(c?.sessionId, e?.sessionId);
+  if (sessionId) return sessionId;
+  const sessionKey = firstNonEmptyString(c?.sessionKey, e?.sessionKey);
+  const agentId = firstNonEmptyString(c?.agentId, e?.agentId);
+  if (sessionKey && agentId) return `${sessionKey}:${agentId}`;
+  return sessionKey;
+}
+
+/**
+ * The session id sent to the ENGINE when the host named none.
+ *
+ * The engine requires one: `normalizeHostHook` throws `IncompleteHostHookPayloadError` on a
+ * payload with no session id, so a hook arriving from a context that carries no identity would
+ * otherwise do nothing at all. It is never used as a plugin-side key -- `resolveSessionId`
+ * answering `undefined` is what keeps two anonymous sessions out of each other's card slots,
+ * and a card that cannot be attributed is dropped rather than handed to whoever asks next.
+ */
+const ANONYMOUS_SESSION_ID = 'openclaw-session';
+
 const MAX_IMPACT_SEEN = 512;
 const impactSeen = new Map<string, true>();
 
@@ -267,7 +311,7 @@ export default definePluginEntry({
 
         const raw: Record<string, unknown> = {
           cwd,
-          sessionId: ctx?.sessionId ?? ctx?.sessionKey ?? (event as Record<string, unknown>)?.sessionId ?? (event as Record<string, unknown>)?.sessionKey ?? 'openclaw-session',
+          sessionId: resolveSessionId(event, ctx) ?? ANONYMOUS_SESSION_ID,
           turnId: (event as Record<string, unknown>)?.turnId ?? (event as Record<string, unknown>)?.runId ?? ctx?.runId ?? ctx?.jobId,
           agentId: ctx?.agentId ?? (event as Record<string, unknown>)?.agentId,
           agentType: (event as Record<string, unknown>)?.agentType,
@@ -284,10 +328,11 @@ export default definePluginEntry({
         );
 
         // Read before the early return below, and consumed whether or not it is used: a card
-        // left parked would be delivered later, out of the session it orients.
-        const sessionKey = String(raw.sessionId);
-        const parked = pendingSessionCards.get(sessionKey);
-        if (parked !== undefined) pendingSessionCards.delete(sessionKey);
+        // left parked would be delivered later, out of the session it orients. Keyed by the
+        // session OpenClaw named -- never by the anonymous fallback, which is shared.
+        const sessionId = resolveSessionId(event, ctx);
+        const parked = sessionId ? pendingSessionCards.get(sessionId) : undefined;
+        if (parked !== undefined && sessionId) pendingSessionCards.delete(sessionId);
 
         // The engine's own answer first when it has one -- it is composed for this turn -- and
         // the session-start card otherwise. On the first prompt of a session the engine has
@@ -319,7 +364,7 @@ export default definePluginEntry({
 
           const raw: Record<string, unknown> = {
             cwd,
-            sessionId: ctx?.sessionId ?? ctx?.sessionKey ?? (event as Record<string, unknown>)?.sessionId ?? (event as Record<string, unknown>)?.sessionKey ?? 'openclaw-session',
+            sessionId: resolveSessionId(event, ctx) ?? ANONYMOUS_SESSION_ID,
             turnId: (event as Record<string, unknown>)?.turnId ?? (event as Record<string, unknown>)?.runId ?? ctx?.runId,
             agentId: ctx?.agentId ?? (event as Record<string, unknown>)?.agentId,
             agentType: (event as Record<string, unknown>)?.agentType,
@@ -364,18 +409,17 @@ export default definePluginEntry({
             const handle = await manager.getHandle(cwd);
             if (!handle) return undefined;
 
-            const sessionId = ctx?.sessionId
-              ?? ctx?.sessionKey
-              ?? (event as Record<string, unknown>)?.sessionId as string | undefined
-              ?? (event as Record<string, unknown>)?.sessionKey as string | undefined
-              ?? 'openclaw-session';
+            // `undefined` when OpenClaw named no session, and that is load-bearing here: every
+            // slot below is keyed by it, and a shared literal made two concurrent sessions read
+            // and clear each other's. See `resolveSessionId`.
+            const sessionId = resolveSessionId(event, ctx);
 
             // The engine's card, parked by `after_tool_call` on an earlier call. Read before
             // the impact lookup and on EVERY tool, not just writes: the drift reminder counts
             // consecutive non-Knowl calls of any kind, so a write-only path would drop it
             // during exactly the read-and-shell runs it exists to interrupt.
-            const engineCard = midturnPending.get(String(sessionId));
-            if (engineCard) midturnPending.delete(String(sessionId));
+            const engineCard = sessionId ? midturnPending.get(sessionId) : undefined;
+            if (engineCard && sessionId) midturnPending.delete(sessionId);
 
             const writtenPaths = extractWrittenPaths(event.toolName, event.args);
             if (writtenPaths.length === 0) {
@@ -386,8 +430,13 @@ export default definePluginEntry({
               const rel = toRepoRelativePath(rawPath, handle.projectRoot || cwd);
               if (!rel) continue;
 
-              const cacheKey = `${sessionId}:${rel.toLowerCase()}`;
-              if (impactSeen.has(cacheKey)) continue;
+              // Suppression needs a session to be suppressed within. With no id there is no
+              // honest key -- `openclaw-session:<file>` told the NEXT session a file had
+              // already been carded when it had not been -- so an unattributable call simply
+              // does not consult or feed the cache. A repeated card costs a few lines; a
+              // suppressed one costs the warning entirely.
+              const cacheKey = sessionId ? `${sessionId}:${rel.toLowerCase()}` : undefined;
+              if (cacheKey && impactSeen.has(cacheKey)) continue;
 
               const stem = path.basename(rel, path.extname(rel)).replace(/[-_]/g, ' ');
               const items = await withDeadline(
@@ -399,7 +448,7 @@ export default definePluginEntry({
               const hits = items.filter((item) => coversAffectedPath(item.affectedPaths, rel));
               if (hits.length === 0) continue;
 
-              markImpactSeen(cacheKey);
+              if (cacheKey) markImpactSeen(cacheKey);
 
               const lines = [
                 `[Knowl] ${hits.length} stored item(s) depend on ${rel}. Check them before you move on:`,
@@ -439,7 +488,7 @@ export default definePluginEntry({
 
         const raw: Record<string, unknown> = {
           cwd,
-          sessionId: ctx?.sessionId ?? ctx?.sessionKey ?? (event as Record<string, unknown>)?.sessionId ?? (event as Record<string, unknown>)?.sessionKey ?? 'openclaw-session',
+          sessionId: resolveSessionId(event, ctx) ?? ANONYMOUS_SESSION_ID,
           turnId: (event as Record<string, unknown>)?.turnId ?? (event as Record<string, unknown>)?.runId ?? ctx?.runId,
           agentId: ctx?.agentId ?? (event as Record<string, unknown>)?.agentId,
           agentType: (event as Record<string, unknown>)?.agentType,
@@ -475,9 +524,15 @@ export default definePluginEntry({
         // because a refusal does NOT have that property. Same trade as the Hermes plugin, for
         // the same reason -- collecting it inline would put the engine's latency in front of
         // every tool call, including the overwhelming majority carrying no card at all.
+        //
+        // Parked only under a session OpenClaw actually named. A card filed under the
+        // anonymous fallback is one the next unattributable call in this gateway would take
+        // and clear, so it is dropped instead: an advisory card lost is a line the model does
+        // not see, where a card misdelivered is one session reading another's.
         const card = result?.hostOutput?.appendContent;
-        if (typeof card === 'string' && card.trim()) {
-          parkCard(midturnPending, String(raw.sessionId), card, MIDTURN_PENDING_MAX, MIDTURN_CARD_MAX);
+        const sessionId = resolveSessionId(event, ctx);
+        if (sessionId && typeof card === 'string' && card.trim()) {
+          parkCard(midturnPending, sessionId, card, MIDTURN_PENDING_MAX, MIDTURN_CARD_MAX);
         }
       }, api.logger);
     });
@@ -493,7 +548,7 @@ export default definePluginEntry({
 
         const raw: Record<string, unknown> = {
           cwd,
-          sessionId: ctx?.sessionId ?? ctx?.sessionKey ?? (event as Record<string, unknown>)?.sessionId ?? (event as Record<string, unknown>)?.sessionKey ?? 'openclaw-session',
+          sessionId: resolveSessionId(event, ctx) ?? ANONYMOUS_SESSION_ID,
           turnId: (event as Record<string, unknown>)?.turnId ?? (event as Record<string, unknown>)?.runId ?? ctx?.runId,
           agentId: ctx?.agentId ?? (event as Record<string, unknown>)?.agentId,
           agentType: (event as Record<string, unknown>)?.agentType,
@@ -521,7 +576,7 @@ export default definePluginEntry({
 
         const raw: Record<string, unknown> = {
           cwd,
-          sessionId: ctx?.sessionId ?? ctx?.sessionKey ?? (event as Record<string, unknown>)?.sessionId ?? (event as Record<string, unknown>)?.sessionKey ?? 'openclaw-session',
+          sessionId: resolveSessionId(event, ctx) ?? ANONYMOUS_SESSION_ID,
           agentId: ctx?.agentId ?? (event as Record<string, unknown>)?.agentId,
           agentType: (event as Record<string, unknown>)?.agentType,
         };
@@ -540,9 +595,13 @@ export default definePluginEntry({
         // here by design -- the profile answers an envelope for `turn-start` alone -- so the
         // host-neutral `context` is where the card is, and taking it is what stops it being
         // computed and dropped. See `pendingSessionCards`.
+        // Parked only under a session OpenClaw named, for the reason `resolveSessionId` gives:
+        // the anonymous slot is shared, and an orientation card handed to the wrong session is
+        // worse than one nobody receives.
         const card = (result?.hostOutput?.prependContext as string | undefined) ?? result?.context;
-        if (typeof card === 'string' && card.trim()) {
-          parkCard(pendingSessionCards, String(raw.sessionId), card, SESSION_PENDING_MAX, SESSION_CARD_MAX);
+        const sessionId = resolveSessionId(event, ctx);
+        if (sessionId && typeof card === 'string' && card.trim()) {
+          parkCard(pendingSessionCards, sessionId, card, SESSION_PENDING_MAX, SESSION_CARD_MAX);
         }
       }, api.logger);
     });
@@ -564,7 +623,7 @@ export default definePluginEntry({
           const e = event as Record<string, unknown> | undefined;
           const raw: Record<string, unknown> = {
             cwd,
-            sessionId: c?.sessionId ?? c?.sessionKey ?? e?.sessionId ?? e?.sessionKey ?? 'openclaw-session',
+            sessionId: resolveSessionId(event, ctx) ?? ANONYMOUS_SESSION_ID,
             turnId: e?.turnId ?? e?.runId ?? c?.runId,
             agentId: c?.agentId ?? e?.agentId,
             agentType: e?.agentType,
