@@ -6,7 +6,7 @@ import { openPeerStore } from '../store/store-handle.js';
 import { isImportedOrigin } from '../store/portability.js';
 import { hashKnowledgeContent } from '../store/freshness.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
-import { peerVerdictFor, UnverifiedOwnerError } from './ownership.js';
+import { assertOwnedItem, peerVerdictFor, UnverifiedOwnerError } from './ownership.js';
 import type { KnowledgeItem } from '../core/types.js';
 import type { ActiveWorkspace } from './resolve.js';
 
@@ -310,9 +310,18 @@ export async function listIncomingDissents(workspace: ActiveWorkspace | null): P
  *
  * There is no matching `accept`: accepting is superseding the atom, which needs no new verb.
  */
-export async function rejectDissent(dissentId: string, targetItemId: string, reason?: string): Promise<void> {
+export async function rejectDissent(
+  dissentId: string,
+  targetItemId: string,
+  reason: string | undefined,
+  workspace: ActiveWorkspace | null,
+): Promise<void> {
   const target = await getKnowledgeItem(targetItemId);
   if (!target) throw new UnknownItemError(targetItemId);
+  // The same guard every write to an item passes. A row held here but stamped with another
+  // repo's origin is exactly what `resolveTarget` accepts as a dissent TARGET, and a rejection
+  // written from here would be an answer its owner never gave.
+  await assertOwnedItem(targetItemId, workspace);
   await getClient().execute({
     sql: `INSERT INTO dissent_resolutions (dissent_id, target_item_id, resolution, reason, resolved_at)
           VALUES (?, ?, 'rejected', ?, ?)
@@ -388,14 +397,17 @@ export async function annotateDisputes<T extends { id: string }>(
   }
   if (open.length === 0) return items;
 
-  const resolved = new Set<string>();
+  // Keyed by the store a resolution was read from. Only the OWNER's answer settles a dispute;
+  // a resolution row in any other store is not that repo's to give, so it is not consulted.
+  // Without this, one row in a third repo's database could silence a dispute between two others.
+  const resolvedBy = new Map<string, Set<string>>();
   for (const store of stores) {
     try {
       const rows = await store.client.execute({
         sql: `SELECT dissent_id FROM dissent_resolutions WHERE target_item_id IN (${placeholders})`,
         args: ids,
       });
-      for (const row of rows.rows) resolved.add(String(row.dissent_id));
+      resolvedBy.set(store.repo, new Set(rows.rows.map(row => String(row.dissent_id))));
     } catch {
       // Same tolerance, and it matters more here: failing to read a resolution would show a
       // dispute that is already settled, so this must not become an error either.
@@ -422,9 +434,10 @@ export async function annotateDisputes<T extends { id: string }>(
 
   const byItem = new Map<string, Dispute[]>();
   for (const { by, row } of open) {
-    if (resolved.has(String(row.id))) continue;
+    const ownerRepo = String(row.target_repo);
+    if (resolvedBy.get(ownerRepo)?.has(String(row.id))) continue;
     const itemId = String(row.target_item_id);
-    const item = await currentItem(itemId, String(row.target_repo));
+    const item = await currentItem(itemId, ownerRepo);
     // Retired, unreachable, or rewritten since the objection was raised. A dissent is against
     // what the atom SAID, so the owner changing it is an answer, not something to keep flagging.
     if (!item || item.status !== 'active') continue;

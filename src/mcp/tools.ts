@@ -1549,7 +1549,7 @@ export function registerTools(
             return { content: [{ type: 'text', text: `Recorded dissent ${result.id} against ${itemId}, owned by "${inlineUntrusted(result.targetRepo)}". Nothing in that repo changed -- only its owner can supersede or retire the item. Every query returning it now carries this dispute.` }] };
           }
           if (verb === 'reject') {
-            await rejectDissent(String(dissentId), String(targetItemId), reason ? String(reason) : undefined);
+            await rejectDissent(String(dissentId), String(targetItemId), reason ? String(reason) : undefined, active);
             return { content: [{ type: 'text', text: `Rejected dissent ${dissentId}. ${targetItemId} stands as written and no longer reads as disputed. The other repo keeps its own record of disagreeing; this answered it rather than deleting it. Undo with action "reopen".` }] };
           }
           if (verb === 'withdraw') {

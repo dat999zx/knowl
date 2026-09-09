@@ -4829,9 +4829,10 @@ dissentCommand
   .action(async (dissentId: string, options: { target: string; reason?: string }) => {
     try {
       const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
       await initDb(root);
       try {
-        await rejectDissent(dissentId, options.target, options.reason);
+        await rejectDissent(dissentId, options.target, options.reason, await resolveWorkspace(root, config));
         console.log(`Rejected dissent ${dissentId}. ${options.target} stands as written and no longer reads as disputed.`);
         // Said plainly, because the row is deliberately one-sided and that looks like a bug
         // otherwise.

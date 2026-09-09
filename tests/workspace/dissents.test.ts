@@ -325,7 +325,7 @@ describe('the owner side', () => {
   it('rejecting it clears it, and the rejection is written in the owner\'s own store', async () => {
     const id = await dissentFromA();
     const workspace = await inB();
-    await rejectDissent(id, ownedByB, 'Measured at fifteen; the five-minute figure is the refresh window.');
+    await rejectDissent(id, ownedByB, 'Measured at fifteen; the five-minute figure is the refresh window.', workspace);
     const incoming = await listIncomingDissents(workspace);
     const local = await getClient().execute({ sql: 'SELECT * FROM dissent_resolutions', args: [] });
     await closeDb();
@@ -341,7 +341,7 @@ describe('the owner side', () => {
   it('the rejection did not reach the dissenting repo\'s store', async () => {
     const id = await dissentFromA();
     const workspace = await inB();
-    await rejectDissent(id, ownedByB, 'Measured at fifteen.');
+    await rejectDissent(id, ownedByB, 'Measured at fifteen.', workspace);
     await closeDb();
     void workspace;
 
@@ -369,8 +369,42 @@ describe('the owner side', () => {
   it('rejecting refuses a target this repo does not own', async () => {
     const id = await dissentFromA();
     await initDb(A);
-    await expect(rejectDissent(id, 'no-such-item-000', 'nope')).rejects.toThrow(/No knowledge item|not yours/i);
+    await expect(rejectDissent(id, 'no-such-item-000', 'nope', null)).rejects.toThrow(/No knowledge item|not yours/i);
     await closeDb();
+  });
+
+  it('rejecting refuses a copy held locally but owned by another repo', async () => {
+    // A row stamped with another repo's origin sits here -- the exact shape `resolveTarget`
+    // accepts as a dissent target. Rejecting from here would write a resolution the owner never
+    // made, and every reader would drop the dispute on its strength.
+    const id = await dissentFromA();
+    await initDb(A);
+    // Same shape `resolveTarget` accepts as a target: held here, stamped as b's.
+    await getClient().execute({
+      sql: `UPDATE knowledge_items SET origin_repo = 'b', visibility = 'workspace'`,
+      args: [],
+    });
+    const held = await getClient().execute({ sql: `SELECT id FROM knowledge_items LIMIT 1`, args: [] });
+    await expect(rejectDissent(id, String(held.rows[0].id), 'nope', await resolveWorkspace(A, await loadConfig(A)))).rejects.toThrow(/belongs to repo "b"/);
+    await closeDb();
+    expect(await peerRowCount(A, 'dissent_resolutions')).toBe(0);
+  });
+
+  it('a resolution row in a non-owner store does not silence the dispute', async () => {
+    const id = await dissentFromA();
+    await initDb(A);
+    await getClient().execute({
+      sql: `INSERT INTO dissent_resolutions (dissent_id, target_item_id, resolution, reason, resolved_at) VALUES (?, ?, 'rejected', NULL, ?)`,
+      args: [id, ownedByB, new Date().toISOString()],
+    });
+    await closeDb();
+
+    const workspace = await inB();
+    const [annotated] = await annotateDisputes([{ id: ownedByB }], workspace);
+    const incoming = await listIncomingDissents(workspace);
+    await closeDb();
+    expect(annotated.disputed).toHaveLength(1);
+    expect(incoming).toHaveLength(1);
   });
 
   it('the dissenting repo can list what it has raised', async () => {
@@ -479,7 +513,7 @@ describe('annotateDisputes', () => {
   it('a rejected dissent no longer marks the atom, as seen from the owning repo', async () => {
     const id = await dissentFromA();
     const workspace = await inB();
-    await rejectDissent(id, ownedByB, 'Measured at fifteen.');
+    await rejectDissent(id, ownedByB, 'Measured at fifteen.', workspace);
     const [annotated] = await annotateDisputes([{ id: ownedByB }], workspace);
     await closeDb();
     expect(annotated).not.toHaveProperty('disputed');
@@ -490,9 +524,8 @@ describe('annotateDisputes', () => {
     // so without reading the owner's resolutions it would keep showing a dispute that is over.
     const id = await dissentFromA();
     const workspaceB = await inB();
-    await rejectDissent(id, ownedByB, 'Measured at fifteen.');
+    await rejectDissent(id, ownedByB, 'Measured at fifteen.', workspaceB);
     await closeDb();
-    void workspaceB;
 
     await initDb(A);
     const workspaceA = await resolveWorkspace(A, await loadConfig(A));
