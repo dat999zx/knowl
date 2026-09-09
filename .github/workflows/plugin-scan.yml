@@ -5,8 +5,10 @@ name: Plugin Scan
 # same scanner here means a regression fails on our pull request instead of on theirs, and
 # a project that maintains the scanner in its own CI keeps the full trust score.
 #
-# Scope and suppressions live in .plugin-scanner.toml, which the scanner discovers on its
-# own -- so this workflow and their gate see the same result.
+# Scope and suppressions live in .plugin-scanner.toml. Since scanner-action v1.2.601 the
+# scanner only discovers that file when trust_repository_policy is set, and their gate does
+# not set it -- so this workflow no longer predicts their verdict. Ours reads the scope and
+# passes; theirs ignores it and sees the fixtures the scope exists to exclude.
 on:
   push:
     branches:
@@ -25,9 +27,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: HOL Guard plugin scanner
-        uses: hashgraph-online/ai-plugin-scanner-action@7e420247177d5beebbd3747ed16e4b29a1e41f57 # v1.2.551
+        uses: hashgraph-online/ai-plugin-scanner-action@92356daf90a3df7bbdd323222a448a6bb79bc823 # v1.2.601
         with:
           plugin_dir: '.'
-          # The same bar their listing gate applies, so a pass here is a pass there.
+          # v1.2.601 added this input, defaulted to false, and it gates auto-discovery of
+          # .plugin-scanner.toml -- so without it the scanner ignores the scope above and this
+          # repository scores 75 on 33 findings that are all the known false positives.
+          trust_repository_policy: 'true'
           min_score: '80'
           fail_on_severity: 'high'
