@@ -49,16 +49,25 @@ dotenv.config({ quiet: true });
 const command = process.argv[2];
 const wantsHelp = process.argv.includes('--help') || process.argv.includes('-h');
 
+// This dispatcher is the whole argument parser for the two hook commands -- commander never sees
+// them -- so it has to do commander's job for the flags the generated hook configs actually
+// write. Reading `argv[3]` and `argv[4]` positionally was correct only for the exact word order
+// `hook-config.ts` emits: `knowl agent-reminder claude --json`. Written the other way round,
+// `knowl agent-reminder --json claude` made "--json" the host.
+const hookArgs = process.argv.slice(3);
+const hookOptions = { json: hookArgs.includes('--json') };
+const [hookHost, hookEvent] = hookArgs.filter(argument => !argument.startsWith('-'));
+
 if (command === 'agent-hook' && !wantsHelp) {
   const { runAgentHook } = await import('./cli/agent-hook.js');
-  await runAgentHook(process.argv[3], process.argv[4]);
+  await runAgentHook(hookHost, hookEvent, hookOptions);
 } else if (command === 'agent-reminder' && !wantsHelp) {
   // Same fast path, and for the same reason: this is a per-prompt process, and since it
   // started reading `capture_outcomes` to decide whether to speak it opens the store too.
   // Routing it through commander loaded the MCP server, the viewer and the code indexer
   // first, on every single prompt.
   const { runAgentReminder } = await import('./cli/agents/reminder.js');
-  await runAgentReminder(process.argv[3]);
+  await runAgentReminder(hookHost, hookOptions);
 } else {
   // Called rather than relying on an import-time side effect: parsing on import meant any test
   // that imported the command tree consumed the test runner's argv and exited.

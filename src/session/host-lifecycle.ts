@@ -825,7 +825,20 @@ async function evaluateSilenceNudge(input: NormalizedHostHook): Promise<Record<s
     // session's one nudge and deliver nothing, so turning the feature on for an unsupported host
     // would look identical to it firing.
     const profile = hostProfile(input.host);
-    if (!profile.stopContext) return undefined;
+    if (!profile.stopContext) {
+      // Recorded as `shadow`, not dropped. This branch used to return having written nothing,
+      // which made the stricter mode observe strictly LESS than the looser one: the identical
+      // session under `shadow` recorded the withheld nudge, and under `enforce` on a host with
+      // no stop channel it recorded nothing at all. That is backwards on its own terms, and it
+      // hides the measurement from `knowl status`, whose `nudged` count is documented as
+      // "sessions where a nudge fired or would have" -- this is exactly a would-have.
+      //
+      // `shadow` rather than `enforce` keeps the distinction the check above exists for: the
+      // claim is still not spent on a delivery, so an unsupported host never reads as one that
+      // fired.
+      await claimSilenceNudge(conversation, 'shadow');
+      return undefined;
+    }
     if (!await claimSilenceNudge(conversation, 'enforce')) return undefined;
 
     return profile.stopContext(renderSilenceNudge());
@@ -869,7 +882,12 @@ async function evaluatePendingLessonStop(input: NormalizedHostHook): Promise<Rec
     }
 
     const profile = hostProfile(input.host);
-    if (!profile.stopContext) return undefined;
+    if (!profile.stopContext) {
+      // Same monotonicity rule as `evaluateSilenceNudge`: a host with no stop channel under
+      // `enforce` records what `shadow` would have, rather than leaving the rows open forever.
+      await markPendingLessons(open.map(lesson => lesson.id), 'shadow');
+      return undefined;
+    }
     if (!await claimLessonBlock(conversation)) {
       // Budget exhausted: settle silently so the rows cannot pile up behind a gate that will
       // never speak again, and record that silence as what it was.
@@ -1147,7 +1165,13 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       // later reads zero when it means "I no longer know". Keyed on the conversation and not on
       // `started.session.id`, which is turn-scoped and would scatter one conversation's writes
       // across a row per turn.
-      if (isDurableWriteTool(input.knowlToolName)) {
+      //
+      // A failed call is not a write. `knowl_store` that was refused for a secret, or that threw,
+      // produced nothing and stored nothing -- counting it silences the silence nudge for the
+      // rest of the conversation and settles pending lessons as though the correction had been
+      // recorded, which is the one outcome those two features exist to prevent. The turn counter
+      // below already excludes failures for exactly this reason; this counter did not.
+      if (input.status !== 'failed' && isDurableWriteTool(input.knowlToolName)) {
         await recordDurableWrite(conversationKey(input));
         // A durable write settles the pending lessons that were already on the table when it
         // landed -- temporal, not blanket. Clearing everything on any write would be the same

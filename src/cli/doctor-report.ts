@@ -9,7 +9,6 @@ import { isKnowlProjectGuidanceCurrent } from '../core/agents-guidance.js';
 import { closeDb, getDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { runLexicalCoverage, runRetrievalProbe } from './retrieval-probe.js';
-import { KNOWL_MCP_TOOL_NAMES } from '../core/knowl-guidance.js';
 import { getVectorSearchConfig, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { fingerprintProfile, resolveVectorProfile } from '../core/vector-profile.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
@@ -202,8 +201,21 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       checks.push(await runRetrievalProbe(project.id));
     }
 
-    const hasQuery = KNOWL_MCP_TOOL_NAMES.includes('knowl_query');
-    const hasAsk = (KNOWL_MCP_TOOL_NAMES as readonly string[]).includes('knowl_ask');
+    // The surface this repository would actually serve, not the routing table in the guidance
+    // card. They are different arrays in different modules: `KNOWL_MCP_TOOL_NAMES` is derived
+    // from the prose groups in `core/knowl-guidance.ts` and is `as const`, so all three checks
+    // below were assertions about a compile-time literal. They passed in a repository with no
+    // integrations at all -- printing "MCP tools expose knowl_query" directly beside "No agent
+    // MCP integration selected" -- and they would have gone on passing if the tool had been
+    // deleted from `CORE_TOOL_DEFINITIONS`, which is the only place deleting it would matter.
+    //
+    // Imported dynamically because `mcp/tools.js` reaches the MCP SDK, the AI pipeline and the
+    // embedding provider, and `doctor` is the only command in the CLI surface that wants it.
+    const { knowlToolDefinitions } = await import('../mcp/tools.js');
+    const served = new Set(knowlToolDefinitions(config).map(tool => tool.name));
+
+    const hasQuery = served.has('knowl_query');
+    const hasAsk = served.has('knowl_ask');
     checks.push({
       status: hasQuery && !hasAsk ? 'OK' : 'FAIL',
       message: hasQuery && !hasAsk
@@ -212,9 +224,9 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     });
 
     const hasWorkLoop =
-      KNOWL_MCP_TOOL_NAMES.includes('knowl_task_start') &&
-      KNOWL_MCP_TOOL_NAMES.includes('knowl_task_checkpoint') &&
-      KNOWL_MCP_TOOL_NAMES.includes('knowl_task_finish');
+      served.has('knowl_task_start') &&
+      served.has('knowl_task_checkpoint') &&
+      served.has('knowl_task_finish');
     checks.push({
       status: hasWorkLoop ? 'OK' : 'WARN',
       message: hasWorkLoop
@@ -288,9 +300,9 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     }
 
     const hasSkills =
-      KNOWL_MCP_TOOL_NAMES.includes('knowl_skill_list') &&
-      KNOWL_MCP_TOOL_NAMES.includes('knowl_skill_read') &&
-      KNOWL_MCP_TOOL_NAMES.includes('knowl_skill_run');
+      served.has('knowl_skill_list') &&
+      served.has('knowl_skill_read') &&
+      served.has('knowl_skill_run');
     checks.push({
       status: hasSkills ? 'OK' : 'WARN',
       message: hasSkills
