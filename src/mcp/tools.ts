@@ -683,7 +683,7 @@ export function registerTools(
           return {
             // The quoted title is stored text echoed back on one line, so it gets the same
             // treatment as every other stored value that reaches the agent.
-            content: [{ type: 'text', text: `NOT STORED — this ${category} is already held verbatim as item ${result.item.id} ("${inlineUntrusted(result.item.title)}"), so nothing was written and nothing was lost. No action needed.` }],
+            content: [{ type: 'text', text: `NOT STORED — this ${category} is already held verbatim as item ${result.item.id} ("${inlineUntrusted(result.item.title)}"), so nothing was written and nothing was lost.${local === true ? ` It was NOT marked local: restating an atom cannot unpublish one someone else may share. To keep it off the team store, call knowl_cloud with action "unstage", id "${result.item.id}", forever true.` : ' No action needed.'}` }],
           };
         }
 
