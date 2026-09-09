@@ -39,12 +39,17 @@ export type ToolDefinition = {
  *   and has no argument that would. `knowl_drift` and `knowl_impact` are NOT read-only despite
  *   reading on the default path: `apply` marks atoms for review and `resolve` closes a finding.
  *   Three read tools do incidental self-maintenance and are still annotated read-only, named
- *   here so the claim is auditable rather than implied: `knowl_query` appends one analytics row
- *   to the workspace demand ledger (`recordDemandEventBestEffort`, whose failures are swallowed
- *   by design, so it is not part of the tool's contract); `knowl_transcript_search` tops up the
- *   transcript index it is about to read, a cache derived from files it is reading anyway; and
- *   any tool that embeds may populate the model cache on first use. None of them changes an
- *   answer any later call returns.
+ *   here so the claim is auditable rather than implied: `knowl_query` (live path only, never
+ *   `asOf`) and `knowl_context` record one `knowledge_access` row per result returned
+ *   (`recordKnowledgeAccessBestEffort` in `store/agent-query.ts`) and `knowl_query` appends one
+ *   analytics row to the workspace demand ledger (`recordDemandEventBestEffort`) -- both
+ *   best-effort, failures swallowed by design, so neither is part of the tool's contract;
+ *   `knowl_transcript_search` tops up the transcript index it is about to read, a cache derived
+ *   from files it is reading anyway; and any tool that embeds may populate the model cache on
+ *   first use. None of them alters a knowledge item. The access rows are not inert, though:
+ *   `isHot` in `store/gc.ts` reads them, so a heavily retrieved item is shielded from GC and a
+ *   later `knowl_gc_preview` answers differently for having been queried. That is retrieval
+ *   telemetry, not memory mutation, and a host should not prompt for it.
  * - `destructiveHint` is stated only where it says something the default does not. The spec
  *   defaults it to TRUE, so `false` is the informative value and is claimed only for the writes
  *   verified to be purely additive. `true` is repeated on the two that remove or retire, because
