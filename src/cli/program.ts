@@ -2450,6 +2450,16 @@ program.command('import').argument('<path>').description('Load portable JSONL me
           `Import did not apply${result.conflicts ? ` (${result.conflicts} conflict(s))` : ''}. ` +
           'Re-run with a different --on-divergence policy, or reconcile the source.',
         );
+        // No divergence policy resolves an exclusive collision: two items both claim to be
+        // the one active value for a key, and only a person can say which. Naming them is the
+        // difference between "try another policy" -- which cannot work -- and an actionable
+        // instruction.
+        for (const clash of result.exclusiveConflicts ?? []) {
+          console.error(
+            `  ${clash.id} claims an exclusive identity already held by the active item ` +
+            `${clash.heldBy}. Retire one of them, then re-import.`,
+          );
+        }
         process.exitCode = 1;
       }
     } catch (error: any) {
