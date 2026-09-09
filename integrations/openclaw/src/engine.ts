@@ -19,6 +19,21 @@ function isWithin(root: string, cwd: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+/**
+ * The cached handle whose root is the nearest ancestor of `cwd` -- the longest containing
+ * root wins, so a project nested inside another (`mono` and `mono/packages/api`) resolves by
+ * ownership rather than by which one was warmed first. Same rule `findProjectRoot` applies
+ * walking up to the nearest marker.
+ */
+function findCachedHandle(handles: Iterable<ProjectHandle>, cwd: string): ProjectHandle | undefined {
+  let best: ProjectHandle | undefined;
+  for (const handle of handles) {
+    if (!isWithin(handle.projectRoot, cwd)) continue;
+    if (!best || handle.projectRoot.length > best.projectRoot.length) best = handle;
+  }
+  return best;
+}
+
 export interface HostLogger {
   warn(message: string, ...args: unknown[]): void;
   error?(message: string, ...args: unknown[]): void;
@@ -142,7 +157,7 @@ export class OpenClawEngineManager {
   }
 
   async getHandle(cwd: string): Promise<ProjectHandle | null> {
-    const cached = Array.from(this.handles.values()).find((h) => isWithin(h.projectRoot, cwd));
+    const cached = findCachedHandle(this.handles.values(), cwd);
     if (cached) return cached;
     return await this.warmWorkspace(cwd);
   }

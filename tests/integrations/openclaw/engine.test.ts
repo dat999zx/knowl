@@ -187,6 +187,37 @@ describe('OpenClaw engine wrapper failure modes', () => {
       }
     },
   );
+
+  it('getHandle prefers the longest containing root, so a nested project resolves by ownership not open order', async () => {
+    const dirMono = path.join(scratchDir, 'mono');
+    const dirApi = path.join(dirMono, 'packages', 'api');
+    await fs.mkdir(dirApi, { recursive: true });
+
+    // `knowl init` refuses to nest under an initialized ancestor, so the inner project is
+    // created first -- the state a subpackage that predates its monorepo's memory ends up in.
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirApi, encoding: 'utf8' });
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirMono, encoding: 'utf8' });
+
+    const manager = new OpenClawEngineManager();
+    try {
+      // Outer warmed first: first-match-wins would hand the outer handle to a cwd inside `api`.
+      const outer = await manager.warmWorkspace(dirMono);
+      const inner = await manager.warmWorkspace(dirApi);
+      expect(outer).toBeDefined();
+      expect(inner).toBeDefined();
+      expect(inner).not.toBe(outer);
+
+      const dirApiSrc = path.join(dirApi, 'src');
+      await fs.mkdir(dirApiSrc, { recursive: true });
+
+      expect(await manager.getHandle(dirApiSrc)).toBe(inner);
+      expect(await manager.getHandle(dirApi)).toBe(inner);
+      expect(await manager.getHandle(path.join(dirMono, 'packages'))).toBe(outer);
+      expect(await manager.getHandle(dirMono)).toBe(outer);
+    } finally {
+      await manager.releaseAll();
+    }
+  });
 });
 
 describe('OpenClaw engine manager: an unverifiable database is not opened', () => {
