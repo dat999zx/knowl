@@ -131,6 +131,34 @@ describe('OpenClaw engine wrapper failure modes', () => {
     const cachedAttempt = await manager.getHandle(projectDir);
     expect(cachedAttempt).toBeNull();
   });
+
+  it('getHandle does not let a sibling directory that shares a prefix capture the lookup', async () => {
+    const dirKnowl = path.join(scratchDir, 'knowl');
+    const dirKnowlCloud = path.join(scratchDir, 'knowl-cloud');
+    await fs.mkdir(dirKnowl, { recursive: true });
+    await fs.mkdir(dirKnowlCloud, { recursive: true });
+
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirKnowl, encoding: 'utf8' });
+    execFileSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: dirKnowlCloud, encoding: 'utf8' });
+
+    const manager = new OpenClawEngineManager();
+    try {
+      await manager.warmWorkspace(dirKnowl);
+
+      const h = await manager.getHandle(dirKnowlCloud);
+      expect(h).toBeDefined();
+      expect(path.resolve(h!.projectRoot)).toBe(path.resolve(dirKnowlCloud));
+
+      const dirKnowlSrc = path.join(dirKnowl, 'src');
+      await fs.mkdir(dirKnowlSrc, { recursive: true });
+
+      const hNested = await manager.getHandle(dirKnowlSrc);
+      expect(hNested).toBeDefined();
+      expect(path.resolve(hNested!.projectRoot)).toBe(path.resolve(dirKnowl));
+    } finally {
+      await manager.releaseAll();
+    }
+  });
 });
 
 describe('OpenClaw engine manager: an unverifiable database is not opened', () => {

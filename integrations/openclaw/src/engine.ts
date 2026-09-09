@@ -1,9 +1,16 @@
+import path from 'node:path';
 import { createClient } from '@libsql/client';
 import {
   openProject,
   KNOWL_MIGRATION_LEVEL,
   type ProjectHandle,
 } from '@dat999zx/knowl/plugin';
+
+/** True when `cwd` is `root` or somewhere beneath it -- a path boundary, not a string prefix. */
+function isWithin(root: string, cwd: string): boolean {
+  const rel = path.relative(root, cwd);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
 
 export interface HostLogger {
   warn(message: string, ...args: unknown[]): void;
@@ -128,7 +135,7 @@ export class OpenClawEngineManager {
   }
 
   async getHandle(cwd: string): Promise<ProjectHandle | null> {
-    const cached = Array.from(this.handles.values()).find((h) => cwd.startsWith(h.projectRoot));
+    const cached = Array.from(this.handles.values()).find((h) => isWithin(h.projectRoot, cwd));
     if (cached) return cached;
     return await this.warmWorkspace(cwd);
   }
@@ -200,7 +207,7 @@ export class OpenClawEngineManager {
 
   async releaseWorkspace(cwd: string): Promise<void> {
     const matching = Array.from(this.handles.entries()).filter(
-      ([root]) => cwd === root || cwd.startsWith(root),
+      ([root]) => isWithin(root, cwd),
     );
     for (const [root, handle] of matching) {
       this.handles.delete(root);
