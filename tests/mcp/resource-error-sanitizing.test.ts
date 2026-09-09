@@ -24,16 +24,20 @@ vi.mock('../../src/store/queries.js', async importOriginal => {
 
 const { registerResources } = await import('../../src/mcp/resources.js');
 
-/** The read handler the SDK would install, captured instead of connected. */
+/**
+ * The read handler the SDK would install, captured instead of connected.
+ *
+ * By the method its schema names, not by position: `handlers[1]` was the read handler only
+ * until `resources/templates/list` was registered between list and read.
+ */
 function readHandler(): (request: { params: { uri: string } }) => Promise<unknown> {
-  const handlers: Array<(request: any) => Promise<unknown>> = [];
+  const handlers = new Map<string, (request: any) => Promise<unknown>>();
   registerResources(
-    { setRequestHandler: (_schema: unknown, handler: any) => handlers.push(handler) } as never,
+    { setRequestHandler: (schema: any, handler: any) => handlers.set(schema.shape.method.value, handler) } as never,
     () => 'project-1',
     () => null,
   );
-  // List is registered first, read second.
-  return handlers[1];
+  return handlers.get('resources/read')!;
 }
 
 describe('resource reads withhold SQL and bound parameters (K-50)', () => {

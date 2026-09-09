@@ -1,3 +1,4 @@
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { KNOWLEDGE_CATEGORIES } from '../core/types.js';
 import { MAX_ITEM_CONTENT_CHARS } from '../core/token-budget.js';
 import { UNTRUSTED_NOTICE } from '../core/untrusted.js';
@@ -13,7 +14,58 @@ import { UNTRUSTED_NOTICE } from '../core/untrusted.js';
  * Moving the literal costs nothing at runtime: it is the same array, evaluated once at module
  * load instead of once per `knowlToolDefinitions` call.
  */
-export type ToolDefinition = { name: string; description: string; inputSchema: Record<string, unknown> };
+/**
+ * `annotations` is REQUIRED, so the compiler asks the question rather than a reviewer.
+ *
+ * The type is the SDK's own `ToolAnnotations`, not a local copy of the same four booleans:
+ * `ToolSchema` puts `annotations` on the tool object and the field names come from there, so a
+ * local restatement could drift from the shape actually serialized into `tools/list`.
+ */
+export type ToolDefinition = {
+  name: string;
+  description: string;
+  annotations: ToolAnnotations;
+  inputSchema: Record<string, unknown>;
+};
+
+/**
+ * What the hints below claim, and what they deliberately do not.
+ *
+ * Hosts decide approval friction from these, so an annotation that lies is worse than no
+ * annotation at all -- reading memory would stop prompting while still being able to change it.
+ * Three rules, applied to every tool in this file:
+ *
+ * - `readOnlyHint: true` only where the call cannot create, alter, retire or delete knowledge,
+ *   and has no argument that would. `knowl_drift` and `knowl_impact` are NOT read-only despite
+ *   reading on the default path: `apply` marks atoms for review and `resolve` closes a finding.
+ *   Three read tools do incidental self-maintenance and are still annotated read-only, named
+ *   here so the claim is auditable rather than implied: `knowl_query` (live path only, never
+ *   `asOf`) and `knowl_context` record one `knowledge_access` row per result returned
+ *   (`recordKnowledgeAccessBestEffort` in `store/agent-query.ts`) and `knowl_query` appends one
+ *   analytics row to the workspace demand ledger (`recordDemandEventBestEffort`) -- both
+ *   best-effort, failures swallowed by design, so neither is part of the tool's contract;
+ *   `knowl_transcript_search` tops up the transcript index it is about to read, a cache derived
+ *   from files it is reading anyway; and any tool that embeds may populate the model cache on
+ *   first use. None of them alters a knowledge item. The access rows are not inert, though:
+ *   `isHot` in `store/gc.ts` reads them, so a heavily retrieved item is shielded from GC and a
+ *   later `knowl_gc_preview` answers differently for having been queried. That is retrieval
+ *   telemetry, not memory mutation, and a host should not prompt for it.
+ * - `destructiveHint` is stated only where it says something the default does not. The spec
+ *   defaults it to TRUE, so `false` is the informative value and is claimed only for the writes
+ *   verified to be purely additive. `true` is repeated on the two that remove or retire, because
+ *   "this one really does delete" is worth saying out loud next to the schema.
+ * - `openWorldHint: false` follows the spec's own example -- "the world of a web search tool is
+ *   open, whereas that of a memory tool is not". `true` is reserved for the three that leave the
+ *   machine's own store: `knowl_ingest` (a configured LLM provider), `knowl_cloud` (the cloud
+ *   API) and `knowl_skill_run` (a script that may do anything). First-use model provisioning is
+ *   bootstrap, not a domain of interaction, and is not counted here.
+ *
+ * `idempotentHint` is absent from every tool on purpose. Nothing here is unambiguously
+ * idempotent: each write either mints a fresh id, stamps a new timestamp, or appends an event,
+ * so repeating a call always leaves the store observably different. The spec defaults it to
+ * false, which is the true answer, and stating a redundant `false` on thirty-six tools would
+ * cost the tool card tokens to say nothing.
+ */
 
 /** The only ways a change-impact finding is ever closed. Named here beside the schema that offers them. */
 export const IMPACT_RESOLUTIONS = ['repaired', 'dismissed', 'expired', 'false_positive'];
@@ -66,6 +118,7 @@ export const MAX_CONTEXT_TOKEN_BUDGET = 4_000;
 export const TRANSCRIPT_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_transcript_search',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'Search this repo\'s past Claude Code session transcripts. Use after knowl_query misses. Returns pointers into the session files; store anything worth keeping with knowl_store.',
           inputSchema: {
             type: 'object',
@@ -86,6 +139,7 @@ export const TRANSCRIPT_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_transcript_read',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'Read one transcript message and the turns around it. Pass a locator from knowl_transcript_search exactly as it was returned.',
           inputSchema: {
             type: 'object',
@@ -101,6 +155,7 @@ export const TRANSCRIPT_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_session_list',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: "Browse this project's past Claude Code sessions as an inventory: best-known name (a user rename beats a generated title), the opening ask, status, any declared session card, last activity, and what each session promoted into memory. Use to answer 'which session was about X' or to choose between resuming and starting fresh - then knowl_transcript_search with that sessionId to read into it. Filters over intent only; for content questions use knowl_transcript_search.",
           inputSchema: {
             type: 'object',
@@ -134,6 +189,7 @@ export const TRANSCRIPT_TOOL_DEFINITIONS: ToolDefinition[] = [
 export const CLOUD_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_cloud',
+          annotations: { title: 'Cloud workspace publishing', openWorldHint: true },
           description: 'Check this repo\'s cloud workspace connection, or change what is queued for the team. `status` is local-only and instant -- use it before telling a user anything about what is or is not shared, because knowledge is staged automatically as it is written and sync runs on its own, so the answer changes without you. `stage` records the intent to publish and sends nothing; it is a dry run unless you pass apply. `unstage` takes an atom back out of the queue and is always safe: it sends nothing and unpublishes nothing. It cannot send, retract, pull, connect or sign in: those are the user\'s to run (`knowl cloud push`, `knowl cloud retract`, `knowl cloud pull`, `knowl cloud connect`, `knowl cloud login`). Relay the command rather than trying to work around it. Both directions are irreversible: a push cannot be recalled except by a retract, and a retract is a hard delete that bars the id forever.',
           inputSchema: {
             type: 'object',
@@ -170,6 +226,7 @@ export const CLOUD_TOOL_DEFINITIONS: ToolDefinition[] = [
 export const IMPACT_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_impact',
+          annotations: { title: 'Change-impact findings', openWorldHint: false },
           description: 'Change-impact findings: code a live session read that has since moved underneath it. Pass resolve to adjudicate one. A certain-tier finding also refuses the next edit to that file until you re-read it, so listing them here is how you see what is about to be blocked and why.',
           inputSchema: {
             type: 'object',
@@ -217,6 +274,7 @@ export const IMPACT_TOOL_DEFINITIONS: ToolDefinition[] = [
 export const WORKSPACE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_workspace',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'Describe the local multi-repo workspace this repository belongs to: which repos are linked, which are present on this machine, and what they have been asking each other for. Use it when a query returned rows keyed by another repo and you need to know what that repo IS, or before deciding where knowledge belongs. Read-only: it links nothing, unlinks nothing and shares nothing. Linking repos and promoting knowledge to them are the user\'s to run (`knowl workspace add`, `knowl workspace promote`).',
           inputSchema: {
             type: 'object',
@@ -250,6 +308,7 @@ export const WORKSPACE_TOOL_DEFINITIONS: ToolDefinition[] = [
 export const FLEET_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_fleet',
+          annotations: { title: 'Other agent sessions running now', readOnlyHint: true, openWorldHint: false },
           description: 'The other live agent sessions on this machine (Claude Code, Codex, Cursor and any other host with Knowl hooks): what each is working on, the files it is editing this turn, the problem it has claimed, and whether it can be messaged. Use before fixing an error that may be shared, before changing hooks, config, migrations or the knowl install, or when the user asks who else is running. A session marked messageable is reachable with SendMessage(to:name); SendMessage(to:name, notify_when_idle:true) waits for it to finish. Raise the rest with the user instead.',
           inputSchema: {
             type: 'object',
@@ -280,6 +339,7 @@ export const FLEET_TOOL_DEFINITIONS: ToolDefinition[] = [
 export const HOOK_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_hook',
+          annotations: { title: 'Session lifecycle hook', openWorldHint: false },
           description: "Internal: the target of the host's lifecycle hooks when hooks.transport is mcp. The host calls it on every tool event; an agent never should -- calling it records a session event that did not happen.",
           inputSchema: {
             type: 'object',
@@ -299,6 +359,7 @@ export const HOOK_TOOL_DEFINITIONS: ToolDefinition[] = [
 export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_ingest',
+          annotations: { openWorldHint: true },
           description: 'Process explicitly supplied raw source text through the configured Knowl AI pipeline. Use only for an explicit ingestion request; never silently ingest the current conversation or prompt.',
           inputSchema: {
             type: 'object',
@@ -322,6 +383,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_state',
+          annotations: { title: 'Whole-project memory overview', readOnlyHint: true, openWorldHint: false },
           description: 'Get the full current active state of the project. Use for broad project-memory summaries, status checks, or full-state requests; prefer knowl_query for specific factual questions.',
           inputSchema: {
             type: 'object',
@@ -330,6 +392,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_recent',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'Get compact recent session context only when lifecycle bootstrap is unavailable (including manual mode) or an explicit refresh is needed.',
           inputSchema: {
             type: 'object',
@@ -352,6 +415,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_store',
+          annotations: { openWorldHint: false },
           description: 'Store one concise structured knowledge atom directly, not raw chat transcripts. Use immediately after discovering durable project knowledge or completing each subtask, not only at the end. This is deterministic and does not require Knowl AI configuration. When this atom corrects or replaces knowledge a query already returned, pass that item id as `supersedes` in this same call so the outdated item is retired in one write; never leave two active items asserting different values for the same thing. The result reports any item left active beside this one and the exact call to retire it.',
           inputSchema: {
             type: 'object',
@@ -433,6 +497,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_ingest_atoms',
+          annotations: { openWorldHint: false },
           description: 'Store pre-extracted structured knowledge atoms from an MCP client. Do not store raw chat transcripts; extract durable facts, decisions, constraints, architecture, state, skills, and batch store implementation summaries during execution or after each completed subtask. This is the preferred MCP ingestion path and does not require Knowl AI configuration. When an atom corrects or replaces knowledge a query already returned, set `supersedes` on that atom to the outdated item id so it is retired in the same write; never leave two active items asserting different values for the same thing. The result reports each atom individually, including any overlapping item left active and the exact call to retire it.',
           inputSchema: {
             type: 'object',
@@ -490,6 +555,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_decide',
+          annotations: { openWorldHint: false },
           description: 'Record a confirmed project decision -- what was chosen, why, and what was rejected. Use this rather than knowl_store when the reasoning and the alternatives are the point; reasoning is required here and optional there. Record only settled decisions, not options still under discussion. Needs no Knowl AI configuration. When this decision reverses or replaces an earlier one, pass that item id as `supersedes` so the superseded decision is retired in the same write; never leave two active decisions contradicting each other. The result reports any decision left active beside this one and the exact call to retire it.',
           inputSchema: {
             type: 'object',
@@ -530,6 +596,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_query',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. Use every word that names the subject and none that does not: one more on-subject term retrieves better, one off-subject term retrieves worse, so never pad a query to reach a length and never drop a real term to stay under one. Skip only for directly relevant active lifecycle context, a same-request query, or relevant memory returned by knowl_task_start. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests -- and on a miss, re-run once with different words first, because a first-pass miss is usually vocabulary rather than absence. `content` is cut at '
             + MAX_ITEM_CONTENT_CHARS
             + ' characters and marked `truncated` when it was; `affectedPaths` names the files the item depends on, so open those rather than searching for them. To read a truncated item in full, call again with `id` set to the id of that result. Results carry two numbers when semantic search is available, and they answer different questions. `score` (0-1) is the relevance the ranker ordered by; it is min-max scaled across the page, so the top row sits near 1.0 whatever it is and it is NOT comparable between queries -- read it as position, never as strength. `cosine` (0-1) is the raw similarity on an absolute scale, the same scale the relevance floor is measured against, so it means the same thing on every query and against every store: a low top `cosine` means the best available match is genuinely weak rather than that it is the answer. Judge with `cosine`, order with `score`. Where no calibrated number exists, `score` is the string `uncalibrated (<reason>)` and `cosine` is absent entirely -- the ranker has an order but no opinion on strength, so do not read position as confidence, judge the content itself. '
@@ -596,16 +663,19 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_timeline',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'Read one item\'s immutable assertion history: what it claimed, when, and what superseded it. Use when memory looks contradictory or you need to know whether a fact changed -- knowl_query answers what it says now, this answers how it got there.',
           inputSchema: { type: 'object', properties: { repo: ACT_AS_REPO_READ, itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID, as returned by knowl_query.' } }, required: ['itemId'] },
         },
         {
           name: 'knowl_conflicts',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'List contradictions among active items: declared exclusive conflict keys, and detected polarity pairs (the same title asserted both ways, which the write path deliberately keeps side by side rather than letting either retire the other). Use when a write reports an overlapping item left active, or when memory gives contradictory answers. A write that reports a possible REVERSAL is telling you something this command does not list -- act on it there. Resolve with knowl_update, never by storing a third item.',
           inputSchema: { type: 'object', properties: {} },
         },
         {
           name: 'knowl_context',
+          annotations: { title: 'Token-budgeted context pack', readOnlyHint: true, openWorldHint: false },
           description: 'Fill an explicit token budget with diversified project context. Use only when you have a budget to fill -- briefing a subagent, or packing a fixed-size prompt. For a specific question use knowl_query instead: this spreads across categories to fill the budget rather than ranking for one subject, so it is deliberately broader and less precise.',
           inputSchema: {
             type: 'object',
@@ -620,11 +690,13 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_synthesize',
+          annotations: { openWorldHint: false },
           description: 'Create or refresh one deterministic evidence-backed project understanding. Use only for a scope the user explicitly asked to have synthesised -- never as background tidy-up, and never to summarise a session. This never runs automatically on normal writes.',
           inputSchema: { type: 'object', properties: { scope: { type: 'string', minLength: 1, description: 'The subject to synthesise, named explicitly, e.g. "retrieval ranking". One scope per call.' } }, required: ['scope'] },
         },
         {
           name: 'knowl_evidence_list',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'List the evidence linked to one knowledge item. Use before relying on an item that is low-confidence, contested, or old enough that its support matters more than its claim.',
           inputSchema: {
             type: 'object',
@@ -634,6 +706,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_feedback',
+          annotations: { destructiveHint: false, openWorldHint: false },
           description: 'Record append-only usefulness feedback only after a retrieved item was actually used, rejected, or caused a correction.',
           inputSchema: {
             type: 'object',
@@ -648,6 +721,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_session_finish',
+          annotations: { openWorldHint: false },
           description: 'Finish and optionally promote a manual memory session you explicitly own. Never call this for a hook-owned session: when verified lifecycle hooks are active they finalize it themselves, and finishing it here closes a session out from under them.',
           inputSchema: {
             type: 'object', properties: {
@@ -660,6 +734,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_update',
+          annotations: { destructiveHint: true, openWorldHint: false },
           description: 'Update the metadata, status, or content of an existing knowledge item. Use immediately when execution reveals stale or contradicted memory instead of adding duplicates. To retire an outdated item in favour of one you just stored, call this with `id` set to the NEW item and `supersedeId` set to the OUTDATED item.',
           inputSchema: {
             type: 'object',
@@ -719,6 +794,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_gc_preview',
+          annotations: { title: 'Preview retired-memory collection', readOnlyHint: true, openWorldHint: false },
           description: 'Preview knowledge garbage collection recommendations without changing the database. Use to find duplicate, stale, or cold memory before applying GC.',
           inputSchema: {
             type: 'object',
@@ -727,6 +803,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_task_start',
+          annotations: { destructiveHint: false, openWorldHint: false },
           description: 'Start one manual work loop for multi-command or resumable work when verified lifecycle hooks are unavailable. Returns relevant memory and a taskId. Never use for a hook-owned session.',
           inputSchema: {
             type: 'object',
@@ -747,6 +824,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_task_checkpoint',
+          annotations: { destructiveHint: false, openWorldHint: false },
           description: 'Checkpoint meaningful progress or a blocker in a manual work loop using the taskId from knowl_task_start. Never use for a hook-owned session or routine command noise.',
           inputSchema: {
             type: 'object',
@@ -793,6 +871,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_task_finish',
+          annotations: { openWorldHint: false },
           description: 'Finish one manual work loop exactly once after verification using the taskId from knowl_task_start. Never use for a hook-owned session.',
           inputSchema: {
             type: 'object',
@@ -813,6 +892,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_gc_apply',
+          annotations: { title: 'Delete retired memory', destructiveHint: true, openWorldHint: false },
           description: 'Apply knowledge garbage collection only after knowl_gc_preview and explicit user approval; this may purge, archive, or compress records.',
           inputSchema: {
             type: 'object',
@@ -821,6 +901,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_skill_list',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'List learned file-backed skills from `.knowl/skills`, name and purpose only. This is a stable MCP bridge so old sessions can discover newly created skills; read one with knowl_skill_read for its manifest and instructions.',
           inputSchema: {
             type: 'object',
@@ -829,6 +910,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_skill_read',
+          annotations: { readOnlyHint: true, openWorldHint: false },
           description: 'Read one learned skill package from `.knowl/skills/<name>/`, including `skill.json` and `SKILL.md`. Read a skill before running it, so knowl_skill_run executes an entrypoint you have seen rather than one you guessed at.',
           inputSchema: {
             type: 'object',
@@ -844,6 +926,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_skill_create',
+          annotations: { openWorldHint: false },
           description: 'Create and index a learned file-backed skill only when the user explicitly requested a reusable workflow to be codified.',
           inputSchema: {
             type: 'object',
@@ -921,6 +1004,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_skill_run',
+          annotations: { destructiveHint: true, openWorldHint: true },
           description: 'Run an approved learned-skill entrypoint. A skill must be approved by the user with `knowl skill approve <name>` before it will run, and any edit to the package revokes that approval. Only an entrypoint whose author set `autoRun: true` will run; that is not the default. If the call is refused, relay the approval command to the user rather than trying to work around it.',
           inputSchema: {
             type: 'object',
@@ -947,6 +1031,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_handoff',
+          annotations: { title: 'Hand off to the next session here', openWorldHint: false },
           description: 'Park the current workstream so the next session in this project picks it up. Delivered once, then archived - this is a pass, not a durable note. Store anything worth keeping with knowl_store.',
           inputSchema: {
             type: 'object',
@@ -969,6 +1054,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_park',
+          annotations: { title: 'Park work under a key', destructiveHint: false, openWorldHint: false },
           description: 'Park a workstream the user means to return to. Mints a short key and returns a line to hand them verbatim. Unlike knowl_handoff, this is not consumed by resuming and works from any directory, any number of sessions later.',
           inputSchema: {
             type: 'object',
@@ -986,6 +1072,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_resume',
+          annotations: { title: 'Resume parked work by key', readOnlyHint: true, openWorldHint: false },
           description: 'Resume a parked workstream from its key. Call this as soon as a user supplies something that looks like a resume key. With no key, lists what is parked in this project.',
           inputSchema: {
             type: 'object',
@@ -999,6 +1086,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         // which nothing else asks -- the diff it needs does not exist until the branch does.
         {
           name: 'knowl_drift',
+          annotations: { title: 'Check memory against code changes', openWorldHint: false },
           description: 'Which stored knowledge this branch may have invalidated: atoms whose cited files the diff since `since` deleted or moved away, plus symbol evidence that no longer resolves. Use before opening a pull request, before knowl_task_finish on work that touched code, and when the user asks what a change breaks. An atom whose file was merely edited is deliberately NOT reported — that was two thirds of all matches and made the signal unreadable — so an empty result means nothing it cites went away, not that nothing changed. Previews by default; `apply` marks the matches as needing review so the next session sees them flagged rather than trusting them. Reads git, so it needs a repository and a base ref that exists locally.',
           inputSchema: {
             type: 'object',

@@ -379,6 +379,24 @@ export function boundQueryPayload(
 }
 
 /**
+ * The sentence that explains a shortened page, in one place because two paths emit it.
+ *
+ * Returns null when nothing was cut, which is also the signal not to append a block at all: a
+ * complete page must stay a single parseable block, and a notice saying "nothing was bounded"
+ * would be a second block for every caller to skip.
+ */
+function responseBoundedNotice(shortened: number, omitted: number): string | null {
+  if (shortened <= 0 && omitted <= 0) return null;
+  const what = [
+    shortened > 0 ? `the content of ${shortened} lower-ranked result(s) was cut to an excerpt` : '',
+    omitted > 0 ? `${omitted} lower-ranked result(s) were dropped entirely` : '',
+  ].filter(Boolean).join(', and ');
+  return `RESPONSE BOUNDED: ${what}, to keep this response under ${MAX_RESPONSE_CHARS} characters. `
+    + 'These were the weakest matches, not a scoping failure. Read any result whole with '
+    + '`knowl_query` and its `id`; narrow the query or lower `limit` to see more of them at once.';
+}
+
+/**
  * A context pack serialized under a hard character ceiling.
  *
  * Dropping whole items keeps the payload valid JSON, which cutting the string would not, and
@@ -901,7 +919,19 @@ export function registerTools(
           // `affectedPaths` always ships. Safe only because `queryKnowledgeBase` resolves
           // against one project id, so this branch cannot return a foreign item. Pinned by
           // tests/mcp/query-pointer-surface.test.ts — federate this path and that test fails.
-          return { content: [{ type: 'text', text: compactMcpJson(items.map(item => compactItemResponse(item))) }] };
+          //
+          // Through the same ceiling as the live path, which this branch used to walk straight
+          // past: `MAX_RESPONSE_CHARS` is declared as the bound for this surface and only the
+          // live path was wired to it, so a historical read of the same store answered 43,001
+          // characters where the live one answered 10,545. The default limit above narrowed the
+          // opening -- only an explicit `limit` reaches this now -- but a caller who names one
+          // is exactly the caller who reaches the ceiling, and an argument about WHEN should
+          // never have decided how much comes back.
+          const asOfPayload = boundQueryPayload([{ repo: '', rows: items.map(item => compactItemResponse(item)) }], 'flat');
+          const asOfBlocks: { type: 'text'; text: string }[] = [{ type: 'text', text: asOfPayload.text }];
+          const asOfNotice = responseBoundedNotice(asOfPayload.shortened, asOfPayload.omitted);
+          if (asOfNotice) asOfBlocks.push({ type: 'text', text: asOfNotice });
+          return { content: asOfBlocks };
         }
         const effectiveRoot = projectRoot ?? knowlHome();
         let vector;
@@ -1172,18 +1202,8 @@ export function registerTools(
         const { text: payloadText, shortened, omitted: omittedResults } =
           boundQueryPayload(payloadGroups as Array<{ repo: string; rows: Record<string, unknown>[] }>, federated?.shape ?? 'flat');
         const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: payloadText }];
-        if (shortened > 0 || omittedResults > 0) {
-          const what = [
-            shortened > 0 ? `the content of ${shortened} lower-ranked result(s) was cut to an excerpt` : '',
-            omittedResults > 0 ? `${omittedResults} lower-ranked result(s) were dropped entirely` : '',
-          ].filter(Boolean).join(', and ');
-          blocks.push({
-            type: 'text',
-            text: `RESPONSE BOUNDED: ${what}, to keep this response under ${MAX_RESPONSE_CHARS} characters. `
-              + 'These were the weakest matches, not a scoping failure. Read any result whole with '
-              + '`knowl_query` and its `id`; narrow the query or lower `limit` to see more of them at once.',
-          });
-        }
+        const boundedNotice = responseBoundedNotice(shortened, omittedResults);
+        if (boundedNotice) blocks.push({ type: 'text', text: boundedNotice });
         // This repo returned nothing and a linked one did. The shape already says so; this says
         // the one thing a shape cannot, which is that a foreign fact describes a foreign repo.
         //

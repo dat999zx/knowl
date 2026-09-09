@@ -1,6 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { ErrorCode, ListResourcesRequestSchema, McpError, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { KnowledgeCategory } from '../core/types.js';
+import { ErrorCode, ListResourceTemplatesRequestSchema, ListResourcesRequestSchema, McpError, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { KNOWLEDGE_CATEGORIES, KnowledgeCategory } from '../core/types.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { formatRecentContextToMarkdown, formatHierarchyToMarkdown } from '../core/format.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
@@ -38,7 +38,35 @@ export function registerResources(
     };
   });
 
-  // 2. Read resource
+  // 2. List resource templates
+  //
+  // `knowl://category/{name}` has been resolvable by the read handler below since it was
+  // written, and no client could ever find out: `resources/templates/list` is the ONLY place
+  // the protocol lets a server advertise a parameterised URI, and nothing answered it. A host
+  // asking got the SDK's "method not found", so working code was invisible -- not gated, not
+  // deprecated, simply undiscoverable.
+  //
+  // One entry, because one template resolves. The read handler matches `[a-z]+` and then hands
+  // whatever it caught to `queryKnowledgeBase`, so a name outside the category set answers with
+  // an empty document rather than an error -- which is why the valid names are spelled out in
+  // the description. RFC 6570 has no way to say "one of these seven", and the description is
+  // where a client's model reads what to substitute.
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+    return {
+      resourceTemplates: [
+        {
+          uriTemplate: 'knowl://category/{name}',
+          name: 'category',
+          title: 'Active Knowledge by Category',
+          description: 'Every active item in one category, as markdown. `name` is one of: '
+            + `${KNOWLEDGE_CATEGORIES.join(', ')}.`,
+          mimeType: 'text/markdown',
+        },
+      ],
+    };
+  });
+
+  // 3. Read resource
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
     await whenReady();
