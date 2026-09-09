@@ -12,6 +12,10 @@ import {
   type HostLogger,
 } from '../../../integrations/openclaw/src/engine.js';
 import { KNOWL_MIGRATION_LEVEL } from '@dat999zx/knowl/plugin';
+// Namespaced as well as named, because the guard tests below stub `openProject` on the module
+// object: the manager reaches it through this same binding, so a spy installed here is the one
+// it calls.
+import * as pluginModule from '@dat999zx/knowl/plugin';
 
 const CLI_PATH = path.resolve('dist/index.js');
 
@@ -128,3 +132,78 @@ describe('OpenClaw engine wrapper failure modes', () => {
     expect(cachedAttempt).toBeNull();
   });
 });
+
+describe('OpenClaw engine manager: an unverifiable database is not opened', () => {
+  let scratchDir: string;
+  let released: string[];
+  let opened: number;
+
+  beforeEach(async () => {
+    scratchDir = path.join(os.tmpdir(), `knowl-openclaw-guard-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await fs.mkdir(scratchDir, { recursive: true });
+    // Created as a DIRECTORY on purpose: libSQL refuses to open a connection to it, the same
+    // rejection a locked store produces, and a path that simply does not exist would be
+    // created as an empty database instead.
+    await fs.mkdir(path.join(scratchDir, 'not-a-database'), { recursive: true });
+    released = [];
+    opened = 0;
+    vi.spyOn(pluginModule, 'openProject').mockImplementation(async (cwd: string) => {
+      opened += 1;
+      return {
+        projectRoot: cwd,
+        // A directory rather than a database file, so opening it fails the way a locked one
+        // does: `PRAGMA application_id` never returns an answer. On Windows a concurrent
+        // `knowl serve` holding the store is the ordinary cause, which is what made the old
+        // fail-open branch the common path rather than the rare one.
+        databasePath: path.join(scratchDir, 'not-a-database'),
+        lifecycle: async () => ({ accepted: true }) as never,
+        query: async () => [],
+        store: async () => ({ action: 'created' }) as never,
+        release: async () => {
+          released.push(cwd);
+        },
+      } satisfies ProjectHandle;
+    });
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(scratchDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('refuses the workspace and releases the handle when the migration level cannot be read', async () => {
+    const logger: HostLogger = { warn: vi.fn() };
+    const manager = new OpenClawEngineManager({ logger });
+    const projectDir = path.join(scratchDir, 'repo');
+    await fs.mkdir(projectDir, { recursive: true });
+
+    expect(await manager.warmWorkspace(projectDir)).toBeNull();
+    expect(released).toEqual([projectDir]);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Could not verify the migration level'));
+  });
+
+  it('does not cache the unverified handle, so a later hook is not answered from it', async () => {
+    const manager = new OpenClawEngineManager({ logger: { warn: vi.fn() } });
+    const projectDir = path.join(scratchDir, 'repo');
+    await fs.mkdir(projectDir, { recursive: true });
+
+    await manager.warmWorkspace(projectDir);
+    expect(await manager.getHandle(projectDir)).toBeNull();
+    expect(await manager.getHandle(path.join(projectDir, 'src'))).toBeNull();
+  });
+
+  it('is not sticky: the workspace is retried once the database can be read again', async () => {
+    const manager = new OpenClawEngineManager({ logger: { warn: vi.fn() } });
+    const projectDir = path.join(scratchDir, 'repo');
+    await fs.mkdir(projectDir, { recursive: true });
+
+    expect(await manager.warmWorkspace(projectDir)).toBeNull();
+    expect(manager.isDisabled(projectDir)).toBe(false);
+    // A lock clears, so the next event opens the project again rather than finding the
+    // workspace permanently switched off -- which is what `disabledRoots` is for, and it is
+    // reserved for the one condition that cannot resolve itself.
+    await manager.getHandle(projectDir);
+    expect(opened).toBe(2);
+  });
+});
+
