@@ -2254,7 +2254,12 @@ export function registerTools(
   const OVERRIDE_KEY = '__projectRoot';
   const overrideHost = 'hermes';
 
-  const callToolForRoot = async (request: CallToolRequest): Promise<CallToolResult | null> => {
+  type ActingAs = { projectId: string; projectRoot: string; config: ProjectConfig | null };
+
+  const callToolForRoot = async (
+    request: CallToolRequest,
+    next: (actingAs: ActingAs) => Promise<CallToolResult>,
+  ): Promise<CallToolResult | null> => {
     const args = request.params.arguments as Record<string, unknown> | undefined;
     const root = args?.[OVERRIDE_KEY];
     if (typeof root !== 'string' || root.length === 0) return null;
@@ -2284,15 +2289,24 @@ export function registerTools(
       if (!project) {
         return { isError: true, content: [{ type: 'text', text: `No Knowl project at "${root}". Run \`knowl init\` there once, then retry.` }] };
       }
-      return callTool(request, { projectId: project.id, projectRoot: resolved, config: await loadConfig(resolved) });
+      return next({ projectId: project.id, projectRoot: resolved, config: await loadConfig(resolved) });
     });
   };
 
+  /**
+   * `repo:` on top of `__projectRoot`, in that order of specificity. The root says where this
+   * SESSION is anchored; `repo` says which linked repo this ONE call does the work of. A host
+   * that injects the root into every call (Hermes does) must not thereby make `repo` inert, so
+   * the workspace is resolved from the session's root and the hop runs inside its swap.
+   */
   const callToolAsRepo = async (request: CallToolRequest): Promise<CallToolResult> => {
-    const forRoot = await callToolForRoot(request);
-    if (forRoot) return forRoot;
+    const forRoot = await callToolForRoot(request, actingAs => callToolWithinRepo(request, actingAs));
+    return forRoot ?? callToolWithinRepo(request, null);
+  };
+
+  const callToolWithinRepo = async (request: CallToolRequest, caller: ActingAs | null): Promise<CallToolResult> => {
     const asRepo = (request.params.arguments as Record<string, unknown> | undefined)?.repo;
-    if (typeof asRepo !== 'string' || asRepo.length === 0) return callTool(request);
+    if (typeof asRepo !== 'string' || asRepo.length === 0) return callTool(request, caller ?? undefined);
     const declared = (SCHEMA_BY_TOOL.get(request.params.name)?.properties as Record<string, unknown> | undefined)?.repo;
     if (!declared) {
       return {
@@ -2306,8 +2320,9 @@ export function registerTools(
       };
     }
     await whenReady();
-    const callerRoot = getProjectRoot();
-    const workspace = callerRoot ? await resolveWorkspace(callerRoot, getConfig() ?? undefined) : null;
+    const callerRoot = caller ? caller.projectRoot : getProjectRoot();
+    const callerConfig = caller ? caller.config : getConfig();
+    const workspace = callerRoot ? await resolveWorkspace(callerRoot, callerConfig ?? undefined) : null;
     try {
       return await withRepoContext(asRepo, workspace, async () => {
         const root = ambientProjectRoot();

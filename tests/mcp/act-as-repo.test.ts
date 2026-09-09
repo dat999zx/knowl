@@ -37,8 +37,8 @@ class InMemoryTransport {
   async close(): Promise<void> { this.onclose?.(); }
 }
 
-async function callTool(root: string, config: ProjectConfig, name: string, args: Record<string, unknown>) {
-  const server = createMcpServer('local', root, config);
+async function callTool(root: string | null, config: ProjectConfig, name: string, args: Record<string, unknown>, host?: string) {
+  const server = createMcpServer('local', root, config, null, { host });
   const transport = new InMemoryTransport();
   await server.connect(transport as any);
   const initialized = new Promise<any>(resolve => { transport.onSend = m => { if (m.id === 'init') resolve(m); }; });
@@ -149,6 +149,21 @@ describe('acting as a linked repo through the tool surface', { timeout: 180_000 
     expect(allowed.isError).toBeFalsy();
 
     expect(String((await rowIn(B, ownedByB))?.content)).toContain('five minutes');
+  });
+
+  it('repo:"b" still means b when the session root arrives per call, as Hermes sends it', async () => {
+    // `__projectRoot` anchors the session; `repo` names whose work this one call does. A host
+    // that injects the root into EVERY call must not make `repo` inert -- that is the misfile
+    // where a write meant for b lands in a and is reported as success.
+    const result = await callTool(null, DEFAULT_CONFIG, 'knowl_store', {
+      __projectRoot: A, repo: 'b', category: 'fact', title: 'Rotation cadence', content: 'Keys rotate every ninety days.',
+    }, 'hermes');
+    expect(result.isError).toBeFalsy();
+
+    const id = /([0-9a-f]{16})/.exec(String(result.content[0].text))?.[1] ?? '';
+    expect(id).toMatch(/^[0-9a-f]{16}$/);
+    expect(String((await rowIn(B, id))?.origin_repo)).toBe('b');
+    expect(await rowIn(A, id)).toBeNull();
   });
 
   it('omitting repo is unchanged in every way', async () => {
