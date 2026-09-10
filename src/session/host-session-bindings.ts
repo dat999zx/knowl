@@ -90,6 +90,39 @@ export async function bindHostSession(input: HostSessionKey, memorySessionId: st
   });
 }
 
+/**
+ * Mark this session as having been compacted, on every binding it holds.
+ *
+ * Both keys deliberately: the turn key is what a turn-start looks up first, and the session
+ * key is what survives a turn boundary -- a compaction between turns must still be spent by
+ * the next one. Only active rows, since a closed binding will never be read again.
+ */
+export async function markRecompactPending(input: Omit<HostSessionKey, 'externalTurnId'>): Promise<void> {
+  const key = normalizedKey({ ...input, externalTurnId: '' });
+  await getClient().execute({
+    sql: `UPDATE host_session_bindings SET recompact_pending = 1, updated_at = ?
+      WHERE host = ? AND project_root = ? AND external_session_id = ? AND active = 1`,
+    args: [new Date().toISOString(), key.host, key.projectRoot, key.externalSessionId],
+  });
+}
+
+/**
+ * Spend the flag: true once per compaction, false forever after.
+ *
+ * Cleared on every binding for the session in the same statement that reports it, so two hook
+ * processes racing the same turn cannot both re-deliver -- `rowsAffected` is zero for the
+ * loser. That is the same claim-before-use shape `claimCapture` uses one level up.
+ */
+export async function consumeRecompactPending(input: Omit<HostSessionKey, 'externalTurnId'>): Promise<boolean> {
+  const key = normalizedKey({ ...input, externalTurnId: '' });
+  const result = await getClient().execute({
+    sql: `UPDATE host_session_bindings SET recompact_pending = 0, updated_at = ?
+      WHERE host = ? AND project_root = ? AND external_session_id = ? AND recompact_pending = 1`,
+    args: [new Date().toISOString(), key.host, key.projectRoot, key.externalSessionId],
+  });
+  return Number(result.rowsAffected ?? 0) > 0;
+}
+
 export async function incrementHostSuccessfulToolCount(input: HostSessionKey): Promise<number> {
   const key = normalizedKey(input);
   const row = (await getClient().execute({

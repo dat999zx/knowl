@@ -78,6 +78,8 @@ import { toSurfacedSkills } from '../core/skill-surface.js';
 import { listActiveSkillItems } from '../store/repository.js';
 import {
   closeHostSessionBinding,
+  consumeRecompactPending,
+  markRecompactPending,
   closeHostSessionBindings,
   closeInactiveHostSessionBindings,
   bindHostSession,
@@ -1098,7 +1100,13 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
         hostOutput: hostContextOutput(input, withCorrection(context)),
       };
     }
-    const started = await bootstrapWithHandoff(projectId, input, 'turn', !sessionBinding, turnBudget);
+    // Compaction erased the card from the model's context without ending the session, so the
+    // card is owed again even though the binding is live. `includeContext` is otherwise
+    // `!sessionBinding` -- once per session -- and this is the one event that makes
+    // once-per-session and once-per-context different things. Spent, not sticky: the flag
+    // clears in the same statement that reports it, so this costs one card per compaction.
+    const recompacted = sessionBinding ? await consumeRecompactPending(input) : false;
+    const started = await bootstrapWithHandoff(projectId, input, 'turn', !sessionBinding || recompacted, turnBudget);
     if (!sessionBinding) await bindHostSession(bindingKey(input, 'session'), started.session.id);
     const context = withRoster(started.context);
     return {
@@ -1157,6 +1165,12 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
 
     try {
       const started = await startBoundSession(projectId, input, 'turn');
+      // `checkpoint` is mapped from a compaction event and nothing else on every host that has
+      // one (claude PreCompact, copilot preCompact, cursor preCompact, hermes on_pre_compress,
+      // openclaw before_compaction), so the event itself is the signal -- no payload field and
+      // no allowlist entry. The card cannot be delivered here: on a PRE-compaction hook it
+      // would be composed into the very context about to be discarded. The next turn spends it.
+      if (input.event === 'checkpoint') await markRecompactPending(input);
       const type = input.event === 'checkpoint' ? 'checkpoint' : input.type;
       if (!type) throw new Error('Normalized host session event requires a type.');
       await captureMemorySessionEvent(started.session.id, type, input.payload);

@@ -224,7 +224,21 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * `SCHEMA_STATEMENTS`, never create them, and every read would then hit "no such table" -- on
  * ordinary queries, not just on the new command.
  */
-export const KNOWL_MIGRATION_LEVEL = 17;
+/**
+ * 18 adds `host_session_bindings.recompact_pending`.
+ *
+ * Load-bearing rather than bookkeeping, for the reason level 6 records and 17 repeats. The
+ * column is read on the hot path -- `consumeRecompactPending` runs on every turn-start that
+ * finds a live session -- so a store an installed build already stamped at 17 would skip
+ * `ensureHostSessionBindingColumns`, never gain the column, and then fail ordinary turn-start
+ * with "no such column". `KNOWL_SCHEMA_VERSION` stays at 1: an older build reading this
+ * database finds every table it knows intact and never looks at this column.
+ *
+ * No backfill, and none is meaningful: the flag says "this session was compacted a moment
+ * ago", which is not a fact about the past that could be recovered. Existing rows default to
+ * 0, which is the truthful answer for a session that was not mid-compaction when it migrated.
+ */
+export const KNOWL_MIGRATION_LEVEL = 18;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {
