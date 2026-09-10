@@ -229,7 +229,10 @@ def _resolve_knowl_command(ctx: Any) -> List[str]:
     """Where the knowl CLI is: plugin setting, then env, then PATH, then npx."""
     configured = _setting(ctx, "knowl_bin") or os.environ.get("KNOWL_BIN")
     if configured:
-        return [str(configured)]
+        # Unwrapped too, and this is the branch that matters: the documented way to point at a
+        # global install is `knowl_bin: .../npm/knowl.cmd`, so the configured path is MORE
+        # likely to be a batch shim than a discovered one, not less.
+        return _unwrap_batch_shim(str(configured))
     for candidate in ("knowl.cmd", "knowl") if sys.platform == "win32" else ("knowl",):
         found = shutil.which(candidate)
         if found:

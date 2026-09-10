@@ -9,6 +9,7 @@ this test invented.
 import importlib.util
 import json
 import os
+import types
 import unittest
 import unittest.mock
 
@@ -137,6 +138,21 @@ class PluginTest(unittest.TestCase):
                 lone = os.path.join(d, "elsewhere", "knowl.cmd")
                 self.assertEqual(self.plugin._unwrap_batch_shim(lone), [lone])
         self.assertEqual(self.plugin._unwrap_batch_shim("/usr/bin/knowl"), ["/usr/bin/knowl"])
+
+    def test_a_configured_knowl_bin_is_unwrapped_too(self):
+        # The documented way to point at a global install is `knowl_bin: .../npm/knowl.cmd`,
+        # so the configured branch is the one most likely to hold a batch shim. Unwrapping
+        # only the PATH lookup left every multi-line `knowl store` broken for that config.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            entry = os.path.join(d, "node_modules", "@dat999zx", "knowl", "dist", "index.js")
+            os.makedirs(os.path.dirname(entry))
+            open(entry, "w").close()
+            shim = os.path.join(d, "knowl.cmd")
+            open(shim, "w").close()
+            ctx = types.SimpleNamespace(get_config=lambda key, default=None: shim if key == "knowl_bin" else default)
+            with unittest.mock.patch.object(self.plugin.shutil, "which", return_value="/usr/bin/node"):
+                self.assertEqual(self.plugin._resolve_knowl_command(ctx), ["/usr/bin/node", entry])
 
     def test_registers_every_hook_the_profile_expects(self):
         self.assertEqual(
