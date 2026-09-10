@@ -6,6 +6,9 @@ import {
 } from '../../core/config.js';
 import { closeDb, initDb } from '../../store/database.js';
 import { conversationKey, readCaptureOutcome } from '../../store/capture-outcome.js';
+import { captureEventsMode } from '../../store/capture-config.js';
+import { detectCorrectionSignal } from '../../core/lesson-signals.js';
+import { recordCorrectionLesson, renderCorrectionNudge } from '../../store/pending-lessons.js';
 import { assertKnowledgeDatabasePresent } from '../database-presence.js';
 import { fleetTurnStartBestEffort } from '../../session/fleet-lifecycle.js';
 import { readLifecyclePayload } from './lifecycle.js';
@@ -94,6 +97,12 @@ export async function runAgentReminder(host: string, options: HookOutputOptions 
   // one envelope with the card rather than printing a second, since a host reads one JSON
   // object from a hook.
   let digest: string | undefined;
+  // The correction lesson. `host-lifecycle`'s `turn-start` branch does this for hosts whose
+  // prompt event reaches `agent-hook`, and claude/codex/copilot/openhands are not those hosts:
+  // `hook-config.ts` registers THIS command under their prompt event and strips any lifecycle
+  // handler from the same key. So the classifier ran nowhere in production (#289). It runs here,
+  // where the prompt, the project root and an open store are all already in hand.
+  let correctionLine: string | undefined;
   try {
     const payload = await readLifecyclePayload();
     const identity = hostProfile(host as HookHost).identity(payload);
@@ -101,15 +110,19 @@ export async function runAgentReminder(host: string, options: HookOutputOptions 
     assertKnowledgeDatabasePresent(root);
     await initDb(root);
     try {
-      const outcome = await readCaptureOutcome(conversationKey({
-        host,
-        projectRoot: root,
-        externalSessionId: identity.externalSessionId,
-      }));
+      const conversation = conversationKey({ host, projectRoot: root, externalSessionId: identity.externalSessionId });
+      const outcome = await readCaptureOutcome(conversation);
       const turns = outcome?.turns ?? 0;
       const config = await loadConfig(root).catch(() => null);
       send = turns === 0
         || shouldSendDriftReminder(turns, driftReminderEvery(config), isDriftBackoffEnabled(config));
+      const eventsMode = captureEventsMode(config ?? undefined);
+      // Same order as the engine's: classify, pend, and speak only in enforce. The verdict is
+      // a boolean -- no user text is stored, here or in the row.
+      if (eventsMode !== 'off' && typeof payload.prompt === 'string' && detectCorrectionSignal(payload.prompt)
+        && await recordCorrectionLesson(conversation) && eventsMode === 'enforce') {
+        correctionLine = renderCorrectionNudge();
+      }
       if (identity.externalSessionId) {
         digest = await fleetTurnStartBestEffort({
           host,
@@ -133,7 +146,7 @@ export async function runAgentReminder(host: string, options: HookOutputOptions 
   // This one answers "the card could not be emitted", where emitting it again is the failure
   // repeating. These two lines used to sit outside every try in the function.
   try {
-    const parts = [send ? promptReminderFor(hostLabel(host)) : undefined, digest].filter((part): part is string => Boolean(part));
+    const parts = [correctionLine, send ? promptReminderFor(hostLabel(host)) : undefined, digest].filter((part): part is string => Boolean(part));
     if (parts.length > 0) console.log(JSON.stringify(createAgentReminderOutput(host, parts.join('\n\n'))));
   } catch (error) {
     if (reportHookFailure(host, options, 'Error emitting agent reminder', error)) process.exitCode = 1;
