@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.23.0 — 2026-09-10
 
 ### A repo can say a linked repo's item is wrong
 
@@ -49,6 +49,92 @@ one.
 **The OpenClaw bootstrap card was being thrown away, on every session.** The profile registered `session_start`, so the engine bound the session and spent the bootstrap card on an event whose return value OpenClaw discards — and the first real turn (`before_prompt_build`) then arrived on a session the engine had already seen, with nothing to say. Measured: a fresh session whose first event is `before_prompt_build` gets the orientation card; the same session preceded by `session_start` got an empty answer with zero prepend context. That event is no longer mapped to the engine lifecycle, so the first `before_prompt_build` binds the session and carries the card. The plugin continues to register `session_start` solely to warm the workspace handle cache in memory so the initial write gate avoids cold open latency.
 
 **A workspace is a path, not a prefix.** `OpenClawEngineManager` matched cached workspace handles by string prefix (`cwd.startsWith(root)`), so sibling directories that share a name prefix (such as `knowl` and `knowl-cloud`) collided on lookup: whichever warmed first captured subsequent requests for the other, reading and writing atoms to the wrong project's database. Workspace matching in `getHandle` and `releaseWorkspace` now enforces a path boundary via `path.relative`, ensuring a workspace matches only itself or directories beneath it.
+
+### Agents can reach the five person-initiated verbs from the slash menu
+
+Tools are chosen by the model mid-turn; prompts are chosen by the person up front, before a turn
+exists to choose within. `park`, `resume`, `handoff`, `drift` and `state` are the five verbs where
+that is the real entry point — "resume <key>" is something a human types to open a session, where
+`knowl_feedback` is something an agent decides mid-work and would be a menu entry nobody picks.
+
+Additive only. Every tool stays on `tools/list` and nothing is reachable *only* through a prompt: a
+prompt body is one line that calls the tool with the argument passed through, so there is no second
+implementation of any verb to drift from the first. Everything but the prompt name and its argument
+list is derived from the tool definitions, and resolution throws at module load if a rename breaks
+the link — the prompt table cannot silently drift from the surface it fronts.
+
+### Every tool declares what it does to memory before a host asks
+
+`annotations` did not appear anywhere in `src/`, so every tool in `tools/list` looked equally
+dangerous: a host deciding approval friction could not tell `knowl_query` from `knowl_gc_apply`, and
+reading memory prompted as loudly as collecting it. All 36 tool definitions now carry the SDK's
+`ToolAnnotations`, and the field is *required* on `ToolDefinition` — so the compiler asks the
+question of a new tool rather than a reviewer noticing it did not.
+
+`readOnlyHint: true` goes to the sixteen tools that cannot create, alter, retire or delete
+knowledge. That excludes `knowl_drift` and `knowl_impact`, whose `apply` and `resolve` arguments
+write, and an annotation is read before arguments are.
+
+### Fixes
+
+**A compacted session is handed its card again.** The card is once per session, deliberately —
+and compaction is the one event that erases it from the model's context without ending the session,
+so once-per-session and once-per-context are different things exactly there. Measured on Hermes: 419
+characters on turn 1, then nothing for the life of the session after `on_pre_compress`. `checkpoint`
+is mapped from a compaction event and nothing else on every host that has one, so the event itself
+is the signal. The checkpoint sets a flag on the binding and the next turn-start spends it; the flag
+clears in the same statement that reports it, so two hook processes racing one turn cannot both
+re-deliver.
+
+**The correction classifier runs where the prompt event lands.** `detectCorrectionSignal` had never
+fired in production. `host-lifecycle` ran it on `turn-start`, and on Claude, Codex, Copilot and
+OpenHands the prompt event is not a lifecycle event at all — `hook-config.ts` registers
+`agent-reminder <host>` under that key and strips any lifecycle handler from it. The classifier was
+reachable from tests and from nothing else. It now runs in `runAgentReminder`, which already had all
+three inputs; no user text is stored either way.
+
+**`closeDb` closes the fleet database too.** `openFleetDb` caches its libSQL client in a module map
+that exactly one call site drained. `closeDb` released only the knowledge pool, because the fleet
+database is not in that pool and is not reached through the global context — so `agent-reminder` and
+`agent-hook`, the two commands that run most often and are killed the instant they finish, both
+exited holding a live native handle that process teardown reclaimed instead of `close()`.
+
+**A library write is validated by the project's own settings.** `handle.store` called the writer
+without `validationOptions`, so the defaults applied and `secretPatterns` fell back to the empty
+list: a repository that added a detector got default validation on every write the plugin made, and
+one that relaxed the defaults had writes refused that its own configuration allows. The config is
+read per write rather than captured at open, because a gateway holds a handle for the life of the
+process.
+
+**Every write path scans every field it writes.** `validateKnowledgeWrite` reads `tags` and
+`alternatives`, but three callers handed it a literal of exactly five fields — and an absent field
+is not a clean field, since `arrayField` returns `[]` for it. `knowl audit` and `knowl doctor`
+printed "No integrity findings" over a store whose `tags` column held a live credential, and
+`restoreSnapshot` uses that same audit as its restore verification, so a poisoned snapshot certified
+itself. Creating an atom with a credential in `tags` was refused while creating it clean and
+updating it with the same credential was accepted.
+
+**A broken project store is not a global-store question.** `knowl query` wrapped root resolution,
+`initDb` and the project lookup in one `try` whose `catch` never inspected the error. Only the first
+of those three failures means "there is no project here", so a repository whose `.knowl/knowl.db`
+would not open was answered from the machine-wide personal-defaults store — `status` and `list`
+exited 1 with `SQLITE_NOTADB` while `query` printed a cross-project atom under this repository's
+name and exited 0, with nothing in the payload marking it foreign.
+
+**The Hermes plugin sends the root keys the engine reads.** Everything but `tool_name`/`tool_input`
+was nested under `extra`, which the stdin allowlist drops whole. Four fields read at the root were
+sent, dropped, and read as absent: `prompt` (so the correction classifier never fired here),
+`status`/`error` (a failed `write_file` was captured as a *successful* checkpoint, its read-set
+recorded, impact run on a write that never happened), and `last_assistant_message` (fleet turn
+summary always null). The plugin also no longer invokes npm's `knowl.cmd` shim: a `.cmd` target runs
+through `cmd.exe`, which re-parses the argument line, so any atom body with a newline lost every
+flag after it.
+
+**`repo:` is honoured when the session root arrives per call.** `callToolAsRepo` returned as soon as
+`__projectRoot` resolved, before the `repo` argument was considered, so a host that passes the
+project root per call could not target a linked repository at all. A `local: true` duplicate now
+also reports that it was not marked local, rather than reporting a plain duplicate and leaving the
+caller to assume the flag took.
 
 ## 5.22.1 — 2026-09-07
 
