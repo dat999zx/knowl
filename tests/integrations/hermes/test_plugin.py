@@ -9,7 +9,9 @@ this test invented.
 import importlib.util
 import json
 import os
+import types
 import unittest
+import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.join(HERE, "..", "..", "..", "integrations", "hermes", "knowl", "__init__.py")
@@ -119,6 +121,38 @@ class PluginTest(unittest.TestCase):
         self.plugin.register(self.ctx)
 
     # -- registration ---------------------------------------------------------
+
+    def test_a_cmd_shim_is_unwrapped_to_node_and_the_entry_point(self):
+        # npm's `.cmd` shim runs through cmd.exe, which re-parses arguments: a body with a
+        # newline lost every flag after it and `knowl store` failed on a "missing" category.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            entry = os.path.join(d, "node_modules", "@dat999zx", "knowl", "dist", "index.js")
+            os.makedirs(os.path.dirname(entry))
+            open(entry, "w").close()
+            shim = os.path.join(d, "knowl.cmd")
+            open(shim, "w").close()
+            with unittest.mock.patch.object(self.plugin.shutil, "which", return_value="/usr/bin/node"):
+                self.assertEqual(self.plugin._unwrap_batch_shim(shim), ["/usr/bin/node", entry])
+                # Without the entry point beside it, the shim is left alone.
+                lone = os.path.join(d, "elsewhere", "knowl.cmd")
+                self.assertEqual(self.plugin._unwrap_batch_shim(lone), [lone])
+        self.assertEqual(self.plugin._unwrap_batch_shim("/usr/bin/knowl"), ["/usr/bin/knowl"])
+
+    def test_a_configured_knowl_bin_is_unwrapped_too(self):
+        # The documented way to point at a global install is `knowl_bin: .../npm/knowl.cmd`,
+        # so the configured branch is the one most likely to hold a batch shim. Unwrapping
+        # only the PATH lookup left every multi-line `knowl store` broken for that config.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            entry = os.path.join(d, "node_modules", "@dat999zx", "knowl", "dist", "index.js")
+            os.makedirs(os.path.dirname(entry))
+            open(entry, "w").close()
+            shim = os.path.join(d, "knowl.cmd")
+            open(shim, "w").close()
+            ctx = types.SimpleNamespace(get_config=lambda key, default=None: shim if key == "knowl_bin" else default)
+            with unittest.mock.patch.object(self.plugin.shutil, "which", return_value="/usr/bin/node"):
+                self.assertEqual(self.plugin._resolve_knowl_command(ctx), ["/usr/bin/node", entry])
 
     def test_registers_every_hook_the_profile_expects(self):
         self.assertEqual(
@@ -349,9 +383,55 @@ class PluginTest(unittest.TestCase):
 
     def test_pre_verify_forwards_the_paths_hermes_supplies(self):
         self.results["pre_verify"] = (None, 0, "")
-        self.ctx.hooks["pre_verify"](session_id="s", coding=True, changed_paths=["src/a.py"], attempt=1)
+        self.ctx.hooks["pre_verify"](session_id="s", coding=True, changed_paths=["src/a.py"], attempt=1, final_response="done")
         _event, payload, _cwd = self.calls[-1]
+        # `changed_paths` stays under `extra`: no turn-stop reader on any host takes it. The
+        # fleet's per-turn summary reads `last_assistant_message`, at the root.
         self.assertEqual(payload["extra"]["changed_paths"], ["src/a.py"])
+        self.assertEqual(payload["last_assistant_message"], "done")
+
+    # -- the root keys the engine reads --------------------------------------
+    #    Everything under `extra` is dropped by the engine's stdin allowlist, so a field the
+    #    engine reads has to sit at the root. Each of these was sent under `extra` once and
+    #    read as absent -- the tests below are the ones that would have caught it.
+
+    def test_the_prompt_reaches_the_root_for_the_correction_classifier(self):
+        self.results["pre_llm_call"] = (None, 0, "")
+        self.ctx.hooks["pre_llm_call"](session_id="s", user_message="no, i told you already", is_first_turn=False)
+        _event, payload, _cwd = self.calls[-1]
+        self.assertEqual(payload["prompt"], "no, i told you already")
+        self.assertNotIn("user_message", payload["extra"])
+
+    def test_a_failed_tool_call_reports_failed_status_and_the_error_at_the_root(self):
+        self.results["post_tool_call"] = (None, 0, "")
+        self.ctx.hooks["post_tool_call"](tool_name="write_file", args={"path": "a.py"}, session_id="s",
+                                         status="error", error_type="tool_error", error_message="EACCES")
+        self._join_post_tool_threads()
+        _event, payload, _cwd = self.calls[-1]
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["error"], "EACCES")
+
+    def test_a_successful_tool_call_carries_no_error(self):
+        self.results["post_tool_call"] = (None, 0, "")
+        self.ctx.hooks["post_tool_call"](tool_name="write_file", args={"path": "a.py"}, session_id="s", status="ok")
+        self._join_post_tool_threads()
+        _event, payload, _cwd = self.calls[-1]
+        self.assertEqual(payload["status"], "finished")
+        self.assertNotIn("error", payload)
+
+    def test_an_interrupted_turn_ends_as_failed(self):
+        self.ctx.hooks["on_session_end"](session_id="s", turn_id="t", completed=False, interrupted=True)
+        _event, payload, _cwd = self.calls[-1]
+        self.assertEqual(payload["status"], "failed")
+        self.ctx.hooks["on_session_end"](session_id="s", turn_id="t", completed=True, interrupted=False)
+        _event, payload, _cwd = self.calls[-1]
+        self.assertNotIn("status", payload)
+
+    def _join_post_tool_threads(self):
+        import threading
+        for thread in threading.enumerate():
+            if thread.name == "knowl-post_tool_call":
+                thread.join(timeout=5)
 
     # -- impact card ----------------------------------------------------------
 

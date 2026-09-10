@@ -229,12 +229,33 @@ def _resolve_knowl_command(ctx: Any) -> List[str]:
     """Where the knowl CLI is: plugin setting, then env, then PATH, then npx."""
     configured = _setting(ctx, "knowl_bin") or os.environ.get("KNOWL_BIN")
     if configured:
-        return [str(configured)]
+        # Unwrapped too, and this is the branch that matters: the documented way to point at a
+        # global install is `knowl_bin: .../npm/knowl.cmd`, so the configured path is MORE
+        # likely to be a batch shim than a discovered one, not less.
+        return _unwrap_batch_shim(str(configured))
     for candidate in ("knowl.cmd", "knowl") if sys.platform == "win32" else ("knowl",):
         found = shutil.which(candidate)
         if found:
-            return [found]
+            return _unwrap_batch_shim(found)
     return ["npx", "-y", "@dat999zx/knowl"]
+
+
+def _unwrap_batch_shim(found: str) -> List[str]:
+    """`node <dist/index.js>` in place of npm's `.cmd` shim, so no argument crosses cmd.exe.
+
+    A `.cmd` target is run through cmd.exe, which re-parses the argument line: a newline in an
+    atom's body cut the line short and `knowl store` died on a "missing" `--category`, and a
+    `|` ran the rest as a command. Quoting does not help a batch target (cmd parses twice).
+    The shim's own body is `node "%dp0%\\node_modules\\@dat999zx\\knowl\\dist\\index.js" %*`,
+    so calling that entry point directly is what the shim would have done, minus the shell.
+    """
+    if not found.lower().endswith(".cmd"):
+        return [found]
+    entry = os.path.join(os.path.dirname(found), "node_modules", "@dat999zx", "knowl", "dist", "index.js")
+    node = shutil.which("node")
+    if node and os.path.isfile(entry):
+        return [node, entry]
+    return [found]
 
 
 def _hermes_hook_callback_timeout() -> float:
@@ -565,6 +586,14 @@ def _loaded_as_memory_provider() -> bool:
     return __name__.split(".", 1)[0] == MEMORY_LOADER_NAMESPACE
 
 
+# Keys the engine reads at the ROOT of a hook payload. Everything else goes under `extra`,
+# which the engine's stdin allowlist drops whole -- so a field the engine reads has to be
+# named here or it is sent and silently lost. Each of these was: `prompt` fed the correction
+# classifier that had never fired on this host, `status`/`error` turned a failed write into a
+# recorded success, and `last_assistant_message` left the fleet's per-turn summary empty.
+_ROOT_KEYS = ("prompt", "status", "error", "last_assistant_message")
+
+
 def _payload(event: str, session_id: str, cwd: str, **extra: Any) -> Dict[str, Any]:
     """The shape Hermes' own shell-hook serializer emits (agent/shell_hooks.py:_serialize_payload)."""
     body: Dict[str, Any] = {
@@ -578,6 +607,10 @@ def _payload(event: str, session_id: str, cwd: str, **extra: Any) -> Dict[str, A
         body["tool_name"] = str(tool_name)
     if isinstance(tool_input, dict):
         body["tool_input"] = tool_input
+    for key in _ROOT_KEYS:
+        value = extra.pop(key, None)
+        if value is not None:
+            body[key] = str(value)
     body["extra"] = {k: v for k, v in extra.items() if v is not None}
     return body
 
@@ -773,7 +806,9 @@ def register(ctx: Any) -> None:
             data, _code, _err = fire(
                 "pre_llm_call",
                 session_id,
-                user_message=str(user_message or "")[:4000],
+                # Root `prompt`, the key the engine's correction classifier reads. It derives
+                # one boolean from it and discards the text; nothing stores it.
+                prompt=str(user_message or "")[:4000],
                 is_first_turn=bool(is_first_turn),
                 turn_id=turn_id,
                 model=model,
@@ -914,17 +949,24 @@ def register(ctx: Any) -> None:
         args: Optional[Dict[str, Any]] = None,
         session_id: str = "",
         status: Any = None,
+        error_type: Any = None,
+        error_message: Any = None,
         **_: Any,
     ) -> None:
         def collect() -> None:
             try:
+                # Hermes reports "ok" or "error" here; the engine reads root `status`/`error`
+                # in its own vocabulary. Without them a failed write_file was captured as a
+                # successful one.
+                failed = str(status or "") == "error"
                 data, _code, _err = fire(
                     "post_tool_call",
                     session_id,
                     timeout=POST_TOOL_TIMEOUT_SECONDS,
                     tool_name=tool_name,
                     tool_input=args or {},
-                    status=status,
+                    status=("failed" if failed else "finished"),
+                    error=(str(error_message or error_type or "tool_error")[:2000] if failed else None),
                 )
                 if not (data and isinstance(data.get("context"), str) and data["context"].strip()):
                     return
@@ -1036,7 +1078,8 @@ def register(ctx: Any) -> None:
                 coding=bool(coding),
                 attempt=int(attempt or 0),
                 changed_paths=list(changed_paths or []),
-                final_response=str(final_response or "")[:2000],
+                # Root key: the fleet's one-line "what did this turn do", held in memory only.
+                last_assistant_message=str(final_response or "")[:2000],
             )
         except Exception as exc:
             logger.debug("knowl pre_verify: %s", exc)
@@ -1051,7 +1094,11 @@ def register(ctx: Any) -> None:
     # -- every turn's end (the name is historical) and the real session end.
     def on_session_end(session_id: str = "", turn_id: str = "", completed: Any = None, interrupted: Any = None, **_: Any) -> None:
         try:
-            fire("on_session_end", session_id, turn_id=turn_id, completed=completed, interrupted=interrupted)
+            # A Ctrl-C'd turn arrives as completed=False, interrupted=True; the engine reads
+            # root `status`, and without it every interrupted turn closed as a clean finish.
+            failed = bool(interrupted) or completed is False
+            fire("on_session_end", session_id, turn_id=turn_id, completed=completed, interrupted=interrupted,
+                 status=("failed" if failed else None))
         except Exception as exc:
             logger.debug("knowl on_session_end: %s", exc)
 
