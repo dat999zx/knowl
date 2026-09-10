@@ -96,6 +96,9 @@ const SCHEMA_PINS: Record<number, string> = {
   // level does, and load-bearingly: `annotateDisputes` reads both on every workspace query, so a
   // store left at 16 would skip the DDL and fail ordinary reads, not just the new command.
   17: '7a690fc55d186b8106ea27c647685bd3',
+  // 18 adds `host_session_bindings.recompact_pending`: the flag a compaction sets and the
+  // next turn-start spends, so a compacted session is handed its card again.
+  18: 'e8f3b2310e9f008aede3706c68c54e9a',
 };
 
 let root: string;

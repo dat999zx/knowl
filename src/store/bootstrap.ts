@@ -180,6 +180,7 @@ const SCHEMA_STATEMENTS = [
     memory_session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)), successful_tool_count INTEGER NOT NULL DEFAULT 0,
     seen_commit_rowid INTEGER NOT NULL DEFAULT 0, seen_commit_initialized INTEGER NOT NULL DEFAULT 0,
+    recompact_pending INTEGER NOT NULL DEFAULT 0,
     seen_peer_commits TEXT, updated_at TEXT NOT NULL,
     PRIMARY KEY (host, project_root, external_session_id, external_turn_id)
   );`,
@@ -1087,6 +1088,14 @@ async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
   // bound at zero commits is now marked initialized and does report its first commit.
   if (!columns.includes('seen_commit_initialized')) {
     await client.execute('ALTER TABLE host_session_bindings ADD COLUMN seen_commit_initialized INTEGER NOT NULL DEFAULT 0;');
+  }
+  // Compaction erases the card from the model's context without ending the session, so
+  // once-per-session and once-per-context diverge exactly there. Hosts whose only signal is
+  // PRE-compaction cannot re-deliver on the spot -- the card would be composed into the very
+  // context about to be discarded -- so the checkpoint sets this and the next turn-start
+  // spends it. Defaults to 0: an existing session was not mid-compaction when it migrated.
+  if (!columns.includes('recompact_pending')) {
+    await client.execute('ALTER TABLE host_session_bindings ADD COLUMN recompact_pending INTEGER NOT NULL DEFAULT 0;');
   }
   // JSON map of peer repo name -> that peer's last seen commit rowid. Nullable rather
   // than defaulted to '{}': NULL means "never looked at peers", which adopts their heads

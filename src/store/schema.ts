@@ -177,6 +177,8 @@ export const hostSessionBindings = sqliteTable('host_session_bindings', {
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   successfulToolCount: integer('successful_tool_count').notNull().default(0),
   seenCommitRowid: integer('seen_commit_rowid').notNull().default(0),
+  /** Set when the host compacts; consumed by the next turn-start, which re-delivers the card. */
+  recompactPending: integer('recompact_pending', { mode: 'boolean' }).notNull().default(false),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   primaryKey({ columns: [table.host, table.projectRoot, table.externalSessionId, table.externalTurnId] }),
