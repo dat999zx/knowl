@@ -463,6 +463,21 @@ export function getConfigRoot(): string {
  * reachable from a second kind of caller.
  */
 export async function closeDb(): Promise<void> {
+  // The fleet database first, and unconditionally: it is not in this pool and it is not
+  // reached through `globalContext`, so neither the guard below nor `releaseAll` has ever
+  // touched it. `openFleetDb` caches its client in a module map that exactly one call site
+  // drains (`knowl fleet`), while every hook process opens it -- `agent-reminder` on the
+  // prompt event, `agent-hook` on tool events -- and exits without closing it. That leaves a
+  // live native handle for process teardown to reclaim instead of `close()`, on the two
+  // commands that run most often and are most often killed the moment they finish.
+  //
+  // Here rather than in each hook's own teardown because both already call this and a third
+  // caller would forget: "shutting the store down" is what this function means, and the
+  // fleet database is part of the store.
+  // Imported here rather than at module top: `src/fleet/store.ts` pulls in config and paths,
+  // and this module sits underneath both. The dynamic form is what the rest of the store uses
+  // for the same reason.
+  await import('../fleet/store.js').then(m => m.closeFleetDb()).catch(() => {});
   if (globalContext) {
     // Release the whole pool, not just the active handle. Tests and CLI commands delete
     // their project directory after closing, and a client still holding the file would
