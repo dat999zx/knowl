@@ -90,10 +90,27 @@ describe('a tiny peer whose rows all match is not lost to the IDF clamp', () => 
     expect(mine[0].lexicalScore).toBeGreaterThan(1);
 
     const scored = scoreCandidates([...mine, ...theirs], { query, limit: 10, usingVector: false });
-    // ...and it costs the peer nothing. Its best row leads the page on a full-coverage match,
+    // ...and it costs the peer nothing. A peer row leads the page on a full-coverage match,
     // above a local row that shares one term of three.
     expect(scored[0].repo).toBe('small');
-    expect((scored[0].explanation.contributions as { lexical: number }).lexical).toBeCloseTo(1, 5);
+    // Recovered from the clamp, which is the whole claim: ~3.8e-6 of raw evidence becomes a
+    // lexical contribution of very nearly 1 once divided by its own corpus's best.
+    //
+    // NOT `toBeCloseTo(1, 5)`, which asserted something this test never meant. At two and three
+    // rows the peer holds a second matching row whose raw evidence is 0.4% below the best
+    // ("Build output cleaning" vs "Deploy build output": 3.846e-6 vs 3.861e-6), and it is
+    // written LAST, so it is the newest row in the set. Recency is min-max normalised over the
+    // candidate set, so how much that 1ms of newness is worth depends on the total span the set
+    // happens to cover -- which is a fact about how fast the machine seeded the fixtures, not
+    // about the ranking. When it outweighs the 0.4%, the other peer row leads and the
+    // contribution is 0.9962393332823878 -- observed on macos-latest, run 34430741581, on a
+    // tree that passed everywhere else and on the re-run.
+    //
+    // Both orderings are correct: lexical is a tie-breaker rather than a veto here (see
+    // FUSION_ALPHA), a 0.4% gap is a tie, and the claim under test -- the clamped peer is not
+    // lost -- is true either way. So this asserts the recovery, not which of two
+    // indistinguishable rows won it.
+    expect((scored[0].explanation.contributions as { lexical: number }).lexical).toBeGreaterThan(0.99);
     expect(scored.some(entry => entry.repo === 'big')).toBe(true);
 
     await closeDb();
