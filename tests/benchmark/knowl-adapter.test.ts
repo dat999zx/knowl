@@ -21,7 +21,9 @@ const records: NormalizedRecord[] = [
   },
 ];
 
-describe('Knowl normalized benchmark adapter', () => {
+// Spawns the real CLI per case; timed out at 32.4s on windows-latest against the 30s default.
+// See #293 -- the Windows runner is ~2x slower than ubuntu on this suite's workload.
+describe('Knowl normalized benchmark adapter', { timeout: 120_000 }, () => {
   it('preserves source IDs, applies supersession, and isolates projects', async () => {
     const adapter = new KnowlBenchmarkAdapter();
     await adapter.reset({ runId: 'knowl-adapter-test', mode: 'normalized', seed: 1 });

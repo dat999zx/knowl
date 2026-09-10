@@ -43,7 +43,12 @@ function storedId(output: string): string {
   return match[1];
 }
 
-describe('an id that lives in the global namespace', () => {
+// Every case here spawns the real CLI, and a cold Node start is ~300ms locally and roughly
+// double that on the Windows runner (measured on one run: 7.0min wall against ubuntu's 3.7min,
+// same commit). The file takes ~12s locally, so the default 30s per-test budget left under 3x
+// of headroom and two cases crossed it at 33.3s and 30.6s on windows-latest -- reported as a
+// flake, but really a budget sized for a fast machine. See #293.
+describe('an id that lives in the global namespace', { timeout: 120_000 }, () => {
   let globalId = '';
   let projectId = '';
 
