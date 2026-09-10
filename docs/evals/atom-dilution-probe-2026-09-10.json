@@ -1,0 +1,588 @@
+{
+  "corpus": {
+    "dbPath": "D:\\coding\\knowl\\.knowl\\knowl.db",
+    "fingerprint": "eeb8ae73e6c641c1",
+    "model": "onnx-community/granite-embedding-small-english-r2-ONNX",
+    "dtype": "q8",
+    "pooling": "cls",
+    "atoms": 1358,
+    "active": 1197,
+    "rankedAgainst": 1197,
+    "oldest": "2026-07-04T03:22:10.013Z",
+    "newest": "2026-09-09T09:33:05.848Z",
+    "medianAgeDays": 34.4
+  },
+  "settings": {
+    "minChars": 3500,
+    "sample": 30,
+    "fusedLimit": 10,
+    "windowChars": 500,
+    "stride": 2
+  },
+  "population": 64,
+  "titleControl": {
+    "ranks": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "rank1": 10
+  },
+  "vector": {
+    "queries": 30,
+    "rank1": 8,
+    "top3": 12,
+    "top10": 14,
+    "median": 13,
+    "worst": 533,
+    "mrr": 0.3298
+  },
+  "fused": {
+    "queries": 30,
+    "rank1": 21,
+    "top3": 21,
+    "top10": 21,
+    "median": 1,
+    "worst": 11,
+    "mrr": 0.7
+  },
+  "control": {
+    "whole": 0.8331781968515493,
+    "windowed": 0.9078202838596147,
+    "advantage": 0.07464208700806535,
+    "windowWins": 30,
+    "of": 30
+  },
+  "rows": [
+    {
+      "id": "0088845d131d4508",
+      "title": "The offset-backfill 1 ms budget race: root cause, and the second test 0afdd4e left behind",
+      "chars": 3589,
+      "clipped": false,
+      "quote": "The arming condition is a strict comparison against a clock the pass reads itself, so any such window is a race; express the budget semantically via `budgetWasReal` instead, and pin the `runIndexPass` wiring separately with a deadline far in the past.",
+      "vectorRank": 1,
+      "fusedRank": 1,
+      "wholeCosine": 0.8579651736384456,
+      "windowCosine": 0.8964783280880168
+    },
+    {
+      "id": "0cfd61ca28d54d63",
+      "title": "Plan B of the cloud client is implemented, reviewed and green at a137e21",
+      "chars": 4325,
+      "clipped": false,
+      "quote": "**Known gap, deliberate:** `publishedAt`, `authorUserId` and `review` ride in the payload but are not written -- the local schema has no columns for them, and Plan D adds them.",
+      "vectorRank": 29,
+      "fusedRank": 1,
+      "wholeCosine": 0.8118876609527721,
+      "windowCosine": 0.8782317583926827
+    },
+    {
+      "id": "191f4b87d0754980",
+      "title": "A TS project that sets `target` but not `lib` typechecks browser globals in Node — probe it with a one-line file before trusting tsc",
+      "chars": 3763,
+      "clipped": false,
+      "quote": "A branch reachable only by a human at a terminal is a branch no suite covers — extract the prompt into a module with an injectable `isTTY` (this repo's `cloud-picker.ts`, `sharing-picker.ts`, `confirm-prompt.ts`) so the interactive half can be tested at all.</content>",
+      "vectorRank": 7,
+      "fusedRank": 1,
+      "wholeCosine": 0.8478304992086425,
+      "windowCosine": 0.951931202933042
+    },
+    {
+      "id": "1e39ec4a19484b51",
+      "title": "Hermes Agent integration surfaces verified at source 2026-09-03: a MemoryProvider ABC with prefetch/system_prompt_block/sync_turn is the real slot, plugins DO get pre_tool_call with a block directive, first-party memory plugins live in-tree",
+      "chars": 3587,
+      "clipped": false,
+      "quote": "First-party providers ship IN-TREE under plugins/memory/: byterover, hindsight, holographic, honcho, mem0, openviking, retaindb, supermemory — each a README + plugin.yaml + __init__.py; hindsight's adapts \"PR #1811 by benfrank241\", so outside PRs adding a provider are accepted.",
+      "vectorRank": 4,
+      "fusedRank": 1,
+      "wholeCosine": 0.8413736663192198,
+      "windowCosine": 0.9424436722050685
+    },
+    {
+      "id": "224d11f1f5c74037",
+      "title": "queryCoverage cannot be #169's relevance floor: it is quantized at 1/n, so vague on-topic queries and partial junk land on the same value (gap exactly 0.000)",
+      "chars": 3825,
+      "clipped": false,
+      "quote": "A first run used technical probes copied from the stored finding `4eaf07ef6b6e41d6` — `unreal engine nanite...`, `swift ios coredata...` — and both scored 1.000 because that atom's own table quotes them.",
+      "vectorRank": 1,
+      "fusedRank": 1,
+      "wholeCosine": 0.8292369141019806,
+      "windowCosine": 0.906424031331321
+    },
+    {
+      "id": "2dcb3c6894214e3b",
+      "title": "Issue #35 default visibility: new links default to workspace-visible, existing manifests never move",
+      "chars": 3634,
+      "clipped": false,
+      "quote": "#34's `safeTerms` already keeps query text so \"a proposal has to be re-runnable against the owning repo's atoms\"; a command that re-runs unanswered cross-repo questions against the owning repo's private items and proposes promotions makes the default matter less than any policy choice would.",
+      "vectorRank": 2,
+      "fusedRank": 1,
+      "wholeCosine": 0.8482229763311945,
+      "windowCosine": 0.9237587868904238
+    },
+    {
+      "id": "312121334d614092",
+      "title": "OpenClaw spec fact-check: tool_result_persist only rewrites the TRANSCRIPT, not what the model reads — the async registerAgentToolResultMiddleware is the real seam, and before_tool_call fails CLOSED on throw or 15s timeout",
+      "chars": 5576,
+      "clipped": false,
+      "quote": "They are three independent hooks returning the same field names; the duplication mechanism is hooks.md:780-781 'Context additions concatenate in priority order'.",
+      "vectorRank": 125,
+      "fusedRank": null,
+      "wholeCosine": 0.7728896568026546,
+      "windowCosine": 0.8331137189989587
+    },
+    {
+      "id": "33ff6c4e2ec441ea",
+      "title": "\"Host X has no channel for this\" was wrong three times out of four — the channel exists under a name that does not contain the obvious word",
+      "chars": 3638,
+      "clipped": false,
+      "quote": "**THE REST OF THE ❌ ARE NOT \"IMPOSSIBLE\" EITHER, they are three other categories** and the matrix now says which: blocked on a vendor bug (Cursor's mid-turn card, ticket T-C20310), waiting on a host to ship hooks at all (OpenCode #39275), or a different product (Cline's npm plugin, an ACP proxy).",
+      "vectorRank": 1,
+      "fusedRank": 1,
+      "wholeCosine": 0.860499329535725,
+      "windowCosine": 0.9264513424086428
+    },
+    {
+      "id": "3f1fa7ebec504083",
+      "title": "Host-parity audit (b86e23c..8b390d2): Copilot registers two events GitHub never fires, OpenHands is \"configured\" in every repo, and Windsurf's bootstrap ✅ is false",
+      "chars": 6712,
+      "clipped": true,
+      "quote": "Tests are declaration checks, not behaviour checks.** ZERO tests reference `denied`, `denyExitCode`'s effect on process.exitCode, `refusesOnAnyNonZeroExit`, `readToolNames`, `writeToolNames`, or `writesFiles` -- the entire subject of 985a177 has no regression test.",
+      "vectorRank": 101,
+      "fusedRank": null,
+      "wholeCosine": 0.8107363567410908,
+      "windowCosine": 0.9116225295620225
+    },
+    {
+      "id": "4809ea47204e45e9",
+      "title": "Host-parity round-3 review (b86e23c..9f5f8be): all 6 named round-2 fixes verified, but Copilot's new subagentStart card is mis-stamped and `knowl init openhands` now fails without the binary on PATH",
+      "chars": 9479,
+      "clipped": true,
+      "quote": "**Residual of the same field:** for a user who does have `openhands` on PATH, `configured:true` in every repository, so `knowl doctor` WARNs and `doctor --fix` runs `knowl init openhands -y` into every repo they touch.",
+      "vectorRank": 24,
+      "fusedRank": 1,
+      "wholeCosine": 0.8547883244072687,
+      "windowCosine": 0.9283043729610715
+    },
+    {
+      "id": "511bd43059064019",
+      "title": "PR review detail 2026-08-27 for #206/#207/#208: defects found, nits, and why #207's verdict changed from drop to reshape",
+      "chars": 5085,
+      "clipped": false,
+      "quote": "**#208 `feat(recall): attribute a recall observation to the agent that caused it` — MERGED as `780963e`.** Adds `recall_observations.agent_id`, migration level 16, additive, `KNOWL_SCHEMA_VERSION` unmoved, no backfill (an observation already written cannot be re-attributed).",
+      "vectorRank": 11,
+      "fusedRank": 1,
+      "wholeCosine": 0.8324340067682531,
+      "windowCosine": 0.9152296355620744
+    },
+    {
+      "id": "607c764d20dd4181",
+      "title": "Live install found four defects the green unit suite could not: the plugin shipped uncompiled TypeScript and could not install, a root devDependency desynced the lockfile and broke CI, integrations/ was never typechecked, and ctx.workspaceDir does not exist on tool or session hook contexts",
+      "chars": 5075,
+      "clipped": false,
+      "quote": "Fix: a vitest `resolve.alias` for `openclaw/plugin-sdk/plugin-entry` -> `tests/integrations/openclaw/plugin-entry-stub.ts`, an identity-shaped `definePluginEntry` stub (the tests drive `register(api)` directly with a fake api, so nothing real is hidden).",
+      "vectorRank": 3,
+      "fusedRank": 1,
+      "wholeCosine": 0.8656721039774491,
+      "windowCosine": 0.9182596474579109
+    },
+    {
+      "id": "6c53aeaeede74459",
+      "title": "The relevance floor stays, keeps its name, and is documented as off-subject detection rather than unanswerability — no fourth threshold attempt",
+      "chars": 3777,
+      "clipped": false,
+      "quote": "That reframe — \"the agent already receives the rows and can judge them better than a scalar\" — is exactly what fails when atoms are injected unasked, because nothing gets to judge before the context cost is paid.",
+      "vectorRank": 29,
+      "fusedRank": 1,
+      "wholeCosine": 0.8021104021574261,
+      "windowCosine": 0.8760080811810675
+    },
+    {
+      "id": "6ebc3abb506540f7",
+      "title": "Command-surface audit at 4.2.0: 43 top-level CLI commands, 32 MCP tools, and seven structural overlaps — the cloud ones are the worst",
+      "chars": 4414,
+      "clipped": false,
+      "quote": "**Four parallel lifecycle systems.** `knowl session start/event/finish/recover`, `knowl task start/checkpoint/finish/run`, `agent-event`/`agent-hook`/`agent-reminder`, and MCP `knowl_task_*` + `knowl_session_finish`.",
+      "vectorRank": 21,
+      "fusedRank": 1,
+      "wholeCosine": 0.850310579060438,
+      "windowCosine": 0.9501966227016483
+    },
+    {
+      "id": "72963ba149d54fc8",
+      "title": "A Windows CI leg red while every other OS passes: check the signature (timeout OR 0xC0000005 native crash), re-run the job, do not touch the tests",
+      "chars": 3628,
+      "clipped": false,
+      "quote": "<parameter name=\"reasoning\">A second, materially different signature appeared the same day, and the skill as first written would have told the next session to stop (\"if any assertion failed, this does not apply\") when the correct action was the same re-run.",
+      "vectorRank": 3,
+      "fusedRank": 1,
+      "wholeCosine": 0.8236482412300167,
+      "windowCosine": 0.862118188740184
+    },
+    {
+      "id": "80a748a29eef483e",
+      "title": "The five open PRs were cleared on 2026-09-03: main b8b2e60 -> ae09499, one review fix pushed to #237",
+      "chars": 4163,
+      "clipped": false,
+      "quote": "**LOCAL VERIFICATION on the integrated tree before any merge:** `npm.cmd ci`, `npm.cmd run typecheck` exit 0, `npm.cmd run build` clean, `npm.cmd test` -> **390 files, 3720 passed, 5 skipped, 0 failed**, `npm.cmd run docs:check` current.",
+      "vectorRank": 13,
+      "fusedRank": 1,
+      "wholeCosine": 0.873272665198412,
+      "windowCosine": 0.9157415452555336
+    },
+    {
+      "id": "904c8fe68b484675",
+      "title": "5.3.0 published: a linked workspace stops being a wall — act as a sibling repo, and read its shared atoms whole by id",
+      "chars": 3681,
+      "clipped": false,
+      "quote": "Neither is ever a code failure on a lone leg; read the log before investigating, and note `gh run view --job <id> --log` returns EMPTY while the overall run is still in progress, which reads like a failed fetch rather than an unavailable log.",
+      "vectorRank": 414,
+      "fusedRank": null,
+      "wholeCosine": 0.7825710266811573,
+      "windowCosine": 0.9031525099626986
+    },
+    {
+      "id": "9d327f381ede4881",
+      "title": "The Hermes MemoryProvider must not recall: prefetch, recall_status and system_prompt_block are deleted, and the pre_llm_call hook is the only recall channel on every host",
+      "chars": 3772,
+      "clipped": false,
+      "quote": "BONUS BUG FOUND, pre-existing: `test_a_folderless_session_still_gets_a_recall_card` never stubbed `_session_folder()`, so it read the ambient cwd and took the \"folder is not a Knowl project\" branch instead of the folderless one.",
+      "vectorRank": 137,
+      "fusedRank": null,
+      "wholeCosine": 0.8078249025711488,
+      "windowCosine": 0.9115120431608795
+    },
+    {
+      "id": "a28ef7e4f5a347c5",
+      "title": "The CHANGELOG `## Unreleased` section is consumed by every release commit and nobody recreates it, so check for it before assuming a PR needs no changelog entry",
+      "chars": 5736,
+      "clipped": false,
+      "quote": "Confirmed a third time preparing 5.18.0: #234 shipped NO docs at all, and the reference's \"staleness is limited to hashed file evidence\" said nothing about what makes evidence hashed -- vacuous before that PR, load-bearing after it.",
+      "vectorRank": 150,
+      "fusedRank": null,
+      "wholeCosine": 0.7995037540140548,
+      "windowCosine": 0.9119244754196533
+    },
+    {
+      "id": "b7b77bd72000407f",
+      "title": "Do not port knowl-cloud's 2000-character embedding cap here — this repo already clips by tokens, and the cap would truncate a quarter of the corpus",
+      "chars": 3693,
+      "clipped": false,
+      "quote": "**The transfer runs the other way:** knowl-cloud's 2000-character cap has the same JSON-vs-prose blind spot this repo measured and fixed, and would benefit from the token clip.</content>",
+      "vectorRank": 1,
+      "fusedRank": 1,
+      "wholeCosine": 0.9115566554022703,
+      "windowCosine": 0.9283182186701318
+    },
+    {
+      "id": "bfb061c8eb094559",
+      "title": "OpenClaw ships as an in-process plugin importing a new three-entry library export, not a subprocess shell-out — spec at 2026-09-05-openclaw-plugin-design.md",
+      "chars": 6161,
+      "clipped": false,
+      "quote": "Two host budgets also constrain observers: before_compaction has a 30s per-handler timeout and runs on Codex's serialized notification queue where a hang freezes turn/completed; session_end has a 2-SECOND TOTAL drain budget across all sessions and handlers.",
+      "vectorRank": 59,
+      "fusedRank": null,
+      "wholeCosine": 0.7843268433307768,
+      "windowCosine": 0.8665104313993175
+    },
+    {
+      "id": "ca4db9dd543c4ed1",
+      "title": "OpenClaw does not dispatch before_prompt_build on the embedded agent runner, for bundled AND non-bundled plugins alike -- it fires only on the claude-cli backend, and the knowl plugin was never broken",
+      "chars": 3958,
+      "clipped": false,
+      "quote": "TEST RECIPE, cheap to repeat: install a minimal plugin with one before_prompt_build hook returning a marker string, run the same prompt under a claude-cli model and an embedded-runner model, compare the handler count in the debug log and ask the model whether the marker is present.",
+      "vectorRank": 1,
+      "fusedRank": 1,
+      "wholeCosine": 0.8686612003016567,
+      "windowCosine": 0.9247026760260475
+    },
+    {
+      "id": "d3e55846d692444e",
+      "title": "Federation searches each peer under its own embedding profile; the knowledge scorer gained a per-profile semantic range and a per-corpus floor because it scores a union rather than rank-fusing",
+      "chars": 3648,
+      "clipped": false,
+      "quote": "**CI NOTE:** the `scan` job failed once here on `ConnectionResetError` while verifying PyPI provenance for `plugin-scanner` — the scanner failed installing ITSELF and the actual scan step reported `skipped`.",
+      "vectorRank": 533,
+      "fusedRank": null,
+      "wholeCosine": 0.7741483586533698,
+      "windowCosine": 0.8775611137148341
+    },
+    {
+      "id": "d87ad9376a3c4e51",
+      "title": "SameSite=Strict is not a CSRF defence on loopback: it ignores the port, so every 127.0.0.1 page is same-site",
+      "chars": 3742,
+      "clipped": false,
+      "quote": "(4) The 413 was undeliverable for genuinely large bodies: breaking out of a `for await` calls the iterator's `return()`, destroying the socket while the client is still writing, so 200 KB got a status and 5 MB got ECONNRESET.",
+      "vectorRank": 92,
+      "fusedRank": null,
+      "wholeCosine": 0.78476796371987,
+      "windowCosine": 0.9527092943932431
+    },
+    {
+      "id": "df4adecddf85489e",
+      "title": "Client-side embedding is designed and specced at 330d74e: vectors travel both ways, one profile per workspace, canary at connect",
+      "chars": 4582,
+      "clipped": false,
+      "quote": "Reading the pull path showed clients already re-embed everything locally, which meant the cross-member matching problem they were worried about did not exist yet — and that the redundant work was far larger than they thought, since it also runs on every laptop.",
+      "vectorRank": 1,
+      "fusedRank": 1,
+      "wholeCosine": 0.8626206503931624,
+      "windowCosine": 0.9163089023514062
+    },
+    {
+      "id": "e0b6c57c09254af9",
+      "title": "Open-PR sweep 2026-08-15: all four PRs reviewed, fixed and merged — main is eb5158e",
+      "chars": 5236,
+      "clipped": false,
+      "quote": "Defensible rather than an oversight: a repo name only means something inside the workspace that issued it, `origin_repo` already gets dedicated attribution machinery (`importAttribution`, `header.origin`, format version 3), and `written_by` has none.",
+      "vectorRank": 88,
+      "fusedRank": null,
+      "wholeCosine": 0.8153911334411728,
+      "windowCosine": 0.9139778433606277
+    },
+    {
+      "id": "f24629ad17154edc",
+      "title": "Host-parity review (a457e29): Copilot shares Claude's .mcp.json, OpenHands init can never succeed, and the new deny channels are unreachable",
+      "chars": 5328,
+      "clipped": false,
+      "quote": "**Also noted:** `copilot.ts:79` reuses `anthropicDenyToolCall`, which nests the verdict under `hookSpecificOutput`, while this repo's own roadmap research recorded Copilot's channel as a flat `{permissionDecision, permissionDecisionReason}` — unverified contradiction.",
+      "vectorRank": 1,
+      "fusedRank": 1,
+      "wholeCosine": 0.8671174875732882,
+      "windowCosine": 0.9038538645815261
+    },
+    {
+      "id": "f2da3ff4ad754229",
+      "title": "5.18.0 released at 512a2b8: hooks over MCP, evidence staleness that can fire, feedback in days — and the CHANGELOG repair the release had to make first",
+      "chars": 4126,
+      "clipped": false,
+      "quote": "**npm read-path lag reproduced on a version bump, not just a new name.** `npm view @dat999zx/knowl@5.18.0` returned E404 and `dist-tags.latest` still read 5.17.0 roughly fifteen seconds after the workflow reported success.",
+      "vectorRank": 13,
+      "fusedRank": 1,
+      "wholeCosine": 0.8567149408839184,
+      "windowCosine": 0.9455044444374241
+    },
+    {
+      "id": "f593fee602d24e53",
+      "title": "Hermes Agent v0.21.0 has SHELL hooks in config.yaml that speak Claude Code's wire format — including `pre_verify`, a real stop channel (`{\"decision\":\"block\",\"reason\"}` keeps the turn going) — so Hermes can reach 6/6 without the Python plugin",
+      "chars": 3729,
+      "clipped": false,
+      "quote": "`hermes hooks list|test <event>|doctor|revoke` exist — `hermes hooks test pre_tool_call` fires the hook against a synthetic payload, giving a real end-to-end check WITHOUT an LLM call or login.",
+      "vectorRank": 1,
+      "fusedRank": 1,
+      "wholeCosine": 0.8856269380259132,
+      "windowCosine": 0.9206101305265264
+    },
+    {
+      "id": "f60ae4edd5d54c15",
+      "title": "knowl-first parity: plan written, baseline green at 3925 tests, rebased onto 07dd150",
+      "chars": 3623,
+      "clipped": false,
+      "quote": "The stub is identity-shaped, so it covers what the profile returns and says nothing about gateway delivery; that is why the unstub tasks require a live session, not a green suite.",
+      "vectorRank": 3,
+      "fusedRank": 1,
+      "wholeCosine": 0.8116354941237353,
+      "windowCosine": 0.8216491031144602
+    }
+  ],
+  "candidateDepthSweep": {
+    "note": "candidateLimit measured at 3/5/10 by editing src/store/agent-query.ts:409 and reverting. The constant is unchanged on disk.",
+    "probe": {
+      "3": {
+        "vector": {
+          "queries": 30,
+          "rank1": 8,
+          "top3": 12,
+          "top10": 14,
+          "median": 13,
+          "worst": 533,
+          "mrr": 0.3298
+        },
+        "fused": {
+          "queries": 30,
+          "rank1": 21,
+          "top3": 21,
+          "top10": 21,
+          "median": 1,
+          "worst": 11,
+          "mrr": 0.7
+        },
+        "control": {
+          "whole": 0.8331781968515493,
+          "windowed": 0.9078202838596147,
+          "advantage": 0.07464208700806535,
+          "windowWins": 30,
+          "of": 30
+        }
+      },
+      "5": {
+        "vector": {
+          "queries": 30,
+          "rank1": 8,
+          "top3": 12,
+          "top10": 14,
+          "median": 13,
+          "worst": 533,
+          "mrr": 0.3298
+        },
+        "fused": {
+          "queries": 30,
+          "rank1": 21,
+          "top3": 21,
+          "top10": 21,
+          "median": 1,
+          "worst": 11,
+          "mrr": 0.7
+        },
+        "control": {
+          "whole": 0.8331781968515493,
+          "windowed": 0.9078202838596147,
+          "advantage": 0.07464208700806535,
+          "windowWins": 30,
+          "of": 30
+        }
+      },
+      "10": {
+        "vector": {
+          "queries": 30,
+          "rank1": 8,
+          "top3": 12,
+          "top10": 14,
+          "median": 13,
+          "worst": 533,
+          "mrr": 0.3298
+        },
+        "fused": {
+          "queries": 30,
+          "rank1": 24,
+          "top3": 24,
+          "top10": 24,
+          "median": 1,
+          "worst": 11,
+          "mrr": 0.8
+        },
+        "control": {
+          "whole": 0.8331781968515493,
+          "windowed": 0.9078202838596147,
+          "advantage": 0.07464208700806535,
+          "windowWins": 30,
+          "of": 30
+        }
+      }
+    },
+    "accuracyBenchmark": {
+      "3": {
+        "applicableCoverage": 0.925,
+        "temporalCoverage": 0.5714285714285714,
+        "abstentionCoverage": 1,
+        "provenanceCoverage": 1,
+        "strictAccuracyAtK": 0.745945945945946,
+        "temporalAccuracy": 0.85,
+        "currentStateAccuracy": 0.8,
+        "historicalAsOfAccuracy": null,
+        "timelineOrderAccuracy": null,
+        "contradictionResolutionAccuracy": 1,
+        "failureScenarioAccuracy": 0.6666666666666666,
+        "failedApproachRetrievalRecall": 0.6666666666666666,
+        "recallAt1": 0.3103448275862069,
+        "recallAt3": 0.6137931034482759,
+        "recallAt5": 0.7482758620689656,
+        "recallAt10": 0.7862068965517242,
+        "mrr": 0.7151041666666665,
+        "ndcgAt5": 0.6541345098669705,
+        "ndcgAt10": 0.6653299083157501,
+        "staleResultRate": 0.0020060180541624875,
+        "forbiddenResultRate": 0.007021063189568706,
+        "duplicateResultRate": 0,
+        "abstentionAccuracy": 0.36
+      },
+      "5": {
+        "applicableCoverage": 0.925,
+        "temporalCoverage": 0.5714285714285714,
+        "abstentionCoverage": 1,
+        "provenanceCoverage": 1,
+        "strictAccuracyAtK": 0.745945945945946,
+        "temporalAccuracy": 0.85,
+        "currentStateAccuracy": 0.8,
+        "historicalAsOfAccuracy": null,
+        "timelineOrderAccuracy": null,
+        "contradictionResolutionAccuracy": 1,
+        "failureScenarioAccuracy": 0.6666666666666666,
+        "failedApproachRetrievalRecall": 0.6666666666666666,
+        "recallAt1": 0.3103448275862069,
+        "recallAt3": 0.6137931034482759,
+        "recallAt5": 0.7482758620689656,
+        "recallAt10": 0.7862068965517242,
+        "mrr": 0.7151041666666665,
+        "ndcgAt5": 0.6541345098669705,
+        "ndcgAt10": 0.6653299083157501,
+        "staleResultRate": 0.0020060180541624875,
+        "forbiddenResultRate": 0.007021063189568706,
+        "duplicateResultRate": 0,
+        "abstentionAccuracy": 0.36
+      },
+      "10": {
+        "applicableCoverage": 0.925,
+        "temporalCoverage": 0.5714285714285714,
+        "abstentionCoverage": 1,
+        "provenanceCoverage": 1,
+        "strictAccuracyAtK": 0.745945945945946,
+        "temporalAccuracy": 0.85,
+        "currentStateAccuracy": 0.8,
+        "historicalAsOfAccuracy": null,
+        "timelineOrderAccuracy": null,
+        "contradictionResolutionAccuracy": 1,
+        "failureScenarioAccuracy": 0.6666666666666666,
+        "failedApproachRetrievalRecall": 0.6666666666666666,
+        "recallAt1": 0.3103448275862069,
+        "recallAt3": 0.6137931034482759,
+        "recallAt5": 0.7482758620689656,
+        "recallAt10": 0.7862068965517242,
+        "mrr": 0.7151041666666665,
+        "ndcgAt5": 0.6541345098669705,
+        "ndcgAt10": 0.6653299083157501,
+        "staleResultRate": 0.0020060180541624875,
+        "forbiddenResultRate": 0.007021063189568706,
+        "duplicateResultRate": 0,
+        "abstentionAccuracy": 0.36
+      },
+      "positiveControl_limitTimes1": {
+        "applicableCoverage": 0.925,
+        "temporalCoverage": 0.5714285714285714,
+        "abstentionCoverage": 1,
+        "provenanceCoverage": 1,
+        "strictAccuracyAtK": 0.7351351351351352,
+        "temporalAccuracy": 0.85,
+        "currentStateAccuracy": 0.8,
+        "historicalAsOfAccuracy": null,
+        "timelineOrderAccuracy": null,
+        "contradictionResolutionAccuracy": 1,
+        "failureScenarioAccuracy": 0.6666666666666666,
+        "failedApproachRetrievalRecall": 0.6666666666666666,
+        "recallAt1": 0.3103448275862069,
+        "recallAt3": 0.6137931034482759,
+        "recallAt5": 0.7482758620689656,
+        "recallAt10": 0.7793103448275862,
+        "mrr": 0.7151041666666665,
+        "ndcgAt5": 0.6541345098669705,
+        "ndcgAt10": 0.6623679439816843,
+        "staleResultRate": 0.0020060180541624875,
+        "forbiddenResultRate": 0.007021063189568706,
+        "duplicateResultRate": 0,
+        "abstentionAccuracy": 0.36
+      }
+    },
+    "suites": {
+      "3": "35/35 pass",
+      "5": "34/35 (agent-query-vector-branch pins limit*3 arithmetic)",
+      "10": "34/35 (same)"
+    }
+  }
+}
