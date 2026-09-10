@@ -7,7 +7,7 @@ import { ProjectNotFoundError } from '../core/errors.js';
 import { initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { adoptProject, scaffoldProject, scaffoldTarget, serveAutoInitAllowed } from './auto-init.js';
-import { registerTools } from './tools.js';
+import { registerTools, registerPrompts } from './tools.js';
 import { registerResources } from './resources.js';
 import { PACKAGE_VERSION } from '../version.js';
 import {
@@ -75,7 +75,7 @@ export function createMcpServer(
       // implemented is worse than the gap it papers over, because the client's fallback is
       // never taken and the failure surfaces as silence rather than as an error.
       //
-      // Both entries are deliberately bare:
+      // All three entries are deliberately bare:
       //
       // - `resources: {}` already covers `resources/templates/list`, which the SDK gates on the
       //   resources capability alone -- there is no separate template flag to add. Neither
@@ -87,9 +87,14 @@ export function createMcpServer(
       //   handlers in `tools.ts` re-check their own gate rather than trusting the listing. That
       //   is the honest pairing. Claiming `listChanged` without sending the notification would
       //   tell a host to wait for a signal that never arrives.
+      // - `prompts: {}` is here because `registerPrompts` answers both `prompts/list` and
+      //   `prompts/get`; the flag arrived in the same commit as the mechanism, which is the
+      //   rule this comment states. Its `listChanged` is withheld for the same reason tools'
+      //   is: the five prompts are a fixed literal today, and nothing sends the notification.
       capabilities: {
         tools: {},
         resources: {},
+        prompts: {},
       },
       // From the getter, not the positional argument. The real startup passes `null`
       // positionally and hands the live config over through `deferred`, so this card was
@@ -126,6 +131,11 @@ export function createMcpServer(
     getInitError,
     deferred.whenReady ?? (async () => {})
   );
+
+  // No state passed, and none needed: a prompt body is the tool name and the argument the
+  // person typed, so nothing here reads the project, the config or the database. The call it
+  // produces goes back through `tools/call`, which does all of that already.
+  registerPrompts(server);
 
   return server;
 }

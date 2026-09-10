@@ -2861,6 +2861,25 @@ workspace-federated views; `knowl://brain` is bounded rather than a complete dat
 `Auth: Unsupported` is expected for this local stdio server and does not indicate that the tools
 are unavailable.
 
+### Prompts
+
+Five prompts front the verbs a person starts rather than an agent chooses. Hosts render them as
+slash commands, prefixed with the server name — `/knowl:park`, `/knowl:resume`, and so on. Each
+one is a single line that calls the tool below it with the argument supplied; every tool remains
+on `tools/list` and nothing is reachable only through a prompt.
+
+| Prompt | Tool it calls | Arguments |
+| --- | --- | --- |
+| `park` | `knowl_park` | `goal` (required) |
+| `resume` | `knowl_resume` | `key` (optional; omit to list what is parked) |
+| `handoff` | `knowl_handoff` | `goal`, `nextAction` (both required) |
+| `drift` | `knowl_drift` | `since` (required) |
+| `state` | `knowl_state` | none |
+
+MCP prompt arguments are always strings, so a prompt exposes the one or two fields a person
+would type rather than the full tool schema. Anything richer — `completed`, `artifactRefs`,
+`apply` — is supplied by the agent on the resulting tool call.
+
 ## Optional AI
 
 Structured CLI/MCP storage, retrieval, governance, lifecycle, file-backed skills, and synthesis

@@ -25,7 +25,7 @@ class InMemoryTransport {
 }
 
 /** One connection, so the initialize result and later calls describe the same server. */
-async function session(): Promise<{ init: any; ask: (method: string) => Promise<any>; end: () => Promise<void> }> {
+async function session(): Promise<{ init: any; ask: (method: string, params?: any) => Promise<any>; end: () => Promise<void> }> {
   const server = createMcpServer(null, null, { version: 1 } as ProjectConfig);
   const transport = new InMemoryTransport();
   await server.connect(transport as never);
@@ -44,10 +44,15 @@ async function session(): Promise<{ init: any; ask: (method: string) => Promise<
   let counter = 0;
   return {
     init: init.result,
-    ask: async (method: string) => {
+    ask: async (method: string, params?: any) => {
       const id = `ask-${counter++}`;
       const answered = waitFor(id);
-      transport.onmessage!({ jsonrpc: '2.0', id, method, params: method === 'resources/subscribe' ? { uri: 'knowl://brain' } : {} });
+      transport.onmessage!({
+        jsonrpc: '2.0', id, method,
+        // `resources/subscribe` needs a uri to clear envelope validation, so a call that omits
+        // params still reaches the capability check this file is actually about.
+        params: params ?? (method === 'resources/subscribe' ? { uri: 'knowl://brain' } : {}),
+      });
       return answered;
     },
     end: () => server.close(),
@@ -55,11 +60,11 @@ async function session(): Promise<{ init: any; ask: (method: string) => Promise<
 }
 
 describe('the declared server capabilities', () => {
-  it('declares tools and resources, and no sub-flag knowl does not implement', async () => {
+  it('declares tools, resources and prompts, and no sub-flag knowl does not implement', async () => {
     const { init, end } = await session();
     // Deliberately an exact comparison. A sub-flag added here without the mechanism behind it
     // is the failure this test exists for, and `toMatchObject` would let one through.
-    expect(init.capabilities).toEqual({ tools: {}, resources: {} });
+    expect(init.capabilities).toEqual({ tools: {}, resources: {}, prompts: {} });
     await end();
   });
 
@@ -67,10 +72,59 @@ describe('the declared server capabilities', () => {
     const { ask, end } = await session();
     // Including the template list: the SDK gates `resources/templates/list` on the resources
     // capability alone, so declaring `resources` is the whole permission for it.
-    for (const method of ['resources/list', 'resources/templates/list', 'tools/list']) {
+    for (const method of ['resources/list', 'resources/templates/list', 'tools/list', 'prompts/list']) {
       const response = await ask(method);
       expect(response.error, `${method} is declared and unanswerable`).toBeUndefined();
     }
+    await end();
+  });
+
+  it('lists exactly the five person-initiated prompts', async () => {
+    const { ask, end } = await session();
+    const listed = await ask('prompts/list');
+    // Exact and ordered, so a sixth prompt added without a maintainer deciding it is
+    // person-initiated fails here rather than appearing in every host's slash menu unnoticed.
+    expect(listed.result.prompts.map((prompt: any) => prompt.name))
+      .toEqual(['park', 'resume', 'handoff', 'drift', 'state']);
+    // Prompt arguments are strings in MCP and have no schema, so `required` is the only thing
+    // a client can enforce -- it has to survive being derived from the tool's own schema.
+    const byName = new Map(listed.result.prompts.map((prompt: any) => [prompt.name, prompt]));
+    for (const [name, args] of [
+      ['park', [['goal', true]]],
+      ['resume', [['key', false]]],
+      ['handoff', [['goal', true], ['nextAction', true]]],
+      ['drift', [['since', true]]],
+      ['state', []],
+    ] as [string, [string, boolean][]][]) {
+      const prompt: any = byName.get(name);
+      expect(prompt.description, `${name} carries no description`).toBeTruthy();
+      expect(prompt.arguments.map((argument: any) => [argument.name, argument.required ?? false]))
+        .toEqual(args);
+      for (const argument of prompt.arguments) {
+        expect(argument.description, `${name}.${argument.name} carries no description`).toBeTruthy();
+      }
+    }
+    await end();
+  });
+
+  it('answers prompts/get with a message naming the tool and the argument', async () => {
+    const { ask, end } = await session();
+    const got = await ask('prompts/get', { name: 'resume', arguments: { key: 'blue-otter-42' } });
+    expect(got.result.messages[0].role).toBe('user');
+    // The whole prompt body: the tool to call and what the person typed. Nothing paraphrased,
+    // because `tools/list` already carries the tool's own description.
+    expect(got.result.messages[0].content.text).toBe('Call knowl_resume now with key: blue-otter-42');
+
+    // A required argument the person did not supply is refused rather than dropped: the body
+    // would otherwise read as a call that could work, for a tool that cannot run without it.
+    const missing = await ask('prompts/get', { name: 'drift', arguments: {} });
+    expect(missing.error?.code).toBe(-32602);
+    // And a name that is not here is the caller's mistake, not the server having failed.
+    const unknown = await ask('prompts/get', { name: 'elicit', arguments: {} });
+    expect(unknown.error?.code).toBe(-32602);
+    // The one prompt that takes nothing still produces a runnable call.
+    const state = await ask('prompts/get', { name: 'state', arguments: {} });
+    expect(state.result.messages[0].content.text).toBe('Call knowl_state now.');
     await end();
   });
 
@@ -81,8 +135,6 @@ describe('the declared server capabilities', () => {
     // without the handler, the test above fails instead. Neither direction can move alone.
     const subscribed = await ask('resources/subscribe');
     expect(subscribed.error?.code, 'resources/subscribe answered without being declared').toBe(-32601);
-    const prompts = await ask('prompts/list');
-    expect(prompts.error?.code, 'prompts answered without being declared').toBe(-32601);
     await end();
   });
 });

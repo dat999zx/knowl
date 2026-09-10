@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ErrorCode, GetPromptRequestSchema, ListPromptsRequestSchema, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { captureChangeWatermark, consumeCaptureNudge, consumeChangeNotice } from './change-notice.js';
 import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
@@ -2457,6 +2457,126 @@ export function registerTools(
     return {
       ...result,
       content: [...result.content, ...extra.map(text => ({ type: 'text' as const, text }))],
+    };
+  });
+}
+
+/**
+ * The five verbs a person starts, offered as MCP prompts as well as tools.
+ *
+ * Every one of these tools stays on `tools/list` and nothing moves off it. A prompt is not a
+ * second way to implement a verb, it is a second way to *reach* one: tools are chosen by the
+ * model mid-turn, prompts are chosen by the person up front -- a slash command in the host's
+ * menu, before any turn exists to choose within. These five are the only ones where that is
+ * the real entry point. "Park this", "resume <key>", "hand this off", "what drifted", "what do
+ * you know" are things a human says to open a session; the other thirty tools are things an
+ * agent decides mid-work, and a slash command for `knowl_feedback` would be a menu entry
+ * nobody picks.
+ *
+ * Everything but the name and the argument list is DERIVED from the tool definition, so this
+ * table cannot drift from the surface it fronts. `annotations.title` is already the
+ * person-facing one-liner for each of these five, the tool description is already the accurate
+ * statement of what the call does, and each argument's description and required-ness already
+ * live in the tool's own inputSchema. Restating any of them here would create a second copy
+ * that a later edit to the tool would silently leave behind.
+ *
+ * The names are bare verbs, not the `knowl_` tool names: hosts prefix a prompt with the
+ * server's own name when they render it, so `park` becomes `/knowl:park` and `knowl_park`
+ * would become `/knowl:knowl_park`.
+ *
+ * The argument list is written out rather than derived from the schema's `required` array,
+ * because the two answer different questions. `knowl_resume` requires nothing -- a bare call
+ * lists what is parked -- yet the key is the entire reason a person reaches for it, and
+ * `knowl_park` accepts seven fields of which a person supplies one.
+ */
+const PERSON_INITIATED_PROMPTS: { name: string; tool: string; arguments: string[] }[] = [
+  { name: 'park', tool: 'knowl_park', arguments: ['goal'] },
+  { name: 'resume', tool: 'knowl_resume', arguments: ['key'] },
+  { name: 'handoff', tool: 'knowl_handoff', arguments: ['goal', 'nextAction'] },
+  { name: 'drift', tool: 'knowl_drift', arguments: ['since'] },
+  { name: 'state', tool: 'knowl_state', arguments: [] },
+];
+
+/**
+ * One prompt, resolved against the tool it fronts.
+ *
+ * Throws rather than skipping when a name or an argument does not resolve. A prompt that
+ * quietly drops itself because a tool was renamed is the same invisible-surface failure that
+ * left `resources/templates/list` unanswered -- and this runs at module load, so the failure
+ * lands on the process that made the mistake instead of on a client months later.
+ */
+function resolvePrompt(entry: typeof PERSON_INITIATED_PROMPTS[number]) {
+  const tool = CORE_TOOL_DEFINITIONS.find(definition => definition.name === entry.tool);
+  if (!tool) throw new Error(`Prompt "${entry.name}" fronts unknown tool ${entry.tool}.`);
+  const properties = (tool.inputSchema.properties ?? {}) as Record<string, { description?: string }>;
+  const required = (tool.inputSchema.required ?? []) as string[];
+  return {
+    name: entry.name,
+    tool: tool.name,
+    title: tool.annotations.title ?? tool.name,
+    description: tool.description,
+    arguments: entry.arguments.map(argument => {
+      const property = properties[argument];
+      if (!property) throw new Error(`Prompt "${entry.name}" names ${entry.tool}.${argument}, which has no schema.`);
+      return {
+        name: argument,
+        // Verbatim from the tool, and it reads correctly for a person because the schema
+        // descriptions were already written in plain language rather than as type notes.
+        description: property.description,
+        required: required.includes(argument),
+      };
+    }),
+  };
+}
+
+const KNOWL_PROMPTS = PERSON_INITIATED_PROMPTS.map(resolvePrompt);
+
+/**
+ * The prompt body: one line that calls the tool with what the person typed.
+ *
+ * Deliberately not a rewritten instruction. The model already has this tool's full description
+ * from `tools/list`, so a prompt that restated it would be a third copy of the same text and
+ * the first one to go stale. All this has to do is turn a menu selection into the call.
+ *
+ * Values are interpolated raw. They come from the person's own client, which is the same trust
+ * level as the message they would otherwise have typed -- there is no third party here to
+ * contain, and collapsing a pasted multi-line goal would corrupt the very thing being parked.
+ */
+function promptBody(prompt: typeof KNOWL_PROMPTS[number], args: Record<string, string>): string {
+  const supplied = prompt.arguments
+    .filter(argument => args[argument.name])
+    .map(argument => `${argument.name}: ${args[argument.name]}`);
+  return supplied.length === 0
+    ? `Call ${prompt.tool} now.`
+    : `Call ${prompt.tool} now with ${supplied.join(', ')}`;
+}
+
+export function registerPrompts(server: Server): void {
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: KNOWL_PROMPTS.map(({ name, title, description, arguments: args }) => ({
+      name, title, description, arguments: args,
+    })),
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const prompt = KNOWL_PROMPTS.find(candidate => candidate.name === request.params.name);
+    // -32602, for the reason `resources.ts` spells out at its own not-found: the caller asked
+    // for something that is not here, which is not the server having failed.
+    if (!prompt) throw new McpError(ErrorCode.InvalidParams, `Prompt not found: ${request.params.name}`);
+    const args = request.params.arguments ?? {};
+    // The SDK validates the request envelope and stops there, so a declared-required argument
+    // is only required if something checks. Without this the body silently degrades to a bare
+    // `Call knowl_drift now.` -- a call that cannot succeed, phrased as though it could.
+    const missing = prompt.arguments.filter(argument => argument.required && !args[argument.name]);
+    if (missing.length > 0) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Prompt "${prompt.name}" requires ${missing.map(argument => argument.name).join(', ')}.`,
+      );
+    }
+    return {
+      description: prompt.title,
+      messages: [{ role: 'user' as const, content: { type: 'text' as const, text: promptBody(prompt, args) } }],
     };
   });
 }
