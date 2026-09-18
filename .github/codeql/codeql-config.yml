@@ -32,3 +32,9 @@ queries:
 paths-ignore:
   - tests
   - scripts
+  # Same category as `scripts/`, in a different place: `integrations/hermes/verify/drive.mjs` is a
+  # hand-run end-to-end driver, documented as such in the README beside it. It reads a token file
+  # and opens a WebSocket to a backend the operator started on loopback, which is
+  # `js/file-access-to-http` and `js/log-injection` by definition and is the entire point of the
+  # file. It is packaged (`integrations` is in `files`) but nothing imports it.
+  - integrations/hermes/verify

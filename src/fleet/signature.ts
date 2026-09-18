@@ -25,14 +25,21 @@ const MAX_HEAD_CHARS = 160;
 /** ANSI colour sequences, built from the escape's code point so the pattern holds no control character. */
 const ANSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
-/** Lines that name a runner, a shell prompt or a frame rather than the error itself. */
-const NOISE_LINE = /^(\s*$|\s*at\s|\s*\d+\s*\||>|\$|npm (ERR|warn)|\s*(FAIL|PASS|RUNS)\s|.*node:internal|\s*-{3,}|\s*={3,})/i;
+/**
+ * Lines that name a runner, a shell prompt or a frame rather than the error itself.
+ *
+ * Every `\s` run is bounded rather than `*`. `errorHeadLine` trims each line before testing it, so
+ * these runs can only ever match the empty string -- but an unbounded `\s*` at the same anchor in
+ * several alternatives is `js/polynomial-redos` regardless of what the input turns out to be, and
+ * the input here is a failing command's output, which is attacker-shaped often enough.
+ */
+const NOISE_LINE = /^(\s{0,16}$|\s{0,16}at\s|\s{0,16}\d+\s{0,16}\||>|\$|npm (ERR|warn)|\s{0,16}(FAIL|PASS|RUNS)\s|.*node:internal|\s{0,16}-{3,}|\s{0,16}={3,})/i;
 
 /**
  * Runner totals and per-file tallies. They contain the word "failed" and say nothing about
  * what failed, so they must lose to any line that does.
  */
-const SUMMARY_LINE = /^\s*(test files|tests|snapshots|duration|start at|errors)\s*[:|]?\s*\d|\(\d+\s+tests?\b|\b\d+\s+(passed|failed|skipped)\b.*\b\d+\s+(passed|failed|skipped)\b/i;
+const SUMMARY_LINE = /^\s{0,16}(test files|tests|snapshots|duration|start at|errors)\s{0,16}[:|]?\s{0,16}\d|\(\d+\s+tests?\b|\b\d+\s+(passed|failed|skipped)\b.*\b\d+\s+(passed|failed|skipped)\b/i;
 
 /**
  * Lines that name the failure itself: an exception class, an errno-style code, a shouted
@@ -40,7 +47,7 @@ const SUMMARY_LINE = /^\s*(test files|tests|snapshots|duration|start at|errors)\
  * because both Node and vitest print the cause after the context -- a `caused by:` chain ends
  * at the root, and vitest's `→ message` follows its `× test name`.
  */
-const STRONG_ERROR = /^\s*[→×✖✗]|\b\w+(Error|Exception)\b|\bE[A-Z]{3,}\b|\b[A-Z]{2,}_[A-Z_]{2,}\b|\berror:/;
+const STRONG_ERROR = /^\s{0,16}[→×✖✗]|\b\w+(Error|Exception)\b|\bE[A-Z]{3,}\b|\b[A-Z]{2,}_[A-Z_]{2,}\b|\berror:/;
 
 /** Weaker evidence, used only when nothing strong appears. The FIRST such line wins. */
 const ERROR_LINE = /\b(error|exception|failed|failure|cannot|could not|unable|not found|denied|refused|timeout|timed out|assert|expected|unexpected|invalid|missing|undefined|null|busy|locked|conflict)\b/i;

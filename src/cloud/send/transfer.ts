@@ -1,7 +1,6 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import type { ProjectConfig } from '../../core/types.js';
 import { closeDb, initDb } from '../../store/database.js';
 import { exportKnowledge, importKnowledge } from '../../store/portability.js';
@@ -76,8 +75,22 @@ export function refusalMessage(reason: SendRefusal, message?: string): string {
   return known[reason] ?? message ?? `The server refused that: ${reason}.`;
 }
 
-/** A temp path that cannot collide with a concurrent send in the same process or another one. */
-const scratchFile = (suffix: string) => path.join(tmpdir(), `knowl-send-${randomUUID()}.${suffix}`);
+/**
+ * A scratch path for the bundle in plaintext, inside a directory only this user can open.
+ *
+ * `mkdtemp` rather than a random name in `tmpdir()` directly: the temp directory is shared with
+ * every other account on the machine, and what lands here is the export unsealed -- somebody's
+ * knowledge, readable by all of them for as long as the file exists, at a path another user could
+ * have pre-planted as a symlink. `mkdtemp` creates with `0o700` and fails rather than reusing, so
+ * the file inside inherits a private parent whoever writes it -- which matters because
+ * `exportKnowledge` opens it, not this module.
+ *
+ * Returns the directory too: cleanup removes the whole thing, not just the file.
+ */
+async function scratchFile(suffix: string): Promise<{ dir: string; file: string }> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'knowl-send-'));
+  return { dir, file: path.join(dir, `bundle.${suffix}`) };
+}
 
 /** Everything a cloud verb needs before it can make a call, or the reason it cannot. */
 async function connect(
@@ -114,7 +127,7 @@ export async function sendKnowledge(input: {
   // through a memory-hard KDF under a different label, which cannot be walked back to the key.
   const code = generateCode(input.words ?? CODE_WORDS);
   const { mailboxId, key } = deriveSecrets(code, CURRENT_DERIVATION);
-  const file = scratchFile('jsonl');
+  const { dir, file } = await scratchFile('jsonl');
 
   await initDb(input.projectRoot);
   let sealed: Buffer;
@@ -124,8 +137,8 @@ export async function sendKnowledge(input: {
   } finally {
     await closeDb();
     // The plaintext export is the one artefact worth cleaning up even on failure: it is the
-    // bundle unsealed, sitting in a world-readable temp directory.
-    await rm(file, { force: true }).catch(() => {});
+    // bundle unsealed, sitting in the shared temp directory.
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 
   const created = await session.api.createSend({
@@ -197,15 +210,15 @@ export async function receiveKnowledge(input: {
     input.resolved.version,
   );
 
-  const file = scratchFile('jsonl');
-  await writeFile(file, plaintext);
+  const { dir, file } = await scratchFile('jsonl');
+  await writeFile(file, plaintext, { mode: 0o600 });
   await initDb(input.projectRoot);
   try {
     const imported = await importKnowledge(file, { projectRoot: input.projectRoot });
     return { status: 'received', preview: claimed.preview, imported };
   } finally {
     await closeDb();
-    await rm(file, { force: true }).catch(() => {});
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
 

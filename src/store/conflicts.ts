@@ -4,7 +4,12 @@ import { mapRowToKnowledgeItem } from './repository.js';
 import { localStore, type StoreHandle } from './store-handle.js';
 
 export function normalizeConflictKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '');
+  // `[^a-z0-9]+` is greedy, so every run of separators has already collapsed to a single dot by
+  // the time the second replace runs: there is never more than one to strip at either end. It is
+  // written `^\.|\.$` rather than `^\.+|\.+$` for that reason -- the `+` promised repetition the
+  // input cannot contain, and an anchored `\.+$` rescans from every position, which is
+  // `js/polynomial-redos` on a key a caller supplies.
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '');
 }
 
 /** Whether a stored key is already in normal form. Deterministic, so it is safe to repair. */

@@ -40,6 +40,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import process from 'node:process';
 
 /** Cline's method names, mapped to the events `knowl agent-hook` already understands. */
@@ -114,8 +115,12 @@ function runHook(event, payload) {
  * differently than expected would make the whole integration dark with no error anywhere. Cline
  * loads one plugin instance per run, so falling back to a per-instance id is wrong only in
  * degree: turns still group together, they are just grouped by process instead of by task.
+ *
+ * `randomUUID` rather than `Math.random`: two Cline runs starting in the same millisecond would
+ * otherwise have a real chance of colliding, and a collision here merges two unrelated task
+ * transcripts into one memory session.
  */
-const FALLBACK_SESSION_ID = `cline-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+const FALLBACK_SESSION_ID = `cline-${randomUUID()}`;
 
 /**
  * The identity Knowl keys a memory session on.

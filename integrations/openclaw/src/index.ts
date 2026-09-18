@@ -84,6 +84,16 @@ function normalizeForCompare(p: string): string {
   return norm.toLowerCase();
 }
 
+/**
+ * Trailing slashes removed without a regex: an anchored `/\/+$/` rescans from every position on a
+ * path a caller supplies, which is `js/polynomial-redos`. A while loop is the same length.
+ */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end--;
+  return value.slice(0, end);
+}
+
 export function coversAffectedPath(affected: unknown, rel: string): boolean {
   if (!Array.isArray(affected) || !rel) return false;
   const target = normalizeForCompare(rel);
@@ -93,7 +103,7 @@ export function coversAffectedPath(affected: unknown, rel: string): boolean {
     if (e === target || target.endsWith('/' + e) || e.endsWith('/' + target)) {
       return true;
     }
-    if (target.startsWith(e.replace(/\/+$/, '') + '/')) {
+    if (target.startsWith(stripTrailingSlashes(e) + '/')) {
       return true;
     }
   }

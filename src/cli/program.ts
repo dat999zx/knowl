@@ -807,7 +807,7 @@ function timestampOption(raw: unknown, flag: string): string | undefined {
 program.command('query').argument('[query]').description('Search project memory by keywords').option('--as-of <timestamp>').option('--limit <count>').action(async (query, options) => {
   try {
     let root: string | undefined;
-    let projectId: string = 'local';
+    let projectId: string;
     try {
       root = await findProjectRoot(process.cwd());
       await initDb(root);

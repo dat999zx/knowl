@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CloudApi, SendMailbox, SendPreview } from '../../src/cloud/api-client.js';
@@ -210,7 +211,20 @@ describe('the sender looking at what is in flight', () => {
   });
 });
 
-describe('a bundle all the way there and back', () => {
+/**
+ * Every case here derives Argon2id keys end to end, twice -- once sealing, once unsealing.
+ *
+ * `crypto.argon2Sync` arrived in Node 24.7, so `src/cloud/send/argon2.ts` falls back to the pure-JS
+ * `@noble/hashes` backend on anything older, where a deliberately memory-hard KDF is slow enough
+ * that vitest's 30 s default is reached under full-suite contention with nothing actually wrong.
+ * Observed on macOS node 22 in CI (PR #180) and, since the suite grew, on Windows node 22 locally;
+ * the file alone finishes in about 25 s either way, which is the margin this raises.
+ *
+ * The parameters themselves are a security control and are not the lever -- `send-argon2.test.ts`
+ * pins the JS backend byte-identical to Node's. The other lever is dropping node 22 from the
+ * matrix, which is a bigger decision than a flake should force.
+ */
+describe('a bundle all the way there and back', { timeout: 120_000 }, () => {
   beforeEach(async () => {
     await closeDb().catch(() => {});
     await releaseAll();
@@ -294,6 +308,13 @@ describe('a bundle all the way there and back', () => {
     expect(received.status).toBe('received');
     if (received.status !== 'received') return;
     expect(received.imported.inserted).toBe(1);
+
+    // Neither side left the bundle unsealed on disk. Both now stage it inside a `mkdtemp`
+    // directory -- owner-only, and not a guessable path another account can pre-plant a symlink at
+    // -- so cleanup has to remove a directory rather than a file, and a `rm` that forgot
+    // `recursive` would silently leak plaintext here instead of throwing.
+    expect(await fs.readdir(os.tmpdir()).then(names => names.filter(n => n.startsWith('knowl-send-'))))
+      .toEqual([]);
 
     // Spent, and the second attempt refuses rather than replaying.
     expect(await previewSend({ config, code: sent.code, api })).toBeNull();
