@@ -3,6 +3,57 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.23.1 — 2026-09-18
+
+### Installing with pnpm produced a package that could not build or run
+
+Two dependencies were used but never declared. npm hoists transitive packages to the top of
+`node_modules`, so both resolved by accident here and in CI, and nothing noticed for as long as
+every install was an npm install.
+
+pnpm's strict layout does not hoist, and there they were simply absent. `stream-chain` — imported
+by `src/cli/agents/lifecycle.ts` while only `stream-json` was declared — failed the build outright
+with `Could not resolve "stream-chain"`. `libsql` failed later and quieter: it is in tsup's
+`external` list and reached through the bundled `@libsql/client`, so no file in `src/` names it,
+the build passed, and `node dist/index.js serve` died on `Cannot find package 'libsql'`.
+
+Both are declared now, verified end to end in a real pnpm tree — install, build, then a serve
+handshake returning 29 tools. `tests/architecture/declared-dependencies.test.ts` guards both
+shapes, including the invisible one, because every pre-existing check runs against the hoisted npm
+tree and could not see either.
+
+This is what had blocked Glama's Docker build since 2026-09-10, and with it the Glama release and
+quality score.
+
+### The plaintext bundle no longer waits in a shared directory
+
+`knowl send` exports the selected atoms to JSONL and seals them; `knowl receive` unseals and
+imports. Both staged that plaintext in `os.tmpdir()` under a `randomUUID()` name with default
+permissions — world-readable, in a directory shared with every other account on the machine, for as
+long as the export or import took. The UUID answered collision, which was the comment's stated
+concern, and nothing else: it is not a permission, and a sticky shared directory is also where a
+symlink gets planted ahead of a predictable-enough path.
+
+Both paths now stage inside a `mkdtemp` directory: created `0o700`, never reused, removed whole on
+the way out, on failure as well as success.
+
+### Four regexes given bounded quantifiers
+
+`js/polynomial-redos`, fixed as a class rather than only where it bit. One of the four measurably
+backtracks — the named-secret detector in knowledge validation, 5.1 s against a 49 KB run of
+whitespace, now under a millisecond — and it is the one that runs on every knowledge write, across
+every field, over up to 50 KB of raw agent output. The other three are bounded on the same
+reasoning and pinned by behaviour rather than by timing.
+
+No pattern's accepted input changed; the tests assert what each one still matches, since bounding a
+quantifier is exactly the edit that silently narrows.
+
+### Also
+
+- The Cline plugin's fallback session id uses `randomUUID` rather than `Math.random`, where a
+  collision merged two unrelated task transcripts into one memory session.
+- `sharp` 0.35.4, for GHSA-g89c-p67h-r497.
+
 ## 5.23.0 — 2026-09-10
 
 ### A repo can say a linked repo's item is wrong
