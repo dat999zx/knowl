@@ -104,6 +104,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # `needs: publish` orders the jobs; it does not make npm serve the version. npm's read
+      # path lags its write path by a minute or two, and the registry refuses a version it
+      # cannot fetch: `NPM package exists, but version 'x' was not found (status: 404)`. That
+      # failed the 5.23.1 release seconds after a publish that had in fact succeeded, and the
+      # only fix was to rerun the job once npm caught up. So wait for the read path here rather
+      # than making a human do it.
+      - name: Wait for npm to serve the new version
+        run: |
+          set -euo pipefail
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          for _ in $(seq 1 30); do
+            if npm view "$name@$version" version > /dev/null 2>&1; then
+              echo "$name@$version is readable on npm."
+              exit 0
+            fi
+            echo "Not on npm yet; retrying in 10s."
+            sleep 10
+          done
+          echo "$name@$version did not appear on npm within 5 minutes." >&2
+          exit 1
+
       # Pinned by version AND digest, for the same reason every action above is pinned by SHA:
       # a `latest` download is a standing invitation to run whatever is uploaded next.
       - name: Install mcp-publisher
