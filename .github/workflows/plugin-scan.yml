@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: HOL Guard plugin scanner
-        uses: hashgraph-online/ai-plugin-scanner-action@588d157fed6e47942a2ca3c9251ff7bff4a48bc9 # v1.2.667
+        uses: hashgraph-online/ai-plugin-scanner-action@46ad86451b45941cd853a03ee6ccdb55f3dbee28 # v1.2.683
         with:
           plugin_dir: '.'
           # v1.2.601 added this input, defaulted to false, and it gates auto-discovery of
