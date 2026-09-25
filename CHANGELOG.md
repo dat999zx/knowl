@@ -38,6 +38,16 @@ names a newer release once: `Knowl <current> → <latest> is available: npm inst
 @dat999zx/knowl. Tell the user.` Hooks read the cache and never touch the network. The existing
 opt-outs (`updateCheck.enabled: false`, `KNOWL_NO_UPDATE_CHECK`, `NO_UPDATE_NOTIFIER`) cover both.
 
+### An automatic write can no longer retire a verified fact
+
+Session capture, transcript approval, raw ingest and truth derivation used to retire or rewrite any
+item they matched on subject. A sentence a model lifted from a transcript or a pasted README could
+replace a fact someone had verified, and nothing listed the swap afterwards (#165). Those four
+paths now keep their atom beside an `observed`/`user_stated` item instead. Direct writes
+(`knowl_store`, `knowl store`, `knowl decide`, `knowl_ingest_atoms`) are unchanged. Replayed over
+140 real supersessions, this blocks none of them. Raw ingest also stops rewriting such an item in
+place, which previously kept no copy of the old content.
+
 ## 5.23.1 — 2026-09-18
 
 ### Installing with pnpm produced a package that could not build or run
