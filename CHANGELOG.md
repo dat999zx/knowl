@@ -83,6 +83,14 @@ follows a plain second write on the subject, so it means "look again", not "reso
 repository's own store, 2 of the 5 listed retirements are in that state, both from a later verified
 edit of the same fact rather than an undo.
 
+### A restatement that drops a fact's values no longer retires it
+
+A same-subject write that removed a fact's numbers, versions or names and added none of its own
+used to supersede it, so "retained for 35 days" could be replaced by "retained for the value in
+the runbook" and the value vanished from results (#165). The two are now kept side by side.
+Values written as ordinary words are not detected. Replayed over 140 real supersessions, this
+fires on none of them.
+
 ## 5.23.1 — 2026-09-18
 
 ### Installing with pnpm produced a package that could not build or run
