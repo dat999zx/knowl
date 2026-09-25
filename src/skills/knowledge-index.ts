@@ -11,12 +11,30 @@ function skillContent(manifest: SkillManifest): string {
   ].join('\n');
 }
 
+async function activeSkillItem(name: string) {
+  const source = skillSourcePath(name);
+  const items = await repo.listKnowledgeItems();
+  return items.find(candidate =>
+    candidate.category === 'skill' &&
+    candidate.status === 'active' &&
+    candidate.title === name &&
+    candidate.source === source
+  );
+}
+
 export async function indexSkillPackage(projectId: string, manifest: SkillManifest): Promise<void> {
   const source = skillSourcePath(manifest.name);
+  const content = skillContent(manifest);
+  // The item mirrors a file, so the file always wins. Left to `resolveDuplicate`, a re-created
+  // package whose purpose lost a name or number ("on Node 22" -> gone) was clamped to coexist by
+  // the value-free restatement guard, leaving the stale copy active and `recordSkillRun` free to
+  // count runs against it. An unchanged purpose passes no id, so it can still be a no-op.
+  const existing = await activeSkillItem(manifest.name);
   await storeKnowledgeItemDeduped(projectId, {
     category: 'skill',
     title: manifest.name,
-    content: skillContent(manifest),
+    content,
+    supersedes: existing && existing.content !== content ? existing.id : undefined,
     source,
     affectedPaths: [source, `.knowl/skills/${manifest.name}/skill.json`],
     tags: ['learned-skill', 'file-backed'],
@@ -28,14 +46,7 @@ export async function indexSkillPackage(projectId: string, manifest: SkillManife
 }
 
 export async function recordSkillRun(projectId: string, name: string, succeeded: boolean): Promise<void> {
-  const source = skillSourcePath(name);
-  const items = await repo.listKnowledgeItems();
-  const item = items.find(candidate =>
-    candidate.category === 'skill' &&
-    candidate.status === 'active' &&
-    candidate.title === name &&
-    candidate.source === source
-  );
+  const item = await activeSkillItem(name);
   if (!item) return;
 
   const metadata = await repo.getSkillMetadata(item.id);
