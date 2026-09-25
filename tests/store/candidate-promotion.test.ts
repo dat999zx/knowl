@@ -7,6 +7,7 @@ import * as repo from '../../src/store/repository.js';
 import { startMemorySession } from '../../src/store/session-repository.js';
 import { promoteSessionCandidates, rankCandidatesByImportance } from '../../src/store/candidate-promotion.js';
 import { MemoryCandidate } from '../../src/core/types.js';
+import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 
 const ROOT = path.resolve('./.knowl-candidate-promotion-test');
 describe('candidate promotion', () => {
@@ -42,5 +43,36 @@ describe('candidate promotion', () => {
     const ranked = rankCandidatesByImportance([make('outcome'), make('commit'), make('error')]);
 
     expect(ranked.map((candidate) => candidate.candidateType)).toEqual(['error', 'commit', 'outcome']);
+  });
+
+  it('a captured candidate is kept beside a verified fact instead of retiring it (#165)', async () => {
+    const seed = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Database backup retention',
+      content: 'Nightly database backups are retained for 35 days and encrypted at rest.',
+      provenance: 'observed', confidence: 0.95,
+    });
+    const session = await startMemorySession({ title: 'Poisoned session' });
+    await promoteSessionCandidates(projectId, session.id, [{
+      candidateType: 'decision', sessionId: session.id, category: 'fact',
+      title: 'Database backup retention',
+      content: 'Nightly database backups are retained for 1 day and encrypted at rest.',
+      confidence: 0.9, evidence: [],
+    }]);
+    expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('active');
+  });
+
+  it('a captured candidate still supersedes an unverified item', async () => {
+    const seed = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Database backup retention',
+      content: 'Nightly database backups are retained for 35 days and encrypted at rest.',
+    });
+    const session = await startMemorySession({ title: 'Ordinary session' });
+    await promoteSessionCandidates(projectId, session.id, [{
+      candidateType: 'decision', sessionId: session.id, category: 'fact',
+      title: 'Database backup retention',
+      content: 'Nightly database backups are retained for 90 days and encrypted at rest.',
+      confidence: 0.9, evidence: [],
+    }]);
+    expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('superseded');
   });
 });

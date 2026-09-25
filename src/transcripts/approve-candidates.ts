@@ -126,6 +126,9 @@ export async function approveCandidates(
         [candidateToAtom(candidate, candidate.tags)],
         `Approve transcript candidate from session ${candidate.sessionId}`,
         config?.security,
+        // Approval is a person's decision about the candidate, not about the fact it collides
+        // with; `--all` promotes up to 1,000 of them unread. See `WriteChannel`.
+        'automatic',
       );
 
       const outcome = batch.outcomes[0];

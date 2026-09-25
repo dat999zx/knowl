@@ -32,7 +32,7 @@ export async function promoteSessionCandidates(projectId: string, sessionId: str
   if (!session) throw new Error(`Memory session not found: ${sessionId}`);
   if (session.promotion_status === 'promoted') return { itemIds: JSON.parse(String(session.promotion_items || '[]')), status: 'promoted' };
   if (candidates.length === 0) { await client.execute({ sql: "UPDATE memory_sessions SET promotion_status = 'skipped', finalized_at = ? WHERE id = ?", args: [new Date().toISOString(), sessionId] }); return { itemIds: [], status: 'skipped' }; }
-  const result = await storeKnowledgeAtomsDeduped(projectId, rankCandidatesByImportance(candidates).slice(0, MAX_PROMOTED_CANDIDATES), `Finalize memory session: ${String(session.title)}`);
+  const result = await storeKnowledgeAtomsDeduped(projectId, rankCandidatesByImportance(candidates).slice(0, MAX_PROMOTED_CANDIDATES), `Finalize memory session: ${String(session.title)}`, undefined, 'automatic');
   await client.execute({ sql: "UPDATE memory_sessions SET promotion_status = 'promoted', promotion_items = ?, finalized_at = ? WHERE id = ?", args: [JSON.stringify(result.itemIds), new Date().toISOString(), sessionId] });
   return { itemIds: result.itemIds, status: 'promoted' };
 }

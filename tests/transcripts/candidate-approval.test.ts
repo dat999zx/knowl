@@ -12,6 +12,7 @@ import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/data
 import { approveCandidates } from '../../src/transcripts/approve-candidates.js';
 import { listCandidates } from '../../src/transcripts/extract-candidates.js';
 import { hasIndexableArchive } from '../../src/transcripts/paths.js';
+import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 
 let roots: string[] = [];
 let db: Client;
@@ -167,5 +168,25 @@ describe('the cold-start probe', () => {
   it('answers without opening a single transcript', async () => {
     // Two stats and no file reads: this runs at the moment a query has decided memory is empty.
     await expect(hasIndexableArchive(root)).resolves.toEqual(expect.any(Boolean));
+  });
+});
+
+describe('approval against a verified fact (#165)', () => {
+  it('an approved candidate is kept beside an observed item instead of retiring it', async () => {
+    const seed = await storeKnowledgeItemDeduped(projectId, {
+      category: 'decision', title: 'Retries use bounded backoff',
+      content: 'Retries are bounded to 5 attempts rather than infinite, decided while fixing the queue.',
+      provenance: 'observed', confidence: 0.95,
+    });
+    const id = await stage(db, {
+      title: 'Retries use bounded backoff',
+      // Carries a value of its own, so the R5 value-free guard cannot be what keeps the seed.
+      content: 'Retries are unbounded, up to 1000 attempts, decided while fixing the queue.',
+    });
+
+    const result = await approveCandidates(db, projectId, DEFAULT_CONFIG, { ids: [id] });
+
+    expect(result.approved).toBe(1);
+    expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('active');
   });
 });

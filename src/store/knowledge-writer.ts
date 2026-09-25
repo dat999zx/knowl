@@ -821,6 +821,7 @@ export async function storeKnowledgeItemDeduped(
   input: StoreKnowledgeInput,
   commitMessage?: string,
   validationOptions?: KnowledgeWriteValidationOptions,
+  channel: WriteChannel = 'direct',
 ): Promise<StoreKnowledgeResult> {
   assertConfidenceInRange(input.confidence, input.title);
   validationOptions ??= await securityForWrite();
@@ -828,7 +829,7 @@ export async function storeKnowledgeItemDeduped(
   if (conflicts.length) throw new KnowledgeConflictError(conflicts.map(item => ({ id: item.id, title: item.title })));
   const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, input);
   const resolution = duplicate
-    ? resolveDuplicate(input, duplicate, await heldPayloadFor(input, duplicate))
+    ? resolveDuplicate(input, duplicate, await heldPayloadFor(input, duplicate), channel)
     : null;
   if (duplicate && resolution === 'no-op' && !input.supersedes) {
     // The agent reached this conclusion again and the store already had it. That is the one
@@ -921,6 +922,7 @@ export async function storeKnowledgeAtomsDeduped(
   atoms: StoreKnowledgeInput[],
   commitMessage?: string,
   validationOptions?: KnowledgeWriteValidationOptions,
+  channel: WriteChannel = 'direct',
 ): Promise<StoreKnowledgeBatchResult> {
   // Every atom's confidence, before the first one is written -- the same reason the ownership
   // guard is hoisted out of the loop. A batch is all-or-nothing, so a per-atom check would
@@ -953,7 +955,7 @@ export async function storeKnowledgeAtomsDeduped(
       });
 
       const resolution = duplicate
-        ? resolveDuplicate(atom, duplicate, await heldPayloadFor(atom, duplicate))
+        ? resolveDuplicate(atom, duplicate, await heldPayloadFor(atom, duplicate), channel)
         : null;
       if (duplicate && resolution === 'no-op' && !atom.supersedes) {
         await recordRederivationBestEffort(duplicate.id);
