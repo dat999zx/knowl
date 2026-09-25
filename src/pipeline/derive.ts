@@ -4,6 +4,7 @@ import * as schema from '../store/schema.js';
 import * as repo from '../store/repository.js';
 import { deriveTruth } from '../ai/provider.js';
 import { KnowledgeItem, CommitChange } from '../core/types.js';
+import { isVerifiedProvenance } from '../store/knowledge-writer.js';
 
 export interface DeriveResult {
   derivedTruthsCount: number;
@@ -81,8 +82,9 @@ export async function runDeriveTruth(
       );
 
       if (existing) {
-        // If value has changed, update it
-        if (existing.content !== truth.value) {
+        // A derived truth is recomputable; a verified state item is not. Skipping the overwrite
+        // loses nothing, and raw ingest is how a model's reading of arbitrary text reaches here.
+        if (existing.content !== truth.value && !isVerifiedProvenance(existing)) {
           const updated = await repo.updateKnowledgeItem(
             existing.id,
             { content: truth.value },
