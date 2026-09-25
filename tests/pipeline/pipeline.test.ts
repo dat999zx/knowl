@@ -149,6 +149,24 @@ describe('Pipeline Integration', () => {
     expect(updatedItem?.version).toBe(2);
   });
 
+  it('raw ingest keeps its atom beside a verified item even when the caller asks for direct (#165)', async () => {
+    const held = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Active Database', content: 'PostgreSQL', provenance: 'observed',
+    });
+    vi.mocked(filterInput).mockResolvedValue({ pass: true });
+    vi.mocked(extractKnowledge).mockResolvedValue([
+      { category: 'fact', title: 'Active Database', content: 'MySQL 5.7' },
+    ]);
+    vi.mocked(compareKnowledge).mockResolvedValue({
+      relationship: 'update', reason: 'stub', updatedContent: 'MySQL 5.7',
+    });
+
+    const result = await runPipeline(projectId, 'We run MySQL 5.7', MOCK_CONFIG, { channel: 'direct' });
+
+    expect(result.mergeResult?.keptBesideIds).toEqual([held.id]);
+    expect((await repo.getKnowledgeItem(held.id))?.content).toBe('PostgreSQL');
+  });
+
   it('should return contradictions for user resolution by default', async () => {
     // 1. Insert initial
     vi.mocked(filterInput).mockResolvedValue({ pass: true });
