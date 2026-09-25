@@ -329,6 +329,49 @@ export function polarityTokensDiffer(left: Set<string>, right: Set<string>): boo
   return added > 0;
 }
 
+/**
+ * The value-bearing words of a body: digit-bearing (`35`, `eu-central-1`, `v5.23.1`) or
+ * capitalised mid-sentence (`PostgreSQL`, `Stripe`, `UTC`). Lowercased for comparison.
+ *
+ * A sentence's first word is skipped because its capital is grammar, not a name; the split is
+ * `reversalCueSentences`' so "first word of a sentence" means the same thing in both places.
+ */
+function valueTokens(content: string): Set<string> {
+  const values = new Set<string>();
+  for (const sentence of content.split(/(?<=[.!?])\s+|\n+/)) {
+    const words = sentence.match(/[A-Za-z0-9_][A-Za-z0-9_./-]*/g) ?? [];
+    words.forEach((raw, index) => {
+      const word = raw.replace(/\.+$/, '');
+      if (/\d/.test(word) || (index > 0 && /[A-Z]/.test(word))) values.add(word.toLowerCase());
+    });
+  }
+  return values;
+}
+
+/**
+ * Whether an incoming body drops some of the held body's values and adds none of its own.
+ *
+ * THE FAILURE THIS EXISTS FOR (#165, N2). "Nightly database backups are retained for 35 days"
+ * was retired by the same sentence with "35 days" replaced by "the value documented in the ops
+ * runbook": 36 of 36 red-team writes, after which "35 days" was nowhere in the top three results.
+ * The write asserts nothing false. It is emptier, and superseding trades the value for its
+ * absence. Honest agents produce the same shape when they paraphrase a precise fact vaguely.
+ *
+ * NOT A SECURITY BOUNDARY. An attacker who swaps the value instead of dropping it adds a value
+ * token and is not caught here; that is the channel guard's job.
+ *
+ * ponytail: lexical, so a value written as ordinary words ("two reviewer approvals", "always
+ * redacted") is invisible to it -- 3 of the report's 12 subjects. Catching those needs meaning,
+ * not tokens. Replayed over 140 real supersessions this fires on none.
+ */
+export function dropsValuesOnly(incoming: { content: string }, held: { content: string }): boolean {
+  const heldValues = valueTokens(held.content);
+  if (heldValues.size === 0) return false;
+  const incomingValues = valueTokens(incoming.content);
+  for (const value of incomingValues) if (!heldValues.has(value)) return false;
+  return incomingValues.size < heldValues.size;
+}
+
 /** A sentence of an incoming write that contains a reversal cue, with its own token set. */
 export type ReversalCueSentence = { cue: string; sentence: string; tokens: Set<string> };
 
@@ -639,6 +682,9 @@ export function resolveDuplicate(
   // gates is an AUTOMATIC one: replayed over the same 139, this line blocks none of them -- every
   // capture supersession retired an item with no provenance.
   if (channel === 'automatic' && isVerifiedProvenance(duplicate)) return 'coexist';
+
+  // The body restates the claim with its values removed; see `dropsValuesOnly`.
+  if (dropsValuesOnly(input, duplicate)) return 'coexist';
 
   return 'supersede';
 }
