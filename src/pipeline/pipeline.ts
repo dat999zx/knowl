@@ -43,8 +43,8 @@ export async function runPipeline(
   // 3. Run Verify
   const verifiedActions = await runVerify(projectId, atoms);
 
-  // 4. Run Merge
-  const mergeResult = await runMerge(projectId, verifiedActions, options);
+  // 4. Run Merge. Raw ingest is always automatic, whatever the caller passed: see `WriteChannel`.
+  const mergeResult = await runMerge(projectId, verifiedActions, { ...options, channel: 'automatic' });
 
   // 5. Run Truth Derivation
   if (hasAiConfigured(config) && (mergeResult.insertedIds.length > 0 || mergeResult.updatedIds.length > 0)) {

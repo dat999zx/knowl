@@ -592,7 +592,7 @@ export function registerTools(
         // Counts live on mergeResult; reading them off the top level always reported zero.
         const merge = result.mergeResult;
         return {
-          content: [{ type: 'text', text: compactMcpJson({ inserted: merge?.insertedIds?.length ?? 0, updated: merge?.updatedIds?.length ?? 0, superseded: merge?.supersededIds?.length ?? 0 }) }],
+          content: [{ type: 'text', text: compactMcpJson({ inserted: merge?.insertedIds?.length ?? 0, updated: merge?.updatedIds?.length ?? 0, superseded: merge?.supersededIds?.length ?? 0, keptBeside: merge?.keptBesideIds?.length ?? 0 }) }],
         };
       }
       

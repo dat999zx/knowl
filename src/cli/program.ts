@@ -2946,6 +2946,9 @@ program
           console.log(`  Inserted:      ${result.mergeResult.insertedIds.length}`);
           console.log(`  Updated:       ${result.mergeResult.updatedIds.length}`);
           console.log(`  Superseded:    ${result.mergeResult.supersededIds.length}`);
+          if (result.mergeResult.keptBesideIds.length > 0) {
+            console.log(`  Kept beside:   ${result.mergeResult.keptBesideIds.length} verified item(s) left untouched: ${result.mergeResult.keptBesideIds.join(', ')}`);
+          }
 
           if (result.mergeResult.unresolvedContradictions.length > 0) {
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);

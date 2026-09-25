@@ -1,12 +1,15 @@
 import { withClientTransaction } from '../store/database.js';
 import * as repo from '../store/repository.js';
 import { VerifiedAtomAction } from './verify.js';
-import { CommitChange } from '../core/types.js';
+import { KnowledgeAtom, CommitChange } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
+import { isVerifiedProvenance, type WriteChannel } from '../store/knowledge-writer.js';
 
 export interface MergeOptions {
   autoResolveContradictions?: boolean;
   commitMessage?: string;
+  /** See `WriteChannel`. `runPipeline` (raw ingest) is automatic; `runDecisionPipeline` is direct. */
+  channel?: WriteChannel;
 }
 
 export interface MergeResult {
@@ -15,6 +18,8 @@ export interface MergeResult {
   insertedIds: string[];
   updatedIds: string[];
   supersededIds: string[];
+  /** Verified items an automatic atom would have rewritten or retired, left untouched. */
+  keptBesideIds: string[];
   unresolvedContradictions: VerifiedAtomAction[];
 }
 
@@ -25,12 +30,14 @@ export async function runMerge(
 ): Promise<MergeResult> {
   const commitMessage = options.commitMessage || 'Merge knowledge updates';
   const autoResolve = options.autoResolveContradictions ?? false;
+  const channel = options.channel ?? 'direct';
 
   const result: MergeResult = {
     mergedCount: 0,
     insertedIds: [],
     updatedIds: [],
     supersededIds: [],
+    keptBesideIds: [],
     unresolvedContradictions: [],
   };
 
@@ -54,37 +61,46 @@ export async function runMerge(
     // Run the merge in a single transaction. Client-level, not db.transaction: see
     // withClientTransaction for the measurement.
     await withClientTransaction(async (tx) => {
+      const insertAtom = async (atom: KnowledgeAtom) => {
+        const newItem = await repo.createKnowledgeItem(
+          projectId,
+          {
+            category: atom.category,
+            title: atom.title,
+            content: atom.content,
+            reasoning: atom.reasoning,
+            alternatives: atom.alternatives,
+            tags: atom.tags,
+            source: atom.source,
+            sourceCommit: atom.sourceCommit,
+            affectedPaths: atom.affectedPaths,
+            confidence: atom.confidence,
+          },
+          atom.steps,
+          tx,
+        );
+        result.insertedIds.push(newItem.id);
+        dbChanges.push({ itemId: newItem.id, action: 'insert', after: newItem });
+        return newItem;
+      };
+
       for (const action of actionsToApply) {
         if (action.action === 'insert') {
-          const newItem = await repo.createKnowledgeItem(
-            projectId,
-            {
-              category: action.atom.category,
-              title: action.atom.title,
-              content: action.atom.content,
-              reasoning: action.atom.reasoning,
-              alternatives: action.atom.alternatives,
-              tags: action.atom.tags,
-              source: action.atom.source,
-              sourceCommit: action.atom.sourceCommit,
-              affectedPaths: action.atom.affectedPaths,
-              confidence: action.atom.confidence,
-            },
-            action.atom.steps,
-            tx // Pass transaction
-          );
+          await insertAtom(action.atom);
+        }
 
-          result.insertedIds.push(newItem.id);
-          dbChanges.push({
-            itemId: newItem.id,
-            action: 'insert',
-            after: newItem,
-          });
-        } 
-        
         else if (action.action === 'update' && action.existingItemId) {
           const beforeItem = await repo.getKnowledgeItem(action.existingItemId, tx);
           if (!beforeItem) continue;
+
+          // The in-place update is the worst of the three outcomes for a verified item: unlike a
+          // supersession it keeps no copy of what was there. Raw ingest is a model over arbitrary
+          // text, so it may add beside a verified item but never rewrite one.
+          if (channel === 'automatic' && isVerifiedProvenance(beforeItem)) {
+            await insertAtom(action.atom);
+            result.keptBesideIds.push(beforeItem.id);
+            continue;
+          }
 
           const updateData = action.compareResult!;
           const updatedItem = await repo.updateKnowledgeItem(
@@ -116,6 +132,12 @@ export async function runMerge(
           // 1. Supersede existing item
           const beforeItem = await repo.getKnowledgeItem(action.existingItemId, tx);
           if (!beforeItem) continue;
+
+          if (channel === 'automatic' && isVerifiedProvenance(beforeItem)) {
+            await insertAtom(action.atom);
+            result.keptBesideIds.push(beforeItem.id);
+            continue;
+          }
 
           // 2. Create the new item
           const newItem = await repo.createKnowledgeItem(
