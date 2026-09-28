@@ -137,7 +137,7 @@ export async function recordDecisionDirect(
     action: 'inserted',
     item,
     superseded: superseded || undefined,
-    nearDuplicate: leftBeside(existing, resolution, superseded),
+    nearDuplicate: leftBeside(existing, superseded),
     // This path writes through the repository rather than through knowledge-writer, so the
     // overlap check has to be requested explicitly. Omitting it left the cross-repo advisory
     // off for every decision, from both the CLI and the knowl_decide tool.

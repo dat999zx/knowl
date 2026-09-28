@@ -96,8 +96,9 @@ describe('an explicit supersedes target outranks a detected duplicate', () => {
     expect((await repo.getKnowledgeItem(named.id))!.supersededById).toBe(detected.id);
   });
 
-  it('a verbatim restatement that retires another item by id does not report its twin', async () => {
-    // Unchanged by the target reorder: a no-op duplicate was never reported, only written past.
+  it('a verbatim restatement that retires another item by id reports the twin it left active', async () => {
+    // The write is inserted only because it names another item, so its byte-identical twin stays
+    // active beside it -- two active copies of one answer, which the caller has to be told about.
     const twin = await repo.createKnowledgeItem(projectId, {
       category: 'fact', title: 'Queue driver', content: 'Background jobs run on Redis.',
     });
@@ -110,6 +111,6 @@ describe('an explicit supersedes target outranks a detected duplicate', () => {
 
     expect(written.superseded?.id).toBe(retired.id);
     expect((await repo.getKnowledgeItem(twin.id))!.status).toBe('active');
-    expect(written.nearDuplicate).toBeUndefined();
+    expect(written.nearDuplicate?.id).toBe(twin.id);
   });
 });

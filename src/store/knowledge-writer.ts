@@ -744,17 +744,15 @@ export async function resolveSupersedeTarget(
 }
 
 // The detected duplicate a write left active beside itself, for the `nearDuplicate` report. That
-// was every `coexist`, and nothing else until an explicit `supersedes` could outrank a qualifying
-// duplicate: a 'supersede' whose duplicate was not the item retired is left beside too, and
-// dropping it from the report would leave two active answers with nobody told. A `no-op` wrote
-// nothing new about the duplicate and is not reported, as before.
+// used to be every `coexist` and nothing else, which missed two: a 'supersede' whose duplicate
+// was passed over for an explicit `supersedes` target, and a `no-op` written anyway because it
+// named another item to retire -- leaving its byte-identical twin active. Either way two active
+// answers stood with nobody told.
 export function leftBeside(
   duplicate: KnowledgeItem | null,
-  resolution: DuplicateResolution | null,
   retired: KnowledgeItem | null,
 ): KnowledgeItem | undefined {
-  if (!duplicate || resolution === 'no-op' || retired?.id === duplicate.id) return undefined;
-  return duplicate;
+  return duplicate && retired?.id !== duplicate.id ? duplicate : undefined;
 }
 
 /**
@@ -992,7 +990,7 @@ export async function storeKnowledgeItemDeduped(
   // on a different connection, so it survives -- pointing at an item a rollback erased, and the
   // next push would send a phantom.
   await stageWrittenItems([item.id]);
-  const nearDuplicate = leftBeside(duplicate, resolution, superseded);
+  const nearDuplicate = leftBeside(duplicate, superseded);
 
   return {
     action: 'inserted',
@@ -1115,7 +1113,7 @@ export async function storeKnowledgeAtomsDeduped(
       insertedCount++;
       inserted.push(item);
       changes.push({ itemId: item.id, action: 'insert', after: item });
-      const nearDuplicate = leftBeside(duplicate, resolution, superseded);
+      const nearDuplicate = leftBeside(duplicate, superseded);
       const outcome: StoreKnowledgeAtomOutcome = {
         action: 'inserted',
         itemId: item.id,
