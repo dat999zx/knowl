@@ -550,7 +550,12 @@ knowl doctor                           # setup, retrieval, and registration
 - **Seven atom types** — [listed above](#what-gets-stored). Structure instead of one growing
   notes file.
 - **Automatic supersession** — a same-subject write retires its predecessor. This is the
-  [90-vs-73 difference](#the-idea-memory-that-retires-itself) above.
+  [90-vs-73 difference](#the-idea-memory-that-retires-itself) above. It is guarded: an
+  automatic write (capture, ingest) never retires a verified fact, a write that leaves out an
+  exclusive item's key never retires that item, and a write that only drops the old fact's
+  values retires nothing. Those are kept side by side, and `knowl conflicts` lists them with
+  every verified fact retired in the last 14 days.
+  [The rules](docs/reference.md#governed-writes-and-current-truth)
 - **Conflict identity** — mark an atom exclusive and Knowl refuses a second active answer to the
   same question, instead of quietly holding both. `knowl conflicts`
 - **Full history** — every version an atom ever had survives as an immutable assertion.

@@ -3,7 +3,18 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.24.0 — 2026-09-28
+
+### Red-team fixes (#165)
+
+[@Adam13y](https://github.com/Adam13y) showed that one same-title write could retire any verified
+fact, 216 times out of 216, and that nothing listed the swap afterwards. The entries below
+from "An automatic write" on are the fixes. Rerun with his own harness against this release: an
+automatic write now retires a verified fact 0 times in 36 for every attack shape, down from 36; a
+write that omits an exclusive key, 0 in 36; and `knowl conflicts` lists every retirement that
+still happens. A direct write shaped like a correction still retires the fact, because a real
+correction must, but it no longer goes unseen. A planted item kept beside a fact can still rank
+above it in search; that is tracked in #323.
 
 ### Defaults changed
 

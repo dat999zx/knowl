@@ -178,13 +178,33 @@ and raw-output size limits still apply. Accepted writes then follow these reconc
    `"Redis"` and `"Use SQLite"` carry one (`use` is a stopword), so a later decision on the same
    subject is left active beside the first. Rule 4 reports it and prints the `knowl supersede`
    command, so nothing is lost silently — but the title decides whether it is automatic.
-3. If no detected candidate qualifies for supersession, an explicitly named active
-   `supersedes` item is retired. A qualifying detected same-subject candidate currently takes
-   priority when it differs from that explicit ID.
+3. An explicitly named active `supersedes` item is the one retired, even when a different
+   same-subject candidate also qualifies. That candidate is kept and reported as left beside the
+   write (rule 4), so a correction naming X can no longer retire Y.
 4. Other semantic or lexical overlaps coexist. The result reports the nearby active item so the
    caller can reconcile it explicitly if necessary.
 5. An exclusive write is rejected before insertion when another active exclusive item has the
-   same normalized conflict key and sorted conflict scope.
+   same normalized conflict key and sorted conflict scope. The item the write retires is exempt,
+   so a correction may carry the key it takes over.
+
+Three guards turn a qualifying rule-2 match into rule-4 coexistence. None of them applies when the
+write names its target in `supersedes`:
+
+- **Automatic writes do not retire verified items.** Session capture, transcript approval, raw
+  ingest and truth derivation keep their atom beside an `observed` or `user_stated` item.
+  Direct writes (`knowl_store`, `knowl store`, `knowl decide`, `knowl_ingest_atoms`) still
+  supersede it. Replayed over 140 real supersessions, this blocked none.
+- **An exclusive item is not retired implicitly.** A same-subject write that leaves the conflict
+  key out is kept beside a `conflictExclusive` item instead of retiring it. `knowl decide` with
+  AI and truth derivation respect this too.
+- **A restatement that only drops values does not retire.** When the new body removes the old
+  one's numbers, versions or names and adds none, both are kept. Values written as ordinary words
+  are not detected. Narrowing a list ("Node 18 and Node 20" to "Node 20") also coexists; name the
+  old item in `supersedes` to retire it.
+
+Everything these guards keep side by side is listed by `knowl conflicts`, along with
+`observed`/`user_stated` items retired in the last 14 days and what replaced each. File-backed
+skills from different packages never reconcile against each other.
 
 These rules apply across atom categories rather than assigning special fuzzy behavior to only
 decisions or state. Batch ingestion and update-plus-supersede sequences should not be treated as
