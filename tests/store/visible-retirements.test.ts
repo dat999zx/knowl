@@ -95,8 +95,9 @@ describe('retired verified facts (#165 R1)', () => {
     const swap = await storeKnowledgeItemDeduped(projectId, {
       category: 'constraint', title: 'Access token lifetime', content: 'Access tokens must expire after 30 days.',
     });
+    // A different title, so only the explicit `supersedes` -- the documented undo -- can retire B.
     const undo = await storeKnowledgeItemDeduped(projectId, {
-      category: 'constraint', title: 'Access token lifetime', content: 'Access tokens must expire after 15 minutes, restored.',
+      category: 'constraint', title: 'Token expiry restored', content: 'Access tokens must expire after 15 minutes.',
       provenance: 'observed', supersedes: swap.item.id,
     });
     expect(undo.superseded?.id).toBe(swap.item.id);
