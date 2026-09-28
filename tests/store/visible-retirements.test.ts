@@ -105,6 +105,36 @@ describe('retired verified facts (#165 R1)', () => {
     expect(row?.replacedBy?.id).toBe(swap.item.id);
     expect(row?.replacedBy?.status).toBe('superseded');
   });
+
+  it('lists a retirement whose replacement still stands before a newer one already undone', async () => {
+    const live = (await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Session cookie lifetime', content: 'Session cookies expire after 8 hours.', provenance: 'observed',
+    })).item.id;
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Session cookie lifetime', content: 'Session cookies expire after 90 days.',
+    });
+    const undone = (await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Backup retention window', content: 'Backups are retained for 35 days.', provenance: 'observed',
+    })).item.id;
+    const swap = await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Backup retention window', content: 'Backups are retained for 2 days.',
+    });
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Backup retention window', content: 'Backups are retained for 35 days, restored.',
+      provenance: 'observed', supersedes: swap.item.id,
+    });
+    // The undone retirement is the newer one, so newest-first alone would list it first.
+    const stamp = (id: string, hoursAgo: number) => getClient().execute({
+      sql: 'UPDATE knowledge_items SET updated_at = ? WHERE id = ?',
+      args: [new Date(Date.now() - hoursAgo * 3_600_000).toISOString(), id],
+    });
+    await stamp(live, 2);
+    await stamp(undone, 1);
+
+    const { retired } = await scanContradictions();
+    expect(retired.map(row => row.retired.id)).toEqual([live, undone]);
+    expect(retired.map(row => row.replacedBy?.status)).toEqual(['active', 'superseded']);
+  });
 });
 
 describe('same-subject pairs with a verified side (#165 R1)', () => {

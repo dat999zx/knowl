@@ -128,9 +128,11 @@ export async function scanContradictions(options: { now?: Date } = {}): Promise<
         retiredAt: item.updatedAt,
       };
     })
-    // Newest first: the store returns creation order and MCP keeps five rows, so an injected swap
-    // of a recently created fact would sort last and be the row the truncation hides.
-    .sort((a, b) => b.retiredAt.localeCompare(a.retiredAt));
+    // Swaps still standing first, then newest first: MCP keeps five rows, so an already-undone
+    // swap must not push a live one out, and the store returns creation order, so without the
+    // date key an injected swap of a recently created fact would be the row the truncation hides.
+    .sort((a, b) => Number(b.replacedBy?.status === 'active') - Number(a.replacedBy?.status === 'active')
+      || b.retiredAt.localeCompare(a.retiredAt));
 
   return { polarity, retired, sameSubject };
 }
