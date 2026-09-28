@@ -1035,6 +1035,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     const sessionConfig = await loadConfig(input.projectRoot).catch(() => null);
     const warning = truncateText([
       await staleGuidanceWarningBestEffort(input.projectRoot),
+      input.startNotice,
       await updateNoticeBestEffort(input.projectRoot, sessionConfig),
       describeAutoDrift(drift),
       describeObservedUsePromotions(standing),

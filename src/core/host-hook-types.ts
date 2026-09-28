@@ -117,4 +117,10 @@ export interface NormalizedHostHook {
    * most of one that ever reaches disk.
    */
   assistantMessage?: string;
+  /**
+   * A line the CLI layer computed for the session-start card before handing the event over --
+   * today the hooks-transport fallback notice, which lives in `cli/agents` and so cannot be
+   * reached from `session/`.
+   */
+  startNotice?: string;
 }

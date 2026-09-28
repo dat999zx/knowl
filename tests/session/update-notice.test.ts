@@ -74,6 +74,12 @@ describe('update notice on the session card', () => {
     expect(fetchStub).not.toHaveBeenCalled();
   });
 
+  it('carries the notice the CLI layer computed, such as the hooks fallback', async () => {
+    const { root, projectId } = await withRepo();
+    const result = await handleHostLifecycleEvent(projectId, { ...hook(root), startNotice: 'Knowl hooks fell back to command: test.' });
+    expect(result.context).toContain('Knowl hooks fell back to command: test.');
+  });
+
   it('says nothing when the check is disabled', async () => {
     const { root, projectId } = await withRepo({ latest: NEWER, updateCheck: false });
     const result = await handleHostLifecycleEvent(projectId, hook(root));

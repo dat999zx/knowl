@@ -38,6 +38,14 @@ export async function runAgentHook(host: string, event: string, options: HookOut
     await initDb(root);
     const project = await getProjectByRootPath(root);
     if (!project) throw new Error('Project not found in database.');
+    // Session start is always a command hook, so it is where a missing `knowl` MCP server is
+    // noticed and the `mcp_tool` hooks fall back. Imported here, not at the top: every other
+    // event pays for this module's graph otherwise.
+    if (normalized.event === 'session-start') {
+      const { checkMcpTransport } = await import('./agents/transport-fallback.js');
+      const notice = await checkMcpTransport(root, normalized.host);
+      if (notice) normalized.startNotice = notice;
+    }
     const result = await handleHostLifecycleEvent(project.id, normalized);
 
     // Best-effort and gated: returns null when transcript search is off, and never throws.
