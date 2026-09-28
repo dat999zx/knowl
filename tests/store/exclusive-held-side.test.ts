@@ -129,17 +129,19 @@ describe('supersedes retires an exclusive item from a write claiming the same ke
     ['single writer', (input: any) => storeKnowledgeItemDeduped(projectId, input)],
     ['batch writer', (input: any) => storeKnowledgeAtomsDeduped(projectId, [input])],
   ] as const) {
-    it(`${label}: naming the holder while a different duplicate would be retired is refused`, async () => {
+    // An explicit `supersedes` outranks a detected duplicate (#165 R5), so the item named is the
+    // one retired: the key keeps exactly one active answer, and the decoy stays beside the write.
+    it(`${label}: naming the holder retires the holder, not a different duplicate`, async () => {
       const key = `db.decoy.${label.split(' ')[0]}`;
       const holder = await seedKey(key);
       const decoy = await storeKnowledgeItemDeduped(projectId, {
         category: 'decision', title: `Reporting cache layer ${label}`, content: 'Reports read from a nightly snapshot.',
       });
-      await expect(write({
+      await write({
         category: 'decision', title: `Reporting cache layer ${label}`, content: 'Reports read from a live replica.',
         conflictKey: key, conflictExclusive: true, supersedes: holder.item.id,
-      })).rejects.toBeInstanceOf(KnowledgeConflictError);
-      expect((await repo.getKnowledgeItem(holder.item.id))!.status).toBe('active');
+      });
+      expect((await repo.getKnowledgeItem(holder.item.id))!.status).toBe('superseded');
       expect((await repo.getKnowledgeItem(decoy.item.id))!.status).toBe('active');
     });
   }
