@@ -62,7 +62,34 @@ describe('dropsValuesOnly', () => {
       { content: 'All customer data is stored in the primary region.' },
       { content: 'All customer data is stored in eu-central-1 on v5.23.1.' },
     )).toBe(true);
+    // Split on hyphens, both regions would share the token `1` and nothing would read as dropped.
+    expect(dropsValuesOnly(
+      { content: 'Replicas run in eu-west-1.' },
+      { content: 'Replicas run in eu-central-1 and eu-west-1.' },
+    )).toBe(true);
   });
+
+  it('strips a sentence-ending dot before comparing', () => {
+    expect(dropsValuesOnly(
+      { content: 'Backups go to eu-central-1 and are kept a while.' },
+      { content: 'Backups go to eu-central-1. They are kept 35 days.' },
+    )).toBe(true);
+  });
+
+  it('compares values case-insensitively', () => {
+    expect(dropsValuesOnly(
+      { content: 'Stored in eu-central-1 for a while.' },
+      { content: 'Stored in EU-Central-1 for 35 days.' },
+    )).toBe(true);
+  });
+
+  it('treats a line break as a sentence boundary', () => {
+    expect(dropsValuesOnly(
+      { content: 'Payments:\nthey are handled elsewhere.' },
+      { content: 'Payments:\nStripe handles cards.' },
+    )).toBe(false);
+  });
+
 });
 
 const held = (content: string): KnowledgeItem => ({
