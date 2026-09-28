@@ -20,6 +20,10 @@ describe('resolveDuplicate exclusive held-side guard (#165 R3)', () => {
     expect(resolveDuplicate(attack, held({}))).toBe('coexist');
   });
 
+  it('an exact restatement is still a no-op, not a twin', () => {
+    expect(resolveDuplicate({ ...attack, content: 'Production runs on PostgreSQL 16.' }, held({}))).toBe('no-op');
+  });
+
   it('an explicit supersedes still retires it', () => {
     expect(resolveDuplicate({ ...attack, supersedes: 'held-1' }, held({}))).toBe('supersede');
   });
