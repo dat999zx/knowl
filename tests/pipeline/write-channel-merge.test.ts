@@ -72,3 +72,50 @@ describe('runMerge on the automatic channel (#165)', () => {
     expect((await repo.getKnowledgeItem(held.id))!.content).toBe('MySQL 5.7');
   });
 });
+
+describe('runMerge against an exclusive item, direct channel (#165 R3)', () => {
+  const seedExclusive = (conflictKey: string) => repo.createKnowledgeItem(projectId, {
+    category: 'fact', title: 'Production database engine', content: 'PostgreSQL 16',
+    conflictKey, conflictExclusive: true,
+  });
+
+  it('an update does not rewrite it in place', async () => {
+    const held = await seedExclusive('database.engine.update');
+    const action: VerifiedAtomAction = { atom, action: 'update', existingItemId: held.id,
+      compareResult: { relationship: 'update', reason: 'stub', updatedContent: 'MySQL 5.7' } };
+
+    const result = await runMerge(projectId, [action]);
+
+    const after = await repo.getKnowledgeItem(held.id);
+    expect(after!.content).toBe('PostgreSQL 16');
+    expect(after!.status).toBe('active');
+    expect(result.keptBesideIds).toEqual([held.id]);
+    expect(result.insertedIds).toHaveLength(1);
+    expect(result.updatedIds).toHaveLength(0);
+  });
+
+  it('an auto-resolved contradiction does not retire it', async () => {
+    const held = await seedExclusive('database.engine.contradiction');
+    const action: VerifiedAtomAction = { atom, action: 'contradiction', existingItemId: held.id,
+      compareResult: { relationship: 'contradiction', reason: 'stub' } };
+
+    const result = await runMerge(projectId, [action], { autoResolveContradictions: true });
+
+    expect((await repo.getKnowledgeItem(held.id))!.status).toBe('active');
+    expect(result.keptBesideIds).toEqual([held.id]);
+    expect(result.insertedIds).toHaveLength(1);
+    expect(result.supersededIds).toHaveLength(0);
+  });
+
+  it('a non-exclusive unverified item is still updated in place', async () => {
+    const held = await seed(null);
+    const action: VerifiedAtomAction = { atom, action: 'update', existingItemId: held.id,
+      compareResult: { relationship: 'update', reason: 'stub', updatedContent: 'MySQL 5.7' } };
+
+    const result = await runMerge(projectId, [action]);
+
+    expect((await repo.getKnowledgeItem(held.id))!.content).toBe('MySQL 5.7');
+    expect(result.keptBesideIds).toEqual([]);
+    expect(result.updatedIds).toEqual([held.id]);
+  });
+});

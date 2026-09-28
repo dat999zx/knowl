@@ -57,4 +57,19 @@ describe('runDeriveTruth (#165)', () => {
 
     expect((await repo.getKnowledgeItem(state.id))!.content).toBe('10 minutes');
   });
+
+  it('does not overwrite an exclusive state item, verified or not', async () => {
+    const state = await repo.createKnowledgeItem(projectId, {
+      category: 'state', title: 'queue broker', content: 'RabbitMQ',
+      conflictKey: 'queue.broker', conflictExclusive: true,
+    });
+    const source = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Message queue', content: 'Jobs are queued on Redis streams.',
+    });
+    vi.mocked(deriveTruth).mockResolvedValue([{ key: 'queue broker', value: 'Redis' }]);
+
+    await runDeriveTruth(projectId, [source]);
+
+    expect((await repo.getKnowledgeItem(state.id))!.content).toBe('RabbitMQ');
+  });
 });

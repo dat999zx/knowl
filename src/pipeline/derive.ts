@@ -86,8 +86,9 @@ export async function runDeriveTruth(
         // arbitrary text reaches here -- so it may not rewrite a state item someone verified.
         // The skipped value is not recomputed later: derivation runs only on new writes. The
         // cost is a verified state item that can go stale beside a newer decision until a
-        // person corrects it, which is the trade #165 asks for.
-        if (existing.content !== truth.value && !isVerifiedProvenance(existing)) {
+        // person corrects it, which is the trade #165 asks for. An exclusive state item is held
+        // the same way whatever its provenance: its author said nothing replaces it by accident.
+        if (existing.content !== truth.value && !isVerifiedProvenance(existing) && !existing.conflictExclusive) {
           const updated = await repo.updateKnowledgeItem(
             existing.id,
             { content: truth.value },

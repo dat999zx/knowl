@@ -18,7 +18,7 @@ export interface MergeResult {
   insertedIds: string[];
   updatedIds: string[];
   supersededIds: string[];
-  /** Verified items an automatic atom would have rewritten or retired, left untouched. */
+  /** Verified items an automatic atom, or exclusive items any atom, would have rewritten or retired, left untouched. */
   keptBesideIds: string[];
   unresolvedContradictions: VerifiedAtomAction[];
 }
@@ -95,8 +95,10 @@ export async function runMerge(
 
           // The in-place update is the worst of the three outcomes for a verified item: unlike a
           // supersession it keeps no copy of what was there. Raw ingest is a model over arbitrary
-          // text, so it may add beside a verified item but never rewrite one.
-          if (channel === 'automatic' && isVerifiedProvenance(beforeItem)) {
+          // text, so it may add beside a verified item but never rewrite one. An exclusive item is
+          // held on every channel: `knowl decide` with AI configured reaches here as direct, and a
+          // model's "update" verdict rewrote the one answer its author said nothing replaces.
+          if ((channel === 'automatic' && isVerifiedProvenance(beforeItem)) || beforeItem.conflictExclusive) {
             await insertAtom(action.atom);
             result.keptBesideIds.push(beforeItem.id);
             continue;
@@ -133,7 +135,7 @@ export async function runMerge(
           const beforeItem = await repo.getKnowledgeItem(action.existingItemId, tx);
           if (!beforeItem) continue;
 
-          if (channel === 'automatic' && isVerifiedProvenance(beforeItem)) {
+          if ((channel === 'automatic' && isVerifiedProvenance(beforeItem)) || beforeItem.conflictExclusive) {
             await insertAtom(action.atom);
             result.keptBesideIds.push(beforeItem.id);
             continue;
