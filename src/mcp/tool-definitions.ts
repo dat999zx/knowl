@@ -712,7 +712,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_conflicts',
           annotations: { readOnlyHint: true, openWorldHint: false },
-          description: 'List contradictions among active items: declared exclusive conflict keys, and detected polarity pairs (the same title asserted both ways, which the write path deliberately keeps side by side rather than letting either retire the other). Use when a write reports an overlapping item left active, or when memory gives contradictory answers. A write that reports a possible REVERSAL is telling you something this command does not list -- act on it there. Resolve with knowl_update, never by storing a third item.',
+          description: 'List contradictions: declared exclusive conflict keys; polarity pairs (the same title asserted both ways, kept side by side); verified facts retired in the last 14 days, with what replaced each; and same-subject active pairs with a verified side, which the write path keeps side by side instead of letting either retire the other. Use when a write reports an overlapping item left active, or when memory gives contradictory answers. A wrong retirement is undone by storing the correct fact with supersedes naming its replacement; a side-by-side pair is resolved by retiring one with supersedes (or knowl_update), never by storing a third item. A write that reports a possible REVERSAL is telling you something this command does not list -- act on it there.',
           inputSchema: { type: 'object', properties: {} },
         },
         {

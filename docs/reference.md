@@ -2732,7 +2732,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl list [--unread] [--stale] [--category <c>] [--limit <n>]` | Browse stored memories rather than searching them. `--unread` shows what has never been retrieved, oldest first |
 | `knowl edit <id>` | Open one memory in the local viewer to edit it. Accepts the eight-character id `knowl list` prints |
 | `knowl timeline <item-id>` | Print immutable assertions for one item |
-| `knowl conflicts` | List contradictions: declared exclusive keys and detected polarity pairs |
+| `knowl conflicts` | List contradictions: declared exclusive keys, polarity pairs, verified facts retired in the last 14 days, and verified same-subject pairs |
 | `knowl supersede <item-id> <replacement-id>` | Retire one item in favor of its replacement |
 | `knowl evidence <item-id>` | List evidence and symbol staleness for an item |
 | `knowl context --token-budget <n> [--query <query>] [--task <task>]` | Compose a bounded local context pack |
@@ -2840,7 +2840,7 @@ unless fleet awareness is switched off.
 | `knowl_update` | Correct or supersede stale or contradicted memory |
 | `knowl_timeline` | Inspect one item's immutable assertion history |
 | `knowl_evidence_list` | Inspect evidence linked to one item |
-| `knowl_conflicts` | Inspect declared exclusive keys and detected polarity pairs among active items |
+| `knowl_conflicts` | Inspect declared exclusive keys, polarity pairs, recently retired verified facts and verified same-subject pairs |
 | `knowl_drift` | List the atoms a branch's diff may have invalidated; optionally mark them for review |
 | `knowl_feedback` | Record usefulness or correction feedback after an item is used |
 | `knowl_skill_list` | List learned file-backed skills |
