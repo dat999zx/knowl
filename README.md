@@ -328,7 +328,7 @@ out of date instead of asserting a version of the repository that no longer exis
 
 What Knowl deliberately does *not* store is your conversations. Lifecycle capture records bounded
 events and summaries — never prompts, transcripts, stdout, or environment variables. Raw transcript
-search exists as an [opt-in, off-by-default index](docs/reference.md#searchable-session-transcripts-optional-off-by-default)
+search exists as an [index you can switch off](docs/reference.md#searchable-session-transcripts-on-by-default)
 over files the host already wrote.
 
 → [Knowledge model reference](docs/reference.md#core-knowledge-model)
@@ -614,8 +614,8 @@ knowl doctor                           # setup, retrieval, and registration
   archived.
 - **Resume keys** — park a workstream under a short key you keep, and pick it up in any session,
   from any directory, any number of times later. `knowl resume <key>`
-- **Optional transcript search** — off by default, and off means nothing exists on disk. Turn it on
-  and past session prose becomes searchable, so a memory miss degrades to a slower lookup instead
+- **Transcript search** — on by default, and off means nothing exists on disk. With it on, past
+  session prose is searchable, so a memory miss degrades to a slower lookup instead
   of amnesia. Keyword indexing keeps up on its own; semantic coverage is filled by
   `knowl reindex --transcripts`, because an embedding model does not belong in a per-turn hook.
 - **The recall gap** — how often an agent edited a file this store already knew something about

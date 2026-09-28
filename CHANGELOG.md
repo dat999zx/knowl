@@ -3,6 +3,41 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Defaults changed
+
+A fresh `knowl init` used to run with most of Knowl switched off, and nothing told anyone the
+features existed. These now default on, or to `shadow` — which records what a mechanism would
+have done and shows the agent nothing. An explicit value in `.knowl/config.json` still wins, and
+none of these keys is written into existing configs, so a repository that set one keeps it.
+
+| Key | Was | Now | Turn it back off |
+|---|---|---|---|
+| `impact.enabled` | off | on | `knowl config set impact.enabled false` |
+| `impact.gate` | off | shadow | `knowl config set impact.gate off` |
+| `capture.nudge` | off | shadow | `knowl config set capture.nudge off` |
+| `capture.events` | off | shadow | `knowl config set capture.events off` |
+| `capture.checkpoint` | off | shadow (new value) | `knowl config set capture.checkpoint off` |
+| `search.transcripts.enabled` | off | on | `knowl config set search.transcripts.enabled false` |
+| `search.transcripts.fallback` | off | on | `knowl config set search.transcripts.fallback false` |
+| `hooks.transport` | command | mcp | `knowl config set hooks.transport command`, then `knowl init <host>` |
+
+`hooks.transport: mcp` only changes Claude Code and Codex, the two hosts that can run a hook as an
+MCP tool call; every other host keeps command hooks. When the `knowl` MCP server is not registered
+for the host, session start rewrites its hooks back to commands and says so on the session card,
+and `knowl doctor` / `knowl doctor --fix` report and repair the same mismatch.
+
+`search.vector.provider` is gone: `local` was the only value it ever accepted. Configs that still
+carry it load as before, and `knowl upgrade` removes it.
+
+### Update notice on the session card
+
+`knowl serve` refreshes the daily update-check cache when it starts, and the session-start card
+names a newer release once: `Knowl <current> → <latest> is available: npm install -g
+@dat999zx/knowl. Tell the user.` Hooks read the cache and never touch the network. The existing
+opt-outs (`updateCheck.enabled: false`, `KNOWL_NO_UPDATE_CHECK`, `NO_UPDATE_NOTIFIER`) cover both.
+
 ## 5.23.1 — 2026-09-18
 
 ### Installing with pnpm produced a package that could not build or run

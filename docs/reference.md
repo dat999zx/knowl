@@ -29,7 +29,7 @@ which parts of a restore are deliberately not restored.
 | [Overview](#overview) · [Quick start](#quick-start) | What Knowl is and how to install it |
 | [Core knowledge model](#core-knowledge-model) | [Atom categories](#atom-categories) · [Metadata, history, ownership](#metadata-history-and-ownership) · [Governed writes](#governed-writes-and-current-truth) · [Namespaces & global memory](#memory-namespaces-and-the-global-layer) |
 | [Retrieval and context](#retrieval-and-context) | [Current retrieval](#current-retrieval) · [What a result carries](#what-a-result-carries) · [Embedding models](#choosing-an-embedding-model) · [Historical queries](#historical-retrieval-and-assertions) · [Context packs](#bounded-context-packs) |
-| [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [What exists and what is on](#seeing-what-exists-and-what-is-on--knowl-config-list) · [Host behavior](#host-and-subagent-behavior) · [The fleet](#who-else-is-running--the-fleet) |
+| [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-on-by-default) · [What exists and what is on](#seeing-what-exists-and-what-is-on--knowl-config-list) · [Host behavior](#host-and-subagent-behavior) · [The fleet](#who-else-is-running--the-fleet) |
 | [Evidence, code, drift](#evidence-code-intelligence-and-drift) | [Evidence and symbols](#evidence-and-symbols) · [PR drift and feedback](#pull-request-drift-and-retrieval-feedback) |
 | [Workspaces](#workspaces) | [Federation and ownership](#federation-and-ownership) · [Reading a peer's atom by id](#reading-a-linked-repos-atom-by-id) · [Doing a peer's work](#doing-a-linked-repos-work-from-here) · [Ownership stamping](#ownership) |
 | [Knowl Cloud](#knowl-cloud) | [Identity and connection](#identity-and-connection) · [Publishing and drift](#publishing-works-from-any-branch-reporting-drift-does-not) · [Staying current](#staying-current) |
@@ -322,8 +322,8 @@ stay at 600.
 
 #### The assumption checkpoint
 
-`capture.checkpoint` (`off` by default, `ask` to arm; `knowl posture maximal` arms it) asks one
-question every 20 assistant turns: **what is this session currently relying on that it never
+`capture.checkpoint` (`shadow` by default, `ask` to arm, `off` to skip; `knowl posture maximal`
+arms it) asks one question every 20 assistant turns: **what is this session currently relying on that it never
 verified?**
 
 It is looking for claims that became load-bearing without being checked — a number taken from a
@@ -597,11 +597,11 @@ process, with its database open and its embedding model loaded.
 ```jsonc
 // .knowl/config.json
 "hooks": {
-  "transport": "mcp"   // "command" (default) spawns a process per event
+  "transport": "mcp"   // the default; "command" spawns a process per event
 }
 ```
 
-With `mcp`, `knowl init claude` and `knowl init codex` (and `knowl doctor --fix`) write the
+With `mcp` (the default), `knowl init claude` and `knowl init codex` (and `knowl doctor --fix`) write the
 mid-session events — `PreToolUse`, `PostToolUse`, `Stop`, `PreCompact`, the subagent events —
 as `mcp_tool` hooks calling `knowl_hook`, and the server registers that tool. Two things stay
 processes on purpose: `SessionStart`, because both hosts document that it fires before their MCP
@@ -610,13 +610,22 @@ still up when it fires. The prompt-time reminder is unchanged. Every other host 
 hooks whatever the setting says; only hosts with the hook type declare the events that may move.
 
 The cost is one entry in the server's tool list. MCP has no hidden-tool concept, so `knowl_hook`
-is visible to the model in repositories that turned this on; its description says not to call
+is visible to the model unless a repository sets `command`; its description says not to call
 it, and calling it while the transport is `command` is refused rather than run, so a client
 holding a stale tool list cannot capture every event twice. A hook that fires from a directory
 that is not the server's project is answered with silence, where a process hook would have
-opened that project's store — the one case the two transports differ in, and the reason this is
-a choice rather than a default. The setting takes effect at the next `knowl init <host>` and the
-next server start.
+opened that project's store — the one case the two transports differ in. The setting takes
+effect at the next `knowl init <host>` and the next server start.
+
+**The fallback.** A host drops an `mcp_tool` hook with a non-blocking error when the server it
+names is not connected, and Knowl is never told. So `SessionStart` — a process hook on every host —
+checks that the host's MCP config (the project file or the user-level one) registers `knowl`. When
+it does not, it rewrites that host's hooks as `command` hooks and the session card says so:
+`Knowl hooks fell back to command: the knowl MCP server is not registered for <host>. Run knowl
+init <host> to restore it.` `knowl doctor` reports the same mismatch, and a hooks file written for
+the other transport, and `knowl doctor --fix` re-registers the server and rewrites the hooks.
+A server that crashes mid-session loses that session's hook events until the next session start;
+nothing on Knowl's side can see it.
 
 ### Leaving work for later
 
@@ -637,22 +646,22 @@ clean finish" goes looking for damage that does not exist.
 
 Both are passes, not durable notes. Anything worth keeping goes to `knowl_store`.
 
-### Searchable session transcripts (optional, off by default)
+### Searchable session transcripts (on by default)
 
 Atoms are distilled and therefore lossy: whatever the writer did not judge salient is gone. The
 raw Claude Code `.jsonl` transcripts are the complete record underneath. Indexing them turns a
 memory miss into a slower lookup instead of amnesia.
 
-Off by default, and off means nothing exists — no database file, no registered tools, no tokens
-spent in the guidance card.
+On by default. Turned off with `knowl config set search.transcripts.enabled false`, and off
+means nothing exists — no database file, no registered tools, no tokens spent in the guidance card.
 
 ```jsonc
 // .knowl/config.json
 "search": {
   "transcripts": {
-    "enabled": false,   // nothing is created, no MCP tools are registered
+    "enabled": true,    // false: nothing is created, no MCP tools are registered
     "share": false,     // let linked workspace repos read this index
-    "fallback": false   // a missed knowl_query runs transcript search itself
+    "fallback": true    // a missed knowl_query runs transcript search itself
   }
 }
 ```
@@ -1094,7 +1103,7 @@ listed, marked, and raised with the user instead.
 
 **On by default**, along with `fleet.cards` below — and what separates those two from everything
 else here is what a surface can *cost*. Anything that refuses a tool call or withholds a stop
-ships silent: `impact.gate` and `capture.nudge` are `off` when unset, and the fleet's own
+ships silent: `impact.gate` and `capture.nudge` are `shadow` when unset, and the fleet's own
 `fleet.nudge` is `shadow`, recording what it would have said. A roster costs a directory listing
 and prints nothing at all when a session is alone, and a card is advice on a channel the agent is
 already reading — neither is on that ladder, and nobody opts into "tell me other sessions exist"
@@ -1177,9 +1186,9 @@ resolution never fan out to workspace peers.
 
 ### Change impact, when two sessions touch the same code
 
-**Off by default.** `impact.enabled` is absent from a new configuration rather than present and
-false, so upgrading Knowl cannot switch it on. Turn it on with `knowl config set impact.enabled
-true`; the MCP tool below is registered only when it is on.
+**On by default**, with the write gate in `shadow`. `impact.enabled` is absent from a new
+configuration rather than written into it, so an explicit value always wins. Turn it off with
+`knowl config set impact.enabled false`; the MCP tool below is registered only when it is on.
 
 While it is on, Knowl records which files a session actually read, and tells a session when
 another one has since changed code underneath it — the case where you are working from something
@@ -2167,7 +2176,12 @@ line when there is one. `status` caches the answer for a day; `doctor` always as
 diagnostic that reports a stale version is worse than one that takes an extra moment. The request
 times out after two seconds and fails silently, so being offline costs nothing.
 
-Only those two commands check. Hooks, MCP, and `knowl serve` never do.
+`knowl serve` also refreshes the same cache when it starts, in the background — the server is
+long-lived, so nothing waits on it. Hooks never touch the network: the session-start card reads
+the cache, and when it names a release newer than the one running it adds one line,
+`Knowl <current> → <latest> is available: npm install -g @dat999zx/knowl. Tell the user.` It
+appears once per release: the cache file records the version it was shown for. Knowl never
+updates itself.
 
 ```bash
 knowl config set updateCheck.enabled false   # this repository
