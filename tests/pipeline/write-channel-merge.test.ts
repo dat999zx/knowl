@@ -47,6 +47,7 @@ describe('runMerge on the automatic channel (#165)', () => {
 
     expect((await repo.getKnowledgeItem(held.id))!.status).toBe('active');
     expect(result.keptBesideIds).toEqual([held.id]);
+    expect(result.insertedIds).toHaveLength(1);
     expect(result.supersededIds).toHaveLength(0);
   });
 
