@@ -627,6 +627,11 @@ export function resolveDuplicate(
   // refusing a supersession, and a pair left coexisting is invisible afterwards: `knowl_conflicts`
   // reads only `conflictKey`/`conflictExclusive`, set on 3 of 937 active items.
   if (differsOnlyInPolarity(input, duplicate)) return 'coexist';
+  // The author marked this the one active answer to its key. `checkKnowledgeConflict` only
+  // stops a writer that volunteers the same key, so a write that simply left the key out
+  // retired it anyway: 36 of 36 in the #165 red team, against 36 of 36 refused with the key.
+  // Honoured from the held side here; retiring it takes an explicit `supersedes`.
+  if (duplicate.conflictExclusive) return 'coexist';
 
   // Provenance still does not gate a DIRECT write (the measurement above stands: 5 of 139 real
   // supersessions are unclaimed corrections of observed items, all through knowl_store). What it
