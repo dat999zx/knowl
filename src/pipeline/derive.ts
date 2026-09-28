@@ -82,8 +82,11 @@ export async function runDeriveTruth(
       );
 
       if (existing) {
-        // A derived truth is recomputable; a verified state item is not. Skipping the overwrite
-        // loses nothing, and raw ingest is how a model's reading of arbitrary text reaches here.
+        // A derived value is a model's reading of the item just written -- and raw ingest is how
+        // arbitrary text reaches here -- so it may not rewrite a state item someone verified.
+        // The skipped value is not recomputed later: derivation runs only on new writes. The
+        // cost is a verified state item that can go stale beside a newer decision until a
+        // person corrects it, which is the trade #165 asks for.
         if (existing.content !== truth.value && !isVerifiedProvenance(existing)) {
           const updated = await repo.updateKnowledgeItem(
             existing.id,
