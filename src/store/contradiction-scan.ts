@@ -61,11 +61,11 @@ export type RetiredVerified = {
   kind: 'retired';
   retired: VerifiedParty;
   /**
-   * `status` because the row outlives the swap: once someone undoes it by superseding the
-   * replacement, the row still lists it for the rest of the window, and without the status it
-   * reads as a live swap a second reader would "fix" again. The row itself stays, since an undo
-   * that restores the retired value and a write that doubles down on the replacement look the
-   * same from here.
+   * `status` because the row outlives the swap: once the replacement is itself superseded -- by an
+   * undo that restores the retired value, or just by the next write on the subject -- the row still
+   * lists it for the rest of the window, and without the status an undone swap reads as live and a
+   * second reader "fixes" it again. The row itself stays, since the undo and a write that doubles
+   * down on the replacement look the same from here.
    */
   replacedBy: (VerifiedParty & { status: KnowledgeStatus }) | null;
   /** The retired item's `updatedAt`, which the supersede update stamps. */
@@ -87,6 +87,8 @@ const party = (item: { id: string; title: string; category: string }): Contradic
 });
 
 const verifiedParty = (item: KnowledgeItem): VerifiedParty => ({ ...party(item), provenance: item.provenance ?? null });
+
+const replacedSince = (row: RetiredVerified): boolean => row.replacedBy !== null && row.replacedBy.status !== 'active';
 
 export async function scanContradictions(options: { now?: Date } = {}): Promise<DetectedContradictions> {
   const all = await repo.listKnowledgeItems();
@@ -128,10 +130,13 @@ export async function scanContradictions(options: { now?: Date } = {}): Promise<
         retiredAt: item.updatedAt,
       };
     })
-    // Swaps still standing first, then newest first: MCP keeps five rows, so an already-undone
-    // swap must not push a live one out, and the store returns creation order, so without the
-    // date key an injected swap of a recently created fact would be the row the truncation hides.
-    .sort((a, b) => Number(b.replacedBy?.status === 'active') - Number(a.replacedBy?.status === 'active')
+    // Rows whose replacement has itself been replaced last, then newest first. MCP keeps five
+    // rows: a swap whose replacement was since superseded is more likely already dealt with than
+    // one whose replacement still answers queries -- likelier, not certain, as a double-down looks
+    // the same -- and a fact retired with nothing named in its place is not dealt with at all. The
+    // store returns creation order, so without the date key an injected swap of a recently created
+    // fact would be the row the truncation hides.
+    .sort((a, b) => Number(replacedSince(a)) - Number(replacedSince(b))
       || b.retiredAt.localeCompare(a.retiredAt));
 
   return { polarity, retired, sameSubject };

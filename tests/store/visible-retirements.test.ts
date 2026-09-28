@@ -136,6 +136,29 @@ describe('retired verified facts (#165 R1)', () => {
     expect(retired.map(row => row.retired.id)).toEqual([live, undone]);
     expect(retired.map(row => row.replacedBy?.status)).toEqual(['active', 'superseded']);
   });
+
+  it('does not demote a verified fact retired with nothing named in its place', async () => {
+    const orphan = (await seed('observed', 'Refresh token rotation', 'one use')).item.id;
+    await repo.updateKnowledgeItem(orphan, { status: 'superseded' });
+    const undone = (await seed('observed', 'Backup retention window', '35 days')).item.id;
+    const swap = await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Backup retention window', content: 'Backups are retained for 2 days.',
+    });
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Backup retention restored', content: 'Backups are retained for 35 days.',
+      provenance: 'observed', supersedes: swap.item.id,
+    });
+    const stamp = (id: string, hoursAgo: number) => getClient().execute({
+      sql: 'UPDATE knowledge_items SET updated_at = ? WHERE id = ?',
+      args: [new Date(Date.now() - hoursAgo * 3_600_000).toISOString(), id],
+    });
+    await stamp(orphan, 2);
+    await stamp(undone, 1);
+
+    const { retired } = await scanContradictions();
+    expect(retired.map(row => row.retired.id)).toEqual([orphan, undone]);
+    expect(retired[0].replacedBy).toBeNull();
+  });
 });
 
 describe('same-subject pairs with a verified side (#165 R1)', () => {
