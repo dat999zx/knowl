@@ -100,9 +100,9 @@ describe('re-indexing a skill package', () => {
     expect(second.superseded?.id).toBe(first.item.id);
   });
 
-  it('a file-backed package does not retire an agent skill atom of the same subject either way round', async () => {
-    // The clamp needs BOTH sides to carry a source. An agent atom with none is not a different
-    // package, so the ordinary same-subject rule still decides it.
+  it('an unsourced agent skill atom is still retired by a same-subject package', async () => {
+    // The clamp needs BOTH sides to carry a package path. An agent atom with none is not a
+    // different package, so the ordinary same-subject rule still decides it.
     const atom = await storeKnowledgeItemDeduped(projectId, {
       category: 'skill', title: 'publish docs',
       content: 'Publish the docs site to the production bucket.', steps: ['Build', 'Upload'],
