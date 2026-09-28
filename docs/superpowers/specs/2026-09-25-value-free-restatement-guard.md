@@ -30,11 +30,24 @@ told. Applies on every channel. An explicit `supersedes` still wins.
 
 A **value token** is a word from the body — a match of `/[A-Za-z0-9_][A-Za-z0-9_.\/-]*/g`
 within a sentence, trailing dots stripped — that is either:
-- digit-bearing (`35`, `16`, `eu-central-1`, `v5.23.1`, `1,024`), or
-- capitalised and not the first word of its sentence (`PostgreSQL`, `Stripe`, `UTC`, `Vault`).
+- digit-bearing (`35`, `16`, `eu-central-1`, `v5.23.1`), or
+- contains an uppercase letter and is not the first word of its sentence (`PostgreSQL`, `Stripe`,
+  `UTC`, `Vault`; also camelCase identifiers and the pronoun `I`, which is harmless: the error
+  direction is coexist).
 
-Tokens are compared case-insensitively. Titles are not inspected: the title is how the subject
-match was made, so the claim lives in the body.
+A comma is not a word character, so `1,024` reads as two values, `1` and `024`. Adding the comma
+would turn `days,` into a token, so the split is kept.
+
+Tokens are compared case-insensitively. A held value counts as dropped only when its word is gone
+from the incoming body entirely, and an incoming value counts as added only when its word appears
+nowhere in the held body; otherwise moving `Stripe` to the front of a sentence, or writing
+`postgresql` for `PostgreSQL`, would read as a drop. Titles are not inspected: the title is how
+the subject match was made, so the claim lives in the body.
+
+A correction that narrows a list (`Node 18 and Node 20` -> `Node 20`) also drops a value and adds
+none, so it is kept beside the held item rather than retiring it. The caller is told through
+`nearDuplicate` and retires the stale one with `supersedes`; no lexical rule separates this from
+N2.
 
 ## Design
 
@@ -82,5 +95,6 @@ sentence-initial capitals as values. Each must fail a different subset.
 ## Out of scope
 
 - Values expressed as plain words (see Cost).
-- The raw-ingest merge path. It decides with an AI comparison, not `resolveDuplicate`; R2's spec
-  covers its trust gap.
+- The AI merge path (`runMerge` in `src/pipeline/merge.ts`), used by raw ingest and by CLI
+  `knowl decide` when AI is configured (`runDecisionPipeline`). It decides with an AI comparison,
+  not `resolveDuplicate`; R2's spec covers its trust gap.
