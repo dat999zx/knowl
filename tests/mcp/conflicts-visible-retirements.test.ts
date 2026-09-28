@@ -47,7 +47,7 @@ afterAll(async () => {
   await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
 });
 
-it('knowl_conflicts returns retired and sameSubject, truncating retired at 5 (#165 R1)', async () => {
+it('knowl_conflicts returns retired and sameSubject, truncating each at 5 (#165 R1)', async () => {
   await closeDb();
   await fs.rm(ROOT, { recursive: true, force: true });
   await fs.mkdir(path.join(ROOT, '.knowl'), { recursive: true });
@@ -64,11 +64,18 @@ it('knowl_conflicts returns retired and sameSubject, truncating retired at 5 (#1
     });
     expect(swap.superseded).toBeDefined();
   }
+  for (const name of ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot']) {
+    const title = `${name} cache window`;
+    await repo.createKnowledgeItem(projectId, { category: 'decision', title, content: `${name} caches for 5 minutes.`, provenance: 'observed' });
+    await repo.createKnowledgeItem(projectId, { category: 'decision', title, content: `${name} caches for 1 hour.` });
+  }
 
   // The DB stays open: `knowl serve` inits it before any tool call, and the handler relies on that.
   const result = await callTool('knowl_conflicts', {});
   const payload = JSON.parse(String(result.content[0].text));
   expect(Object.keys(payload)).toEqual(['declared', 'polarity', 'retired', 'sameSubject']);
   expect(payload.retired).toHaveLength(5);
+  expect(payload.sameSubject).toHaveLength(5);
   expect(String(result.content[1].text)).toContain('1 retired');
+  expect(String(result.content[1].text)).toContain('1 same-subject');
 });
