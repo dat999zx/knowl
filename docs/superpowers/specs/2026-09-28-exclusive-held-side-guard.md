@@ -49,8 +49,17 @@ different question (may this write carry this key at all), and it is correct for
 - **Session handoff** (`src/session/session-handoff.ts:~375`) marks its `Pending session handoff`
   items exclusive and replaces them through `repo.updateKnowledgeItem` directly. Unaffected.
   Confirm during implementation that no handoff path calls the deduped writers.
-- **Raw ingest** (`runMerge`) decides with an AI comparison, not `resolveDuplicate`. Out of scope
-  here; R2 already stops it rewriting verified items. Note the gap in the PR body.
+- **`runMerge`** decides with an AI comparison, not `resolveDuplicate`. Out of scope here. It is
+  reached from raw ingest (automatic channel, where R2 stops it rewriting verified items) **and**
+  from `runDecisionPipeline` (`src/pipeline/pipeline.ts:78`), i.e. `knowl decide` with AI
+  configured, on the direct channel, where R2 does not apply: a model-judged contradiction or
+  update can still retire or rewrite an exclusive item there (`src/pipeline/merge.ts:99,136`).
+  Truth derivation (`src/pipeline/derive.ts:90`) likewise rewrites an unverified exclusive `state`
+  item in place. Note both gaps in the PR body; the follow-up is `|| beforeItem.conflictExclusive`
+  at those checks.
+- **`supersedes` with the same key.** The deliberate retire only works from a write that does not
+  claim the same exclusive key: `checkKnowledgeConflict` and `repository.ts:213` refuse a same-key
+  write while the old item is active, `supersedes` or not. Unchanged here.
 - **Explicit `supersede` / `knowl_update`** are deliberate retirements and stay allowed.
 
 ## Cost, measured on this repo's store
@@ -61,7 +70,7 @@ different question (may this write carry this key at all), and it is correct for
   would have been kept beside it, and the author would retire the old one with `supersedes`.
   Stated in the PR, not hidden.
 
-## Tests (each must fail with the guard removed)
+## Tests (each must fail under one of the mutants below)
 
 1. `resolveDuplicate`: held item `conflictExclusive: true`, incoming same title, no key → `coexist`.
 2. Same, with `supersedes: held.id` → `supersede`.
@@ -73,8 +82,9 @@ different question (may this write carry this key at all), and it is correct for
 6. The existing `tests/store/import-exclusive-conflict.test.ts` and
    `tests/store/batch-write-integrity.test.ts` still pass unchanged.
 
-Mutation check: delete the guard; move it before the `supersedes` check. Each must fail a
-different test.
+Mutation check: delete the guard; move it before the `supersedes` check; move it before the
+verbatim no-op check; widen it to `duplicate.conflictKey`. Each must fail a different test (the
+last two are pinned by an exact-restatement `no-op` test and a keyed, non-exclusive held item).
 
 ## Out of scope
 

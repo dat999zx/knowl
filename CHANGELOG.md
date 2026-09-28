@@ -52,8 +52,11 @@ place, which previously kept no copy of the old content.
 
 `conflictExclusive` only refused a second write that carried the same key, so a same-subject write
 that simply omitted it retired the exclusive item anyway (#165). The two are now kept side by side;
-retire the exclusive one deliberately with `supersedes`. One of 140 real supersessions in this
-repository's own store would have needed that.
+retire the exclusive one deliberately with `supersedes`, from a write that does not claim the same
+exclusive key (one that does is still refused while the old item is active). One of 140 real
+supersessions in this repository's own store would have needed that. `knowl decide` with AI
+configured merges through a model comparison instead and is not covered yet.
+
 ## 5.23.1 — 2026-09-18
 
 ### Installing with pnpm produced a package that could not build or run
