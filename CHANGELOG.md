@@ -52,10 +52,10 @@ place, which previously kept no copy of the old content.
 
 `conflictExclusive` only refused a second write that carried the same key, so a same-subject write
 that simply omitted it retired the exclusive item anyway (#165). The two are now kept side by side;
-retire the exclusive one deliberately with `supersedes`. The correction may carry the same
-exclusive key: it used to be refused because the item it named still held the key, and now only a
-holder it does not name refuses it. One of 140 real supersessions in this repository's own store
-would have needed that.
+retire the exclusive one deliberately with `supersedes`. One of 140 real supersessions in this
+repository's own store would have needed that. The correction may carry the same exclusive key: it
+used to be refused because the item it named still held the key, and now only a holder it does not
+retire refuses it.
 
 ### `knowl decide` with AI, and truth derivation, no longer rewrite an exclusive item
 
