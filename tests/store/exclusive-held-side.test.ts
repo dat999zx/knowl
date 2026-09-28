@@ -24,8 +24,8 @@ describe('resolveDuplicate exclusive held-side guard (#165 R3)', () => {
     expect(resolveDuplicate({ ...attack, supersedes: 'held-1' }, held({}))).toBe('supersede');
   });
 
-  it('a non-exclusive item is superseded as before', () => {
-    expect(resolveDuplicate(attack, held({ conflictExclusive: false, conflictKey: null }))).toBe('supersede');
+  it('a non-exclusive item is superseded as before, even when it carries a key', () => {
+    expect(resolveDuplicate(attack, held({ conflictExclusive: false }))).toBe('supersede');
   });
 });
 
