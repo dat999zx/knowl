@@ -6,6 +6,7 @@ import * as repo from '../../src/store/repository.js';
 import { resolveDuplicate, storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
 import { KnowledgeConflictError } from '../../src/core/errors.js';
+import { checkKnowledgeConflict } from '../../src/store/conflicts.js';
 
 const TITLE = 'Production database engine';
 const held = (over: Partial<KnowledgeItem>): KnowledgeItem => ({
@@ -120,6 +121,18 @@ describe('supersedes retires an exclusive item from a write claiming the same ke
     await expect(storeKnowledgeItemDeduped(projectId, correction('db.other.single', bystander.item.id)))
       .rejects.toBeInstanceOf(KnowledgeConflictError);
     expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('active');
+  });
+
+  // The single writer's in-transaction check would refuse either way, so this pins the early one alone.
+  it('checkKnowledgeConflict drops only the holder the write names', async () => {
+    const seed = await seedKey('db.check');
+    const bystander = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Unrelated bystander three', content: 'Alerts page the on-call rotation.',
+    });
+    const claim = { conflictKey: 'db.check', conflictExclusive: true };
+    expect(await checkKnowledgeConflict({ ...claim, supersedes: seed.item.id })).toEqual([]);
+    expect((await checkKnowledgeConflict({ ...claim, supersedes: bystander.item.id })).map(item => item.id))
+      .toEqual([seed.item.id]);
   });
 
   it('batch writer: naming some other item does not clear the holder, and the write is refused', async () => {
