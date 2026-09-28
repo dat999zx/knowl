@@ -77,9 +77,11 @@ instead of superseding. On this repository's own store both lists hold a handful
 
 A retired fact stayed listed for its whole 14 days with what replaced it, even after someone had
 undone the swap by superseding that replacement, so it read as a live swap a second reader might
-"fix" again. Each retirement's replacement now carries its `status`, and rows whose replacement is
-still `active` come first; undone ones stay listed after them, newest first in each group. On this
-repository's own store, 2 of the 5 listed retirements have already been undone.
+"fix" again. Each retirement's replacement now carries its `status`. Rows whose replacement has
+itself been replaced stay listed, but after the rest, newest first in each group; that state also
+follows a plain second write on the subject, so it means "look again", not "resolved". On this
+repository's own store, 2 of the 5 listed retirements are in that state, both from a later verified
+edit of the same fact rather than an undo.
 
 ## 5.23.1 — 2026-09-18
 
