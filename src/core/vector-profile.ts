@@ -193,7 +193,7 @@ export function resolveVectorProfile(config: ProjectConfig): VectorProfile {
   const matched = preset === 'custom' ? null : matchPresetByModel(model);
 
   return {
-    provider: typeof vector?.provider === 'string' ? vector.provider : 'local',
+    provider: 'local',
     model,
     dtype: typeof vector?.dtype === 'string' ? vector.dtype : 'q8',
     pooling: vector?.pooling === 'cls' ? 'cls'

@@ -46,12 +46,6 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     const config = await loadConfig(root);
     checks.push({ status: 'OK', message: 'Config loaded' });
     checks.push(...await cloudDoctorChecks(config, root));
-    checks.push({
-      status: config.search?.vector?.provider ? 'OK' : 'WARN',
-      message: config.search?.vector?.provider
-        ? 'Config includes vector search defaults'
-        : 'Config missing vector search defaults; run knowl upgrade',
-    });
 
     // FAIL, not WARN, and this is the one check where that distinction is worth arguing.
     //
@@ -341,7 +335,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       `);
       checks.push(vectorCoverageCheck({
         enabled: true,
-        model: `${vector.provider}/${vector.model}`,
+        model: vector.model,
         activeItems: Number(counts[0]?.active ?? 0),
         embeddedItems: Number(counts[0]?.embedded ?? 0),
         staleItems: Number(counts[0]?.stale ?? 0),

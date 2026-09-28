@@ -1,4 +1,4 @@
-﻿import path from 'node:path';
+import path from 'node:path';
 import fsPromises from 'node:fs/promises';
 import { ProjectConfig } from '../core/types.js';
 import { loadConfig } from '../core/config.js';
@@ -429,9 +429,6 @@ export async function createLocalEmbeddingProvider(
   const vector = getVectorSearchConfig(config);
   if (!vector.enabled) {
     throw new Error('Vector search is not enabled. Set search.vector.enabled to true first.');
-  }
-  if (vector.provider !== 'local') {
-    throw new Error(`Unsupported vector provider: ${vector.provider}`);
   }
 
   // `cached` falls out of the same resolution: the directory chosen is the one holding the

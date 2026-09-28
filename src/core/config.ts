@@ -25,7 +25,6 @@ export const DEFAULT_CONFIG: ProjectConfig = {
   search: {
     vector: {
       enabled: true,
-      provider: 'local',
       model: 'Xenova/all-MiniLM-L6-v2',
       dtype: 'q8',
     },
@@ -82,6 +81,12 @@ export function mergeConfigDefaults<T extends Record<string, any>>(
 function stripDeprecatedConfigFields(config: ProjectConfig): ProjectConfig {
   const normalized = { ...config } as Record<string, any>;
   delete normalized.project;
+  // `local` was the only provider there ever was; the key named a choice nobody could make.
+  const vector = normalized.search?.vector;
+  if (isPlainObject(vector) && 'provider' in vector) {
+    const { provider: _provider, ...rest } = vector;
+    normalized.search = { ...normalized.search, vector: rest };
+  }
   return normalized as ProjectConfig;
 }
 

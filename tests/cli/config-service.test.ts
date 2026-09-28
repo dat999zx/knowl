@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
+import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, loadConfig, upgradeConfigDefaults } from '../../src/core/config.js';
 import { resolveVectorProfile } from '../../src/core/vector-profile.js';
 import { CONFIG_FIELDS } from '../../src/cli/config/schema.js';
 import { getConfigValue, getEffectiveConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from '../../src/cli/config/service.js';
@@ -26,7 +26,6 @@ describe('config defaults', () => {
   it('enables local vector search by default', () => {
     expect(DEFAULT_CONFIG.search?.vector).toEqual({
       enabled: true,
-      provider: 'local',
       model: 'Xenova/all-MiniLM-L6-v2',
       dtype: 'q8',
     });
@@ -44,7 +43,24 @@ describe('config defaults', () => {
 
     const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
     expect(saved.search.vector.enabled).toBe(false);
-    expect(saved.search.vector.provider).toBe('local');
+    expect(saved.search.vector).not.toHaveProperty('provider');
+  });
+
+  it('loads a config that still names search.vector.provider, and upgrade strips it', async () => {
+    await fs.mkdir(path.join(ROOT, '.knowl'), { recursive: true });
+    await fs.writeFile(path.join(ROOT, '.knowl', 'config.json'), JSON.stringify({
+      version: 1,
+      security: { rejectSecrets: true, secretPatterns: [] },
+      search: { vector: { enabled: true, provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dtype: 'q8' } },
+    }));
+
+    const loaded = await loadConfig(ROOT);
+    expect(loaded.search?.vector?.model).toBe('Xenova/all-MiniLM-L6-v2');
+
+    expect(await upgradeConfigDefaults(ROOT)).toBe('updated');
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved.search.vector).not.toHaveProperty('provider');
+    expect(saved.search.vector.model).toBe('Xenova/all-MiniLM-L6-v2');
   });
 });
 

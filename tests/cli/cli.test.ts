@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { createClient } from '@libsql/client';
 import fs from 'node:fs/promises';
@@ -64,7 +64,7 @@ describe('CLI Integration', () => {
     const config = JSON.parse(await fs.readFile(path.join(TEST_DIR, '.knowl', 'config.json'), 'utf-8'));
     expect(config.project).toBeUndefined();
     expect(config.search.vector.enabled).toBe(true);
-    expect(config.search.vector.provider).toBe('local');
+    expect(config.search.vector).not.toHaveProperty('provider');
   });
 
   it('should evaluate retrieval from a dataset as JSON', () => {
@@ -182,7 +182,7 @@ describe('CLI Integration', () => {
     expect(config.ai.provider).toBe('openai');
     expect(config.security.secretPatterns).toEqual(['password']);
     expect(config.search.vector.enabled).toBe(true);
-    expect(config.search.vector.provider).toBe('local');
+    expect(config.search.vector).not.toHaveProperty('provider');
 
     await fs.rm(oldProjectDir, { recursive: true, force: true });
   });
@@ -726,7 +726,6 @@ describe('CLI Integration', () => {
     expect(output).toContain('KNOWL AGENT READINESS');
     expect(output).toContain('[OK] Repository initialized');
     expect(output).toContain('[OK] KNOWL.md and AGENTS.md guidance current');
-    expect(output).toContain('[OK] Config includes vector search defaults');
     expect(output).toContain('[OK] Database schema includes knowledge_embeddings');
     expect(output).toContain('[OK] .gitignore ignores .knowl/');
     // The check this replaced only counted rows. This one runs a real query and asserts the
@@ -742,7 +741,7 @@ describe('CLI Integration', () => {
     // states themselves are asserted in tests/cli/vector-coverage.test.ts.
     // The model named here is whatever a fresh `init` selects, which is the default
     // preset -- not DEFAULT_CONFIG's model, which exists only as the upgrade baseline.
-    expect(output).toContain('[OK] Vector search enabled with local/onnx-community/granite-embedding-small-english-r2-ONNX');
+    expect(output).toContain('[OK] Vector search enabled with onnx-community/granite-embedding-small-english-r2-ONNX');
     expect(output).toContain('Result: READY');
 
     await fs.rm(doctorDir, { recursive: true, force: true });

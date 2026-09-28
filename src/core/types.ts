@@ -312,7 +312,6 @@ export interface ProjectConfig {
   search?: {
     vector?: {
       enabled?: boolean;
-      provider?: 'local';
       /** Named profile bundling model, dtype and pooling. See resolveVectorProfile. */
       preset?: string;
       model?: string;

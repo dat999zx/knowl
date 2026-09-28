@@ -7,7 +7,6 @@ export type ConfigKey =
   | 'security.secretPatterns'
   | 'search.vector.enabled'
   | 'search.vector.preset'
-  | 'search.vector.provider'
   | 'search.vector.model'
   | 'search.vector.dtype'
   | 'search.vector.pooling'
@@ -104,7 +103,6 @@ const nonNegativeInteger = (raw: string) => {
 
 const stringList = (raw: string) => raw.split(',').map(value => value.trim()).filter(Boolean);
 
-const VECTOR_PROVIDERS = ['local'] as const;
 const VECTOR_DTYPES = ['q4', 'q8', 'fp16', 'fp32'] as const;
 const VECTOR_POOLINGS = ['mean', 'cls'] as const;
 const AI_PROVIDERS = ['openai', 'anthropic', 'ollama', 'custom'] as const;
@@ -142,12 +140,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
     label: 'Semantic search',
     description: 'Rank by meaning as well as keywords. Off falls back to keyword search alone.',
   },
-  {
-    key: 'search.vector.provider', category: 'Search', type: 'enum', values: VECTOR_PROVIDERS,
-    parse: enumValue(VECTOR_PROVIDERS), defaultValue: DEFAULT_CONFIG.search?.vector?.provider,
-    label: 'Embedding provider',
-    description: 'Where embeddings are computed. Local runs on this machine and sends nothing out, and is the only option today.',
-  },
+
   {
     key: 'search.vector.model', category: 'Search', type: 'string',
     parse: String, defaultValue: DEFAULT_CONFIG.search?.vector?.model,
