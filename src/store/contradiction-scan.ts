@@ -112,7 +112,7 @@ export async function scanContradictions(options: { now?: Date } = {}): Promise<
   const retired: RetiredVerified[] = all
     .filter(item => item.status === 'superseded' && isVerifiedProvenance(item)
       && Date.parse(item.updatedAt) >= since)
-    .map(item => {
+    .map((item): RetiredVerified => {
       const next = item.supersededById ? byId.get(item.supersededById) : undefined;
       return { kind: 'retired', retired: verifiedParty(item), replacedBy: next ? verifiedParty(next) : null, retiredAt: item.updatedAt };
     })
