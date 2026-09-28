@@ -31,4 +31,13 @@ describe('re-indexing a skill package', () => {
     expect(active).toHaveLength(1);
     expect(active[0].content).toContain('Run the unit test suite.');
   });
+
+  it('an unchanged manifest is still a no-op, keeping the item and its run counts', async () => {
+    const activeIds = async () => (await repo.listKnowledgeItems())
+      .filter(item => item.category === 'skill' && item.status === 'active' && item.title === 'run-tests')
+      .map(item => item.id);
+    const [before] = await activeIds();
+    await indexSkillPackage(projectId, manifest('Run the unit test suite.'));
+    expect(await activeIds()).toEqual([before]);
+  });
 });

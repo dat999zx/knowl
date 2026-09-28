@@ -81,6 +81,11 @@ describe('dropsValuesOnly', () => {
       { content: 'Stored in eu-central-1 for a while.' },
       { content: 'Stored in EU-Central-1 for 35 days.' },
     )).toBe(true);
+    // Only the case differs, so nothing is dropped.
+    expect(dropsValuesOnly(
+      { content: 'Stored in eu-central-1.' },
+      { content: 'Stored in EU-Central-1.' },
+    )).toBe(false);
   });
 
   it('treats a line break as a sentence boundary', () => {
