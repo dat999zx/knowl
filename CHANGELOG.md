@@ -61,8 +61,9 @@ would have needed that.
 
 With AI configured, `knowl decide` merges through a model comparison, and a model-judged update
 rewrote an exclusive item in place while an auto-resolved contradiction retired it. Truth
-derivation likewise overwrote an exclusive `state` item that nobody had verified (#165). Both now
-keep their result beside the exclusive item.
+derivation likewise overwrote an exclusive `state` item that nobody had verified (#165). A merge
+now keeps its atom beside the exclusive item; derivation leaves it unchanged and does not write the
+derived value.
 
 ## 5.23.1 — 2026-09-18
 
