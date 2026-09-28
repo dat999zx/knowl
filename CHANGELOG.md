@@ -65,6 +65,13 @@ derivation likewise overwrote an exclusive `state` item that nobody had verified
 now keeps its atom beside the exclusive item; derivation leaves it unchanged and does not write the
 derived value.
 
+### `knowl conflicts` lists retired verified facts and the pairs the write path keeps side by side
+
+A same-subject write that retired a verified fact told only its writer, and `knowl conflicts`
+compared active items only, so the retired fact had nothing to pair with (#165). It now also
+lists `observed`/`user_stated` items retired in the last 14 days with what replaced each, and
+same-subject active pairs with a verified side, which the new write guards keep side by side
+instead of superseding. On this repository's own store both lists hold a handful of rows.
 ## 5.23.1 — 2026-09-18
 
 ### Installing with pnpm produced a package that could not build or run
