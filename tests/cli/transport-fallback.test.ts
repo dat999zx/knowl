@@ -55,6 +55,15 @@ describe('checkMcpTransport', () => {
     expect(await readFile(hooks, 'utf8')).toContain(HOOK_TOOL_NAME);
   });
 
+  it('finds a local-scope server whatever the separators and drive-letter case of the project key', async () => {
+    const { root, home, hooks } = await claudeRepo({});
+    let key = root.replace(/\\/g, '/');
+    if (process.platform === 'win32') key = key[0] === key[0].toLowerCase() ? key[0].toUpperCase() + key.slice(1) : key[0].toLowerCase() + key.slice(1);
+    await writeFile(path.join(home, '.claude.json'), JSON.stringify({ projects: { [key]: { mcpServers: { knowl: { command: 'knowl' } } } } }));
+    expect(await checkMcpTransport(root, 'claude', home)).toBeNull();
+    expect(await readFile(hooks, 'utf8')).toContain(HOOK_TOOL_NAME);
+  });
+
   it('checks Codex against its TOML config', async () => {
     const root = await scratch();
     const home = await scratch();

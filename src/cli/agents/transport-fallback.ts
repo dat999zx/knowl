@@ -20,6 +20,23 @@ const toml = async (file: string): Promise<any> => {
 };
 
 /**
+ * Claude Code keys `~/.claude.json` projects by a forward-slash path whose drive letter may be
+ * either case (`d:/coding/knowl` and `D:/coding/knowl` both occur on one machine), while `root` is
+ * `path.resolve`d with backslashes on Windows. A plain lookup missed every local-scope server there
+ * and fell back over a working setup at every session start.
+ */
+function projectEntry(projects: Record<string, any> | undefined, root: string): any {
+  if (!projects) return undefined;
+  const key = (value: string) => {
+    const resolved = path.resolve(value).replace(/\\/g, '/');
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  const wanted = key(root);
+  const match = Object.keys(projects).find(candidate => key(candidate) === wanted);
+  return match === undefined ? undefined : projects[match];
+}
+
+/**
  * Where each MCP-hook host keeps its hooks file and every place its `knowl` server can be
  * registered. The user-level files count: a server registered once for the user is connected in
  * this repo too, and falling back over it would undo a working setup at every session start.
@@ -32,7 +49,7 @@ function locations(root: string, host: HookHost, home: string): Locations | null
         servers: [
           async () => (await json(path.join(root, '.mcp.json')))?.mcpServers,
           async () => (await json(path.join(home, '.claude.json')))?.mcpServers,
-          async () => (await json(path.join(home, '.claude.json')))?.projects?.[root]?.mcpServers,
+          async () => projectEntry((await json(path.join(home, '.claude.json')))?.projects, root)?.mcpServers,
         ],
       };
     case 'codex':
