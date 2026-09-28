@@ -870,6 +870,7 @@ export async function storeKnowledgeItemDeduped(
       input.steps,
       conn,
       validationOptions,
+      input.supersedes,
     );
     await attachEvidenceToKnowledge(written.id, input.evidence, input);
 
@@ -996,6 +997,7 @@ export async function storeKnowledgeAtomsDeduped(
         atom.steps,
         conn,
         validationOptions,
+        atom.supersedes,
       );
       await attachEvidenceToKnowledge(item.id, atom.evidence, atom);
 

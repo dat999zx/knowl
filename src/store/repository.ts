@@ -138,6 +138,9 @@ export async function createKnowledgeItem(
   steps?: string[],
   dbConnection?: DbConnection,
   validationOptions?: KnowledgeWriteValidationOptions,
+  // The active item the caller retires right after this insert, in the same transaction. Not a
+  // column: it only exempts that one holder from the exclusive-key check below.
+  supersedes?: string,
 ): Promise<KnowledgeItem> {
   // `steps` travels as its own parameter, so it has to be joined back on or it is never scanned.
   validateKnowledgeWrite({ ...item, ...(steps !== undefined ? { steps } : {}) }, validationOptions);
@@ -211,7 +214,7 @@ export async function createKnowledgeItem(
 
   const operation = async (tx: any) => {
     if (newItem.conflictExclusive && newItem.conflictKey) {
-      const conflicts = await tx.select().from(schema.knowledgeItems).where(and(
+      const holders = await tx.select().from(schema.knowledgeItems).where(and(
         eq(schema.knowledgeItems.status, 'active'), eq(schema.knowledgeItems.conflictExclusive, true),
         eq(schema.knowledgeItems.conflictKey, newItem.conflictKey),
         // Second of the two sites that compare this column. `eq(column, null)` renders
@@ -222,6 +225,7 @@ export async function createKnowledgeItem(
           ? isNull(schema.knowledgeItems.conflictScope)
           : eq(schema.knowledgeItems.conflictScope, newItem.conflictScope),
       ));
+      const conflicts = holders.filter((row: any) => row.id !== supersedes);
       if (conflicts.length) throw new KnowledgeConflictError(conflicts.map((item: any) => ({ id: item.id, title: item.title })));
     }
     await tx.insert(schema.knowledgeItems).values(newItem);

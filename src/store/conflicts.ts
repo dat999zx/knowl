@@ -33,6 +33,12 @@ export async function checkKnowledgeConflict(
      * to rows that have already been loaded.
      */
     visibility?: 'repo' | 'workspace';
+    /**
+     * The holder this write retires in the same transaction, so not a second answer to the key.
+     * Counting it refused the natural correction -- "the database is now X", same key,
+     * `supersedes` the old answer -- which is the one deliberate way left to retire it.
+     */
+    supersedes?: string;
   },
   store: StoreHandle = localStore(),
 ) {
@@ -49,7 +55,7 @@ export async function checkKnowledgeConflict(
     scope === null ? isNull(schema.knowledgeItems.conflictScope) : eq(schema.knowledgeItems.conflictScope, scope),
     ...(input.visibility ? [eq(schema.knowledgeItems.visibility, input.visibility)] : []),
   ));
-  return rows.map(mapRowToKnowledgeItem);
+  return rows.filter(row => row.id !== input.supersedes).map(mapRowToKnowledgeItem);
 }
 
 export async function listActiveConflictKeys(store: StoreHandle = localStore()) {

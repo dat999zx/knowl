@@ -5,6 +5,7 @@ import { closeDb, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { resolveDuplicate, storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
+import { KnowledgeConflictError } from '../../src/core/errors.js';
 
 const TITLE = 'Production database engine';
 const held = (over: Partial<KnowledgeItem>): KnowledgeItem => ({
@@ -68,5 +69,66 @@ describe('the report X1 shape through both writers', () => {
     expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('active');
     expect(batch.supersededIds).toEqual([]);
     expect(batch.outcomes[0].nearDuplicateId).toBe(seed.item.id);
+  });
+});
+
+describe('supersedes retires an exclusive item from a write claiming the same key (#165 R3 F2)', () => {
+  const ROOT = path.resolve('./.knowl-exclusive-supersedes-test');
+  let projectId = '';
+  beforeAll(async () => {
+    await fs.rm(ROOT, { recursive: true, force: true });
+    await fs.mkdir(path.join(ROOT, '.knowl'), { recursive: true });
+    await initDb(ROOT);
+    projectId = (await repo.createProject(ROOT, 'exclusive-supersedes')).id;
+  });
+  afterAll(async () => { await closeDb(); await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {}); });
+
+  const seedKey = (conflictKey: string) => storeKnowledgeItemDeduped(projectId, {
+    category: 'decision', title: `Engine for ${conflictKey}`, content: 'Production runs on PostgreSQL 16.',
+    conflictKey, conflictExclusive: true,
+  });
+  const correction = (conflictKey: string, supersedes: string) => ({
+    category: 'decision' as const, title: `Engine for ${conflictKey}`, content: 'Production now runs on MySQL 8.',
+    conflictKey, conflictExclusive: true, supersedes,
+  });
+
+  it('single writer: the correction carrying the same key retires the named holder', async () => {
+    const seed = await seedKey('db.single');
+    const write = await storeKnowledgeItemDeduped(projectId, correction('db.single', seed.item.id));
+    expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('superseded');
+    const after = (await repo.getKnowledgeItem(write.item.id))!;
+    expect(after.status).toBe('active');
+    expect(after.conflictKey).toBe('db.single');
+    expect(after.conflictExclusive).toBe(true);
+  });
+
+  it('batch writer: the same', async () => {
+    const seed = await seedKey('db.batch');
+    const batch = await storeKnowledgeAtomsDeduped(projectId, [correction('db.batch', seed.item.id)]);
+    expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('superseded');
+    expect(batch.supersededIds).toEqual([seed.item.id]);
+    const after = (await repo.getKnowledgeItem(batch.outcomes[0].itemId))!;
+    expect(after.status).toBe('active');
+    expect(after.conflictKey).toBe('db.batch');
+  });
+
+  it('single writer: naming some other item does not clear the holder, and the write is refused', async () => {
+    const seed = await seedKey('db.other.single');
+    const bystander = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Unrelated bystander one', content: 'Logs rotate daily.',
+    });
+    await expect(storeKnowledgeItemDeduped(projectId, correction('db.other.single', bystander.item.id)))
+      .rejects.toBeInstanceOf(KnowledgeConflictError);
+    expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('active');
+  });
+
+  it('batch writer: naming some other item does not clear the holder, and the write is refused', async () => {
+    const seed = await seedKey('db.other.batch');
+    const bystander = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Unrelated bystander two', content: 'Metrics are scraped every 15 seconds.',
+    });
+    await expect(storeKnowledgeAtomsDeduped(projectId, [correction('db.other.batch', bystander.item.id)]))
+      .rejects.toBeInstanceOf(KnowledgeConflictError);
+    expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('active');
   });
 });
