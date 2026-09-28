@@ -2798,6 +2798,8 @@ program
 
           console.log(`Stored ${options.category} ${result.item.id}: ${result.item.title}`);
           if (result.superseded) console.log(`  Retired ${result.superseded.id}.`);
+          // No retire command to offer: `knowl supersede` reaches the project store only.
+          if (result.nearDuplicate) console.log(`  Left active beside "${result.nearDuplicate.title}" (${result.nearDuplicate.id}).`);
           if (options.local) console.log('  Marked local. It will not be published.');
         });
         console.log(note);
@@ -2855,6 +2857,9 @@ program
 
         console.log(`Stored ${options.category} ${result.item.id}: ${result.item.title}`);
         if (result.superseded) console.log(`  Retired ${result.superseded.id}.`);
+        // The result always carried this; the CLI dropped it, so a `--supersedes` that outranked a
+        // same-subject match printed only the retirement and left the match standing unannounced.
+        if (result.nearDuplicate) console.log(`  Left active beside "${result.nearDuplicate.title}" (${result.nearDuplicate.id}) — run \`knowl supersede ${result.nearDuplicate.id} ${result.item.id}\` if it replaces that one.`);
         if (options.local) console.log('  Marked local. It will not be published.');
       } finally {
         await closeDb();
