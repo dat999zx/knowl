@@ -52,13 +52,16 @@ describe('candidate promotion', () => {
       provenance: 'observed', confidence: 0.95,
     });
     const session = await startMemorySession({ title: 'Poisoned session' });
-    await promoteSessionCandidates(projectId, session.id, [{
+    const promoted = await promoteSessionCandidates(projectId, session.id, [{
       candidateType: 'decision', sessionId: session.id, category: 'fact',
       title: 'Database backup retention',
       content: 'Nightly database backups are retained for 1 day and encrypted at rest.',
       confidence: 0.9, evidence: [],
     }]);
     expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('active');
+    expect(promoted.itemIds).toHaveLength(1);
+    expect(promoted.itemIds[0]).not.toBe(seed.item.id);
+    expect((await repo.getKnowledgeItem(promoted.itemIds[0]))!.status).toBe('active');
   });
 
   it('a captured candidate still supersedes an unverified item', async () => {
