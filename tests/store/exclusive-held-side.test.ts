@@ -123,6 +123,27 @@ describe('supersedes retires an exclusive item from a write claiming the same ke
     expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('active');
   });
 
+  // The writer retires a qualifying duplicate ahead of the named item, so naming the holder must
+  // not exempt it when something else is what actually gets retired.
+  for (const [label, write] of [
+    ['single writer', (input: any) => storeKnowledgeItemDeduped(projectId, input)],
+    ['batch writer', (input: any) => storeKnowledgeAtomsDeduped(projectId, [input])],
+  ] as const) {
+    it(`${label}: naming the holder while a different duplicate would be retired is refused`, async () => {
+      const key = `db.decoy.${label.split(' ')[0]}`;
+      const holder = await seedKey(key);
+      const decoy = await storeKnowledgeItemDeduped(projectId, {
+        category: 'decision', title: `Reporting cache layer ${label}`, content: 'Reports read from a nightly snapshot.',
+      });
+      await expect(write({
+        category: 'decision', title: `Reporting cache layer ${label}`, content: 'Reports read from a live replica.',
+        conflictKey: key, conflictExclusive: true, supersedes: holder.item.id,
+      })).rejects.toBeInstanceOf(KnowledgeConflictError);
+      expect((await repo.getKnowledgeItem(holder.item.id))!.status).toBe('active');
+      expect((await repo.getKnowledgeItem(decoy.item.id))!.status).toBe('active');
+    });
+  }
+
   // The single writer's in-transaction check would refuse either way, so this pins the early one alone.
   it('checkKnowledgeConflict drops only the holder the write names', async () => {
     const seed = await seedKey('db.check');

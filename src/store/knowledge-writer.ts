@@ -642,6 +642,20 @@ export function resolveDuplicate(
   return 'supersede';
 }
 
+/**
+ * The id the exclusive-key checks may ignore: the item this write will retire, chosen exactly as
+ * `resolveSupersedeTarget` chooses it. Exempting the named `supersedes` id alone let a write name
+ * the holder while a different qualifying duplicate was the one retired, which left the holder
+ * active beside a new row claiming its key -- two answers to a key that allows one.
+ */
+function retiringId(
+  input: { supersedes?: string },
+  duplicate: KnowledgeItem | null,
+  resolution: DuplicateResolution | null,
+): string | undefined {
+  return duplicate && resolution === 'supersede' ? duplicate.id : input.supersedes;
+}
+
 // Resolve the item (if any) that a new write should mark superseded: the detected
 // duplicate when it qualifies, otherwise an explicitly named active item.
 async function resolveSupersedeTarget(
@@ -831,12 +845,13 @@ export async function storeKnowledgeItemDeduped(
 ): Promise<StoreKnowledgeResult> {
   assertConfidenceInRange(input.confidence, input.title);
   validationOptions ??= await securityForWrite();
-  const conflicts = await checkKnowledgeConflict(input);
-  if (conflicts.length) throw new KnowledgeConflictError(conflicts.map(item => ({ id: item.id, title: item.title })));
   const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, input);
   const resolution = duplicate
     ? resolveDuplicate(input, duplicate, await heldPayloadFor(input, duplicate), channel)
     : null;
+  const retiring = retiringId(input, duplicate, resolution);
+  const conflicts = await checkKnowledgeConflict({ ...input, supersedes: retiring });
+  if (conflicts.length) throw new KnowledgeConflictError(conflicts.map(item => ({ id: item.id, title: item.title })));
   if (duplicate && resolution === 'no-op' && !input.supersedes) {
     // The agent reached this conclusion again and the store already had it. That is the one
     // positive capture signal in the system, and until now it was computed and discarded.
@@ -870,7 +885,7 @@ export async function storeKnowledgeItemDeduped(
       input.steps,
       conn,
       validationOptions,
-      input.supersedes,
+      retiring,
     );
     await attachEvidenceToKnowledge(written.id, input.evidence, input);
 
@@ -997,7 +1012,7 @@ export async function storeKnowledgeAtomsDeduped(
         atom.steps,
         conn,
         validationOptions,
-        atom.supersedes,
+        retiringId(atom, duplicate, resolution),
       );
       await attachEvidenceToKnowledge(item.id, atom.evidence, atom);
 
