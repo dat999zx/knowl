@@ -72,6 +72,22 @@ describe('re-indexing a skill package', () => {
     expect((await repo.getKnowledgeItem(first.item.id))!.status).toBe('superseded');
   });
 
+  it('two agent skill atoms with free-text sources still supersede on the same subject', async () => {
+    // A skill's `source` is also an agent's free-text label -- 10 of 60 active skills in this
+    // repository's own store carry one, such as "verified in this workspace". Only package paths
+    // name a package, so only they can make two skills different ones.
+    const first = await storeKnowledgeItemDeduped(projectId, {
+      category: 'skill', title: 'Release build on Windows', source: 'verified in session A',
+      content: 'Build the release bundle on Windows with the npm script.', steps: ['Install', 'Build'],
+    });
+    const revised = await storeKnowledgeItemDeduped(projectId, {
+      category: 'skill', title: 'Release build on Windows with signing', source: 'observed on CI',
+      content: 'Build the release bundle on Windows with the npm script, then sign it.', steps: ['Install', 'Build', 'Sign'],
+    });
+
+    expect(revised.superseded?.id).toBe(first.item.id);
+  });
+
   it('differing sources do not keep two non-skill items apart', async () => {
     // The clamp is about packages. A fact restated from another document is still a correction.
     const first = await storeKnowledgeItemDeduped(projectId, {

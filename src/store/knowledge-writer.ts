@@ -666,10 +666,12 @@ export function resolveDuplicate(
   // Two file-backed skills from different packages are different skills, whatever their titles.
   // A skill's title is its package name, so the subset test below read "deploy-app-staging" as a
   // correction of "deploy-app" and retired it: two packages on disk, one index entry, and
-  // `recordSkillRun` unable to find the other. Agent-stored skill atoms carry no source and are
-  // still judged on their titles.
+  // `recordSkillRun` unable to find the other. Only a package path names a package: an agent's
+  // skill atom may carry a free-text `source` ("verified in this workspace"), and two of those
+  // are still judged on their titles.
   if (input.category === 'skill' && duplicate.category === 'skill'
-    && input.source && duplicate.source && input.source !== duplicate.source) return 'coexist';
+    && input.source?.startsWith('.knowl/skills/') && duplicate.source?.startsWith('.knowl/skills/')
+    && input.source !== duplicate.source) return 'coexist';
   if (normalizedIdentity(input) === normalizedIdentity(duplicate)) {
     const incoming: KnowledgePayload = {
       ...input,
