@@ -1,6 +1,9 @@
 import { ProjectConfig, CommitChange, EvidenceInput, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import * as repo from './repository.js';
-import { crossRepoOverlapForWrite, findLikelyDuplicateKnowledgeItem, heldPayloadFor, resolveDuplicate } from './knowledge-writer.js';
+import {
+  crossRepoOverlapForWrite, findLikelyDuplicateKnowledgeItem, heldPayloadFor, leftBeside, resolveDuplicate,
+  resolveSupersedeTarget,
+} from './knowledge-writer.js';
 import type { CrossRepoOverlap } from '../workspace/cross-repo-overlap.js';
 import { hasAiConfigured } from '../core/config.js';
 import { getCurrentGitCommit } from './drift.js';
@@ -89,11 +92,9 @@ export async function recordDecisionDirect(
   }, undefined, undefined, config?.security);
   await attachEvidenceToKnowledge(item.id, input.evidence);
 
-  let superseded: KnowledgeItem | null = resolution === 'supersede' ? existing : null;
-  if (!superseded && input.supersedes) {
-    const explicit = await repo.getKnowledgeItem(input.supersedes);
-    if (explicit && explicit.status === 'active') superseded = explicit;
-  }
+  // The same target rule as the other two writers. This path kept its own copy of it, so it kept
+  // the old order after they changed: a decision naming X that fuzzy-matched Y retired Y.
+  const superseded = await resolveSupersedeTarget(input, existing, resolution === 'supersede');
 
   const changes: CommitChange[] = [];
   if (superseded && superseded.id !== item.id) {
@@ -136,7 +137,7 @@ export async function recordDecisionDirect(
     action: 'inserted',
     item,
     superseded: superseded || undefined,
-    nearDuplicate: resolution === 'coexist' && existing ? existing : undefined,
+    nearDuplicate: leftBeside(existing, resolution, superseded),
     // This path writes through the repository rather than through knowledge-writer, so the
     // overlap check has to be requested explicitly. Omitting it left the cross-repo advisory
     // off for every decision, from both the CLI and the knowl_decide tool.

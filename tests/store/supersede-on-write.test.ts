@@ -264,10 +264,9 @@ describe('supersede on write', () => {
     // existing case names an id whose title the duplicate search would have matched anyway,
     // which is the one shape where the two cannot be told apart.
     //
-    // Written on unmutated code this failed first for a different reason, and that is worth
-    // recording: when the detected duplicate IS a same-subject match, it outranks the explicit
-    // id today, so `supersedes: X` retires the duplicate and leaves X active. Not changed here
-    // -- this test pins the unrelated-neighbour case, where the explicit id does win.
+    // Written on unmutated code this failed first for a different reason: a same-subject
+    // detected duplicate then outranked the explicit id. That order has since been reversed and
+    // is pinned in `supersede-target.test.ts`; this test pins the unrelated-neighbour case.
     const named = await storeKnowledgeItemDeduped(projectId, {
       category: 'architecture', title: 'Ingest runs on a cron',
       content: 'The nightly cron entry triggers the ingest job at 02:00.',
