@@ -92,6 +92,15 @@ Values written as ordinary words are not detected. A correction to a value the o
 mentions, such as narrowing "Node 18 and Node 20" to "Node 20", is kept side by side too; retire
 the old one with `supersedes`. Replayed over 140 real supersessions, this fires on none of them.
 
+### Creating a skill no longer retires a different skill, and `supersedes` retires the item it names
+
+A skill's index entry is titled with its package name, so creating `deploy-app-staging` read as
+a correction of `deploy-app` and retired it: both packages stayed on disk, but only one was
+indexed, and runs of the other were no longer counted. File-backed skills from different
+packages now stay side by side. Separately, a write that named one item in `supersedes` but
+closely matched another retired the match and left the named item active; the named item is now
+the one retired, and the match is reported as left beside it. `knowl decide` had the same fault.
+
 ## 5.23.1 — 2026-09-18
 
 ### Installing with pnpm produced a package that could not build or run
