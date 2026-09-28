@@ -1,15 +1,17 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-// Knowl is local-first, so the update check is deliberately unobtrusive: it only
-// runs from explicit user-facing commands (never hooks, MCP, or `serve`), caches
-// the answer for a day, times out fast, and fails silently when offline.
+// Knowl is local-first, so the update check is deliberately unobtrusive: the network is
+// touched only by `status`, `doctor`, and the MCP server at start (fire-and-forget, so no one
+// waits on it). Hooks read the cache only. The answer is cached for a day, the fetch times out
+// fast, and every failure is silent. The session-start card names a newer release once, and
+// `notifiedVersion` in the same cache file is what makes it once.
 const REGISTRY_BASE = 'https://registry.npmjs.org';
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 2_000;
 
 export type UpdateCheckResult = { current: string; latest: string; updateAvailable: boolean };
-type CacheEntry = { checkedAt: string; latest: string };
+type CacheEntry = { checkedAt: string; latest: string; notifiedVersion?: string };
 
 export function compareVersions(left: string, right: string): number {
   const parts = (value: string) => value.replace(/^v/, '').split('-')[0].split('.').map(part => Number(part) || 0);
@@ -44,6 +46,46 @@ async function readCache(cacheFile: string, ttlMs: number): Promise<string | nul
     return typeof entry.latest === 'string' ? entry.latest : null;
   } catch {
     return null;
+  }
+}
+
+async function readEntry(cacheFile: string): Promise<CacheEntry | null> {
+  try {
+    const entry = JSON.parse(await fs.readFile(cacheFile, 'utf-8')) as CacheEntry;
+    return entry && typeof entry.latest === 'string' ? entry : null;
+  } catch {
+    return null;
+  }
+}
+
+const cacheFileFor = (projectRoot: string): string => path.join(projectRoot, '.knowl', 'cache', 'update-check.json');
+
+/**
+ * What the cache says, whatever its age, and without a fetch: the hook path's only view of the
+ * registry. `notified` is whether the session card already named this release.
+ */
+export async function readCachedUpdate(
+  projectRoot: string,
+  currentVersion: string,
+): Promise<{ latest: string; updateAvailable: boolean; notified: boolean } | null> {
+  const entry = await readEntry(cacheFileFor(projectRoot));
+  if (!entry) return null;
+  return {
+    latest: entry.latest,
+    updateAvailable: compareVersions(entry.latest, currentVersion) > 0,
+    notified: entry.notifiedVersion === entry.latest,
+  };
+}
+
+/** Record that the session card named `version`, so it is not named again. */
+export async function markUpdateNotified(projectRoot: string, version: string): Promise<void> {
+  const cacheFile = cacheFileFor(projectRoot);
+  const entry = await readEntry(cacheFile);
+  if (!entry) return;
+  try {
+    await fs.writeFile(cacheFile, JSON.stringify({ ...entry, notifiedVersion: version }), 'utf-8');
+  } catch {
+    // a non-writable cache must not break the hook
   }
 }
 
@@ -85,13 +127,18 @@ export async function checkForUpdate(options: {
   now?: Date;
 }): Promise<UpdateCheckResult | null> {
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
-  const cacheFile = path.join(options.projectRoot, '.knowl', 'cache', 'update-check.json');
+  const cacheFile = cacheFileFor(options.projectRoot);
 
   let latest = await readCache(cacheFile, ttlMs);
   if (!latest) {
     latest = await fetchLatest(options.packageName, options.fetchImpl ?? fetch);
     if (latest) {
-      const entry: CacheEntry = { checkedAt: (options.now ?? new Date()).toISOString(), latest };
+      const previous = await readEntry(cacheFile);
+      const entry: CacheEntry = {
+        checkedAt: (options.now ?? new Date()).toISOString(),
+        latest,
+        ...(previous?.notifiedVersion ? { notifiedVersion: previous.notifiedVersion } : {}),
+      };
       try {
         await fs.mkdir(path.dirname(cacheFile), { recursive: true });
         await fs.writeFile(cacheFile, JSON.stringify(entry), 'utf-8');

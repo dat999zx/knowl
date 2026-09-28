@@ -9,7 +9,8 @@ import { getProjectByRootPath } from '../store/repository.js';
 import { adoptProject, scaffoldProject, scaffoldTarget, serveAutoInitAllowed } from './auto-init.js';
 import { registerTools, registerPrompts } from './tools.js';
 import { registerResources } from './resources.js';
-import { PACKAGE_VERSION } from '../version.js';
+import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
+import { checkForUpdate, isUpdateCheckEnabled } from '../core/version-check.js';
 import {
   KNOWL_MCP_TOOL_NAMES,
   mcpServerInstructions,
@@ -306,6 +307,14 @@ export async function startMcpServer(options: { host?: string } = {}): Promise<v
   // very first line a host log gets can name its repository instead of saying `unresolved`
   // and correcting itself later.
   process.stderr.write(serveBanner({ pid: process.pid, projectRoot, autoInitialized }) + '\n');
+
+  // Refreshes the update cache the session-start card reads. The server is long-lived, so no one
+  // waits on the fetch's timeout; hooks never fetch, they only read what this leaves behind.
+  void ready.then(() => {
+    if (projectRoot && config && isUpdateCheckEnabled(config)) {
+      void checkForUpdate({ packageName: PACKAGE_NAME, currentVersion: PACKAGE_VERSION, projectRoot }).catch(() => {});
+    }
+  });
 
   void ready.then(() => {
     // The second line is about the database, which the first could not wait for. `readyMs`
