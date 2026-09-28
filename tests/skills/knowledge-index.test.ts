@@ -89,12 +89,15 @@ describe('re-indexing a skill package', () => {
   });
 
   it('differing sources do not keep two non-skill items apart', async () => {
-    // The clamp is about packages. A fact restated from another document is still a correction.
+    // The clamp is about skill index entries. A fact that cites two different packages as its
+    // source is still a correction of the one before it.
     const first = await storeKnowledgeItemDeduped(projectId, {
-      category: 'fact', title: 'Build cache location', content: 'The build cache lives in the tmp directory.', source: 'docs/a.md',
+      category: 'fact', title: 'Build cache location', content: 'The build cache lives in the tmp directory.',
+      source: '.knowl/skills/build-a/SKILL.md',
     });
     const second = await storeKnowledgeItemDeduped(projectId, {
-      category: 'fact', title: 'Build cache location on CI', content: 'The build cache lives in the tmp directory on CI runners.', source: 'docs/b.md',
+      category: 'fact', title: 'Build cache location on CI', content: 'The build cache lives in the tmp directory on CI runners.',
+      source: '.knowl/skills/build-b/SKILL.md',
     });
 
     expect(second.superseded?.id).toBe(first.item.id);
