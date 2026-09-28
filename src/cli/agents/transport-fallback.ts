@@ -49,6 +49,24 @@ function locations(root: string, host: HookHost, home: string): Locations | null
 }
 
 /**
+ * The hooks file of `host` when it calls `knowl_hook` and no config the host reads registers the
+ * `knowl` server, otherwise null. Read-only: `knowl doctor` asks this, the session-start
+ * fallback acts on it.
+ */
+export async function hooksMissingMcpServer(root: string, host: HookHost, home: string = os.homedir()): Promise<string | null> {
+  if (!(hostProfile(host).mcpToolHookEvents ?? []).length) return null;
+  const where = locations(root, host, home);
+  if (!where) return null;
+  const hooks = await readTextIfExists(where.hooks);
+  if (!hooks?.includes(HOOK_TOOL_NAME)) return null;
+  for (const servers of where.servers) {
+    const registered = await servers().catch(() => undefined);
+    if (registered && typeof registered === 'object' && KNOWL_MCP_SERVER_KEY in registered) return null;
+  }
+  return where.hooks;
+}
+
+/**
  * The `mcp` transport's fallback, run at session start because that event is always a command
  * hook: it fires before MCP servers connect, so it is the one place Knowl runs whether or not the
  * server does. A host drops an `mcp_tool` hook with a non-blocking error when the server is not
@@ -60,16 +78,9 @@ function locations(root: string, host: HookHost, home: string): Locations | null
  */
 export async function checkMcpTransport(root: string, host: HookHost, home: string = os.homedir()): Promise<string | null> {
   try {
-    if (!(hostProfile(host).mcpToolHookEvents ?? []).length) return null;
-    const where = locations(root, host, home);
-    if (!where) return null;
-    const hooks = await readTextIfExists(where.hooks);
-    if (!hooks?.includes(HOOK_TOOL_NAME)) return null;
-    for (const servers of where.servers) {
-      const registered = await servers().catch(() => undefined);
-      if (registered && typeof registered === 'object' && KNOWL_MCP_SERVER_KEY in registered) return null;
-    }
-    await mergeHookConfig(where.hooks, process.platform, host, { transport: 'command' });
+    const hooks = await hooksMissingMcpServer(root, host, home);
+    if (!hooks) return null;
+    await mergeHookConfig(hooks, process.platform, host, { transport: 'command' });
     return `Knowl hooks fell back to command: the knowl MCP server is not registered for ${host}. Run knowl init ${host} to restore it.`;
   } catch {
     return null;

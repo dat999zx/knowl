@@ -16,6 +16,8 @@ import { assertKnowledgeDatabasePresent } from './database-presence.js';
 import { createAgentRegistry } from './agents/registry.js';
 import { cloudDoctorChecks } from '../cloud/doctor-checks.js';
 import type { DoctorRemedy } from './doctor-remedy.js';
+import type { HookHost } from '../core/host-hook-types.js';
+import { HOOK_TOOL_NAME } from '../core/hooks-transport.js';
 
 type DoctorStatus = 'OK' | 'WARN' | 'FAIL';
 
@@ -229,8 +231,21 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     });
 
     let configuredAgentCount = 0;
+    const { hooksMissingMcpServer } = await import('./agents/transport-fallback.js');
     for (const adapter of createAgentRegistry().values()) {
       try {
+        // Ahead of the `configured` gate on purpose: a host whose `knowl` server is gone reads as
+        // not configured, and that is exactly the host whose `mcp_tool` hooks now go nowhere.
+        // Session start falls back to command hooks on its own; this names why, and --fix puts
+        // the server back instead.
+        if (await hooksMissingMcpServer(root, adapter.name as HookHost).catch(() => null)) {
+          checks.push({
+            status: 'WARN',
+            message: `${adapter.name} hooks call ${HOOK_TOOL_NAME} but the knowl MCP server is not registered for it`,
+            fix: `run \`knowl init ${adapter.name}\``,
+            remedy: { kind: 'host-init', host: adapter.name },
+          });
+        }
         const detection = await adapter.detect(root);
         if (!detection.configured) continue;
         configuredAgentCount += 1;
