@@ -58,7 +58,7 @@ describe('runDeriveTruth (#165)', () => {
     expect((await repo.getKnowledgeItem(state.id))!.content).toBe('10 minutes');
   });
 
-  it('does not overwrite an exclusive state item, verified or not', async () => {
+  it('does not overwrite an unverified exclusive state item', async () => {
     const state = await repo.createKnowledgeItem(projectId, {
       category: 'state', title: 'queue broker', content: 'RabbitMQ',
       conflictKey: 'queue.broker', conflictExclusive: true,
