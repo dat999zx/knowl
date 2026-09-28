@@ -137,6 +137,28 @@ describe('retired verified facts (#165 R1)', () => {
     expect(retired.map(row => row.replacedBy?.status)).toEqual(['active', 'superseded']);
   });
 
+  it('demotes a retirement whose replacement was deprecated rather than superseded', async () => {
+    const live = (await seed('observed', 'Session cookie lifetime', '8 hours')).item.id;
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Session cookie lifetime', content: 'Session cookies expire after 90 days.',
+    });
+    const dropped = (await seed('observed', 'Backup retention window', '35 days')).item.id;
+    const swap = await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Backup retention window', content: 'Backups are retained for 2 days.',
+    });
+    await repo.updateKnowledgeItem(swap.item.id, { status: 'deprecated' });
+    const stamp = (id: string, hoursAgo: number) => getClient().execute({
+      sql: 'UPDATE knowledge_items SET updated_at = ? WHERE id = ?',
+      args: [new Date(Date.now() - hoursAgo * 3_600_000).toISOString(), id],
+    });
+    await stamp(live, 2);
+    await stamp(dropped, 1);
+
+    const { retired } = await scanContradictions();
+    expect(retired.map(row => row.retired.id)).toEqual([live, dropped]);
+    expect(retired[1].replacedBy?.status).toBe('deprecated');
+  });
+
   it('does not demote a verified fact retired with nothing named in its place', async () => {
     const orphan = (await seed('observed', 'Refresh token rotation', 'one use')).item.id;
     await repo.updateKnowledgeItem(orphan, { status: 'superseded' });
