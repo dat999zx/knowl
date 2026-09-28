@@ -663,6 +663,13 @@ export function resolveDuplicate(
   channel: WriteChannel = 'direct',
 ): DuplicateResolution {
   if (input.supersedes && input.supersedes === duplicate.id) return 'supersede';
+  // Two file-backed skills from different packages are different skills, whatever their titles.
+  // A skill's title is its package name, so the subset test below read "deploy-app-staging" as a
+  // correction of "deploy-app" and retired it: two packages on disk, one index entry, and
+  // `recordSkillRun` unable to find the other. Agent-stored skill atoms carry no source and are
+  // still judged on their titles.
+  if (input.category === 'skill' && duplicate.category === 'skill'
+    && input.source && duplicate.source && input.source !== duplicate.source) return 'coexist';
   if (normalizedIdentity(input) === normalizedIdentity(duplicate)) {
     const incoming: KnowledgePayload = {
       ...input,
