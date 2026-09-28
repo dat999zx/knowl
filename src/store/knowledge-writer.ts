@@ -106,7 +106,8 @@ const REVERSAL_CUES = [
  * THE FAILURE THIS EXISTS FOR (#165). A same-subject write retired whatever it matched, whoever
  * wrote it. A sentence a model lifted from a transcript or a pasted README retired a fact a person
  * had verified, exactly as an agent's deliberate correction would: 216 of 216 red-team writes, and
- * afterwards nothing listed the swap, because `scanContradictions` pairs only active items.
+ * afterwards nothing listed the swap, because `scanContradictions` paired only active items (it now
+ * lists recent verified retirements under `retired`).
  *
  * The payload cannot tell the two apart. Matched attack/correction pairs differ in none of seven
  * structural fields. The channel can, because it is chosen by the code path that calls the
@@ -624,8 +625,8 @@ export function resolveDuplicate(
   // figure active. Unset provenance is not a weak claim here, it is simply what 73% of all writes
   // look like, including the most carefully verified ones. `agent-query.ts` does demote an
   // unclaimed atom, but by a 0.98 multiplier -- a nudge in ranking is not the same judgement as
-  // refusing a supersession, and a pair left coexisting is invisible afterwards: `knowl_conflicts`
-  // reads only `conflictKey`/`conflictExclusive`, set on 3 of 937 active items.
+  // refusing a supersession, and a pair left coexisting is listed afterwards only by
+  // `knowl_conflicts` (`polarity`, or `sameSubject` when a side is verified), never by ranking.
   if (differsOnlyInPolarity(input, duplicate)) return 'coexist';
   // The author marked this the one active answer to its key. `checkKnowledgeConflict` only
   // stops a writer that volunteers the same key, so a write that simply left the key out
