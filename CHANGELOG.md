@@ -52,10 +52,17 @@ place, which previously kept no copy of the old content.
 
 `conflictExclusive` only refused a second write that carried the same key, so a same-subject write
 that simply omitted it retired the exclusive item anyway (#165). The two are now kept side by side;
-retire the exclusive one deliberately with `supersedes`, from a write that does not claim the same
-exclusive key (one that does is still refused while the old item is active). One of 140 real
-supersessions in this repository's own store would have needed that. `knowl decide` with AI
-configured merges through a model comparison instead and is not covered yet.
+retire the exclusive one deliberately with `supersedes`. The correction may carry the same
+exclusive key: it used to be refused because the item it named still held the key, and now only a
+holder it does not name refuses it. One of 140 real supersessions in this repository's own store
+would have needed that.
+
+### `knowl decide` with AI, and truth derivation, no longer rewrite an exclusive item
+
+With AI configured, `knowl decide` merges through a model comparison, and a model-judged update
+rewrote an exclusive item in place while an auto-resolved contradiction retired it. Truth
+derivation likewise overwrote an exclusive `state` item that nobody had verified (#165). Both now
+keep their result beside the exclusive item.
 
 ## 5.23.1 — 2026-09-18
 

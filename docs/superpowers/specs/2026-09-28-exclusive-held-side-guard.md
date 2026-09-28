@@ -55,11 +55,9 @@ different question (may this write carry this key at all), and it is correct for
   configured, on the direct channel, where R2 does not apply: a model-judged contradiction or
   update can still retire or rewrite an exclusive item there (`src/pipeline/merge.ts:99,136`).
   Truth derivation (`src/pipeline/derive.ts:90`) likewise rewrites an unverified exclusive `state`
-  item in place. Note both gaps in the PR body; the follow-up is `|| beforeItem.conflictExclusive`
-  at those checks.
-- **`supersedes` with the same key.** The deliberate retire only works from a write that does not
-  claim the same exclusive key: `checkKnowledgeConflict` and `repository.ts:213` refuse a same-key
-  write while the old item is active, `supersedes` or not. Unchanged here.
+  item in place. Closed by F1 of `2026-09-28-exclusive-followups.md`.
+- **`supersedes` with the same key.** The correction may carry the same exclusive key: both
+  key checks ignore exactly the item it names (F2 of `2026-09-28-exclusive-followups.md`).
 - **Explicit `supersede` / `knowl_update`** are deliberate retirements and stay allowed.
 
 ## Cost, measured on this repo's store
