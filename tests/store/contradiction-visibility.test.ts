@@ -147,7 +147,7 @@ describe('the motivating pair through a real write', () => {
     // (docs/evals/reversal-detector-recall.md). A dismissable note beside the writer's own
     // sentence survives that rate; a list an agent reads as a work queue does not.
     const detected = await scanContradictions();
-    expect(Object.keys(detected)).toEqual(['polarity']);
+    expect(Object.keys(detected)).toEqual(['polarity', 'retired', 'sameSubject']);
     expect((detected as Record<string, unknown>).reversalCandidates).toBeUndefined();
   });
 
