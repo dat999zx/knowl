@@ -77,4 +77,39 @@ describe('an explicit supersedes target outranks a detected duplicate', () => {
     expect((await repo.getKnowledgeItem(detected.id))!.status).toBe('active');
     expect(result.nearDuplicate?.id).toBe(detected.id);
   });
+
+  it('a duplicate that WAS retired is not also reported as left beside', async () => {
+    const { detected } = await seedPair('goal');
+    const written = await storeKnowledgeItemDeduped(projectId, incoming('goal'));
+
+    expect(written.superseded?.id).toBe(detected.id);
+    expect(written.nearDuplicate).toBeUndefined();
+  });
+
+  it('an explicit id that is no longer active falls back to the detected duplicate', async () => {
+    // Re-retiring it would overwrite the successor its history already names.
+    const { detected, named } = await seedPair('architecture');
+    await repo.updateKnowledgeItem(named.id, { status: 'superseded', supersededById: detected.id });
+    const written = await storeKnowledgeItemDeduped(projectId, { ...incoming('architecture'), supersedes: named.id });
+
+    expect(written.superseded?.id).toBe(detected.id);
+    expect((await repo.getKnowledgeItem(named.id))!.supersededById).toBe(detected.id);
+  });
+
+  it('a verbatim restatement that retires another item by id does not report its twin', async () => {
+    // Unchanged by the target reorder: a no-op duplicate was never reported, only written past.
+    const twin = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Queue driver', content: 'Background jobs run on Redis.',
+    });
+    const retired = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Worker transport', content: 'Workers poll a Postgres table for jobs.',
+    });
+    const written = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Queue driver', content: 'Background jobs run on Redis.', supersedes: retired.id,
+    });
+
+    expect(written.superseded?.id).toBe(retired.id);
+    expect((await repo.getKnowledgeItem(twin.id))!.status).toBe('active');
+    expect(written.nearDuplicate).toBeUndefined();
+  });
 });

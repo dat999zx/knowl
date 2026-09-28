@@ -72,6 +72,18 @@ describe('re-indexing a skill package', () => {
     expect((await repo.getKnowledgeItem(first.item.id))!.status).toBe('superseded');
   });
 
+  it('differing sources do not keep two non-skill items apart', async () => {
+    // The clamp is about packages. A fact restated from another document is still a correction.
+    const first = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Build cache location', content: 'The build cache lives in the tmp directory.', source: 'docs/a.md',
+    });
+    const second = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Build cache location on CI', content: 'The build cache lives in the tmp directory on CI runners.', source: 'docs/b.md',
+    });
+
+    expect(second.superseded?.id).toBe(first.item.id);
+  });
+
   it('a file-backed package does not retire an agent skill atom of the same subject either way round', async () => {
     // The clamp needs BOTH sides to carry a source. An agent atom with none is not a different
     // package, so the ordinary same-subject rule still decides it.
