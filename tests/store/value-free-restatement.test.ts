@@ -108,6 +108,14 @@ describe('dropsValuesOnly', () => {
     )).toBe(false);
   });
 
+  it('does not read a value as added when the held body already names it, only not as a value', () => {
+    // "Stripe" opens the held sentence, so it is no value there; mid-sentence it is one.
+    expect(dropsValuesOnly(
+      { content: 'Cards are handled by Stripe.' },
+      { content: 'Stripe handles cards and keeps receipts for 35 days.' },
+    )).toBe(true);
+  });
+
   it('also fires on a correction that narrows a list -- a known cost, not an oversight', () => {
     // The dropped "18" is what this correction retracts, so both stay active and the caller is
     // told through `nearDuplicate`; retiring the stale one takes an explicit `supersedes`.
