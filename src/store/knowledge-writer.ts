@@ -591,8 +591,9 @@ export function resolveDuplicate(
     & { evidence?: EvidenceInput[] | string[] },
   duplicate: KnowledgeItem,
   held?: KnowledgePayload,
-  // ponytail: defaults to direct so the four automatic call sites opt in; a fifth automatic
-  // channel added later must pass 'automatic' itself. See `WriteChannel` for the list.
+  // ponytail: defaults to direct, as do both writers and `MergeOptions.channel`, so each
+  // automatic caller opts in; a new automatic channel must pass 'automatic' itself. See
+  // `WriteChannel` for the list.
   channel: WriteChannel = 'direct',
 ): DuplicateResolution {
   if (input.supersedes && input.supersedes === duplicate.id) return 'supersede';
