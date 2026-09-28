@@ -64,6 +64,23 @@ describe('candidate promotion', () => {
     expect((await repo.getKnowledgeItem(promoted.itemIds[0]))!.status).toBe('active');
   });
 
+  // Nothing in production calls the single-item writer as automatic yet; this pins that the
+  // parameter reaches `resolveDuplicate` for the channel that someday does.
+  it('the single-item writer honours the automatic channel too', async () => {
+    const seed = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Database backup retention',
+      content: 'Nightly database backups are retained for 35 days and encrypted at rest.',
+      provenance: 'observed',
+    });
+    const written = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Database backup retention',
+      content: 'Nightly database backups are retained for 1 day and encrypted at rest.',
+    }, undefined, undefined, 'automatic');
+    expect(written.superseded).toBeUndefined();
+    expect(written.nearDuplicate?.id).toBe(seed.item.id);
+    expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('active');
+  });
+
   it('a captured candidate still supersedes an unverified item', async () => {
     const seed = await storeKnowledgeItemDeduped(projectId, {
       category: 'fact', title: 'Database backup retention',
