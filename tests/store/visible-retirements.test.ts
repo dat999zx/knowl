@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { closeDb, initDb } from '../../src/store/database.js';
+import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import { promoteSessionCandidates } from '../../src/store/candidate-promotion.js';
@@ -63,6 +63,31 @@ describe('retired verified facts (#165 R1)', () => {
     });
     const later = new Date(Date.now() + (RETIRED_WINDOW_DAYS + 1) * 86_400_000);
     expect((await scanContradictions({ now: later })).retired).toEqual([]);
+  });
+
+  it('lists the most recent retirement first, whatever order the items were created in', async () => {
+    const subjects = [
+      { title: 'Session cookie lifetime', held: 'Session cookies expire after 8 hours.', swap: 'Session cookies expire after 90 days.' },
+      { title: 'Backup retention window', held: 'Backups are retained for 35 days.', swap: 'Backups are retained for 2 days.' },
+    ];
+    const ids: string[] = [];
+    for (const s of subjects) {
+      ids.push((await storeKnowledgeItemDeduped(projectId, { category: 'constraint', title: s.title, content: s.held, provenance: 'observed' })).item.id);
+    }
+    for (const s of subjects) {
+      expect((await storeKnowledgeItemDeduped(projectId, { category: 'constraint', title: s.title, content: s.swap })).superseded).toBeDefined();
+    }
+    // Pinned clocks, the first-created retired earlier: two retirements in one test can land in
+    // the same millisecond, and store order alone would then pass without any sort.
+    const stamp = (id: string, hoursAgo: number) => getClient().execute({
+      sql: 'UPDATE knowledge_items SET updated_at = ? WHERE id = ?',
+      args: [new Date(Date.now() - hoursAgo * 3_600_000).toISOString(), id],
+    });
+    await stamp(ids[0], 2);
+    await stamp(ids[1], 1);
+
+    const { retired } = await scanContradictions();
+    expect(retired.map(row => row.retired.id)).toEqual([ids[1], ids[0]]);
   });
 });
 

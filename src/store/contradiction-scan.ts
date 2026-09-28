@@ -115,7 +115,10 @@ export async function scanContradictions(options: { now?: Date } = {}): Promise<
     .map(item => {
       const next = item.supersededById ? byId.get(item.supersededById) : undefined;
       return { kind: 'retired', retired: verifiedParty(item), replacedBy: next ? verifiedParty(next) : null, retiredAt: item.updatedAt };
-    });
+    })
+    // Newest first: the store returns creation order and MCP keeps five rows, so an injected swap
+    // of a recently created fact would sort last and be the row the truncation hides.
+    .sort((a, b) => b.retiredAt.localeCompare(a.retiredAt));
 
   return { polarity, retired, sameSubject };
 }
