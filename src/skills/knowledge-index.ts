@@ -25,10 +25,11 @@ async function activeSkillItem(name: string) {
 export async function indexSkillPackage(projectId: string, manifest: SkillManifest): Promise<void> {
   const source = skillSourcePath(manifest.name);
   const content = skillContent(manifest);
-  // The item mirrors a file, so the file always wins. Left to `resolveDuplicate`, a re-created
-  // package whose purpose lost a name or number ("on Node 22" -> gone) was clamped to coexist by
-  // the value-free restatement guard, leaving the stale copy active and `recordSkillRun` free to
-  // count runs against it. An unchanged purpose passes no id, so it can still be a no-op.
+  // The item mirrors a file, so a re-created package retires its own entry. Left to
+  // `resolveDuplicate`, a re-created package whose purpose lost a name or number ("on Node 22" ->
+  // gone) was clamped to coexist by the value-free restatement guard, leaving the stale copy
+  // active and `recordSkillRun` free to count runs against it. An unchanged purpose passes no id,
+  // so it can still be a no-op.
   const existing = await activeSkillItem(manifest.name);
   await storeKnowledgeItemDeduped(projectId, {
     category: 'skill',

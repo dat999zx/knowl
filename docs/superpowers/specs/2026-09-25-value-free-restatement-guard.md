@@ -44,8 +44,10 @@ nowhere in the held body; otherwise moving `Stripe` to the front of a sentence, 
 `postgresql` for `PostgreSQL`, would read as a drop. Titles are not inspected: the title is how
 the subject match was made, so the claim lives in the body.
 
-A correction that narrows a list (`Node 18 and Node 20` -> `Node 20`) also drops a value and adds
-none, so it is kept beside the held item rather than retiring it. The caller is told through
+A correction to a value the held body already mentions in some form also drops a value and adds
+none: narrowing a list (`Node 18 and Node 20` -> `Node 20`), or switching to an alternative the
+held body named (`Deploys go to Heroku. Fly was rejected.` -> `Deploys go to Fly.`). It is kept
+beside the held item rather than retiring it. The caller is told through
 `nearDuplicate` and retires the stale one with `supersedes`; no lexical rule separates this from
 N2.
 

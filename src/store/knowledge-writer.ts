@@ -370,11 +370,15 @@ function lowercasedWords(content: string): Set<string> {
  * added only when its word appears nowhere in the held one. Comparing value sets alone made
  * "Cards go via Stripe" -> "Stripe handles cards" read as dropping Stripe, because a
  * sentence-initial capital is not a value, and "PostgreSQL" -> "postgresql" read the same way.
+ * The other direction is symmetric: "Stripe handles cards for 35 days" -> "Cards are handled by
+ * Stripe" must not read as adding Stripe just because it opened the held sentence.
  *
- * It also fires on a correction that narrows a list ("Node 18 and Node 20" -> "Node 20"), where
- * the dropped value is exactly what is being retracted. That pair is kept side by side, which is
- * the cost of this rule: nothing is lost, the caller is told through `nearDuplicate`, and
- * retiring the stale one takes an explicit `supersedes`. No lexical test tells the two apart.
+ * It also fires on a correction to a value the held body already mentions in some form: narrowing
+ * a list ("Node 18 and Node 20" -> "Node 20"), or switching to an alternative the held body named
+ * ("Heroku. Fly was rejected." -> "Fly"). The dropped value is exactly what is being retracted.
+ * That pair is kept side by side, which is the cost of this rule: nothing is lost, the caller is
+ * told through `nearDuplicate`, and retiring the stale one takes an explicit `supersedes`. No
+ * lexical test tells these apart from N2.
  *
  * ponytail: lexical, so a value written as ordinary words ("two reviewer approvals", "always
  * redacted") is invisible to it -- 3 of the report's 12 subjects. Catching those needs meaning,

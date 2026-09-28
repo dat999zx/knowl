@@ -88,9 +88,9 @@ edit of the same fact rather than an undo.
 A same-subject write that removed a fact's numbers, versions or names and added none of its own
 used to supersede it, so "retained for 35 days" could be replaced by "retained for the value in
 the runbook" and the value vanished from results (#165). The two are now kept side by side.
-Values written as ordinary words are not detected. A correction that narrows a list ("Node 18
-and Node 20" to "Node 20") is kept side by side too; retire the old one with `supersedes`. Replayed over 140 real supersessions, this
-fires on none of them.
+Values written as ordinary words are not detected. A correction to a value the old text already
+mentions, such as narrowing "Node 18 and Node 20" to "Node 20", is kept side by side too; retire
+the old one with `supersedes`. Replayed over 140 real supersessions, this fires on none of them.
 
 ## 5.23.1 — 2026-09-18
 
