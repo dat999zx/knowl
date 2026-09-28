@@ -89,6 +89,22 @@ describe('retired verified facts (#165 R1)', () => {
     const { retired } = await scanContradictions();
     expect(retired.map(row => row.retired.id)).toEqual([ids[1], ids[0]]);
   });
+
+  it('says a replacement is no longer active once the swap has been undone', async () => {
+    const held = await seed('observed');
+    const swap = await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Access token lifetime', content: 'Access tokens must expire after 30 days.',
+    });
+    const undo = await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Access token lifetime', content: 'Access tokens must expire after 15 minutes, restored.',
+      provenance: 'observed', supersedes: swap.item.id,
+    });
+    expect(undo.superseded?.id).toBe(swap.item.id);
+
+    const row = (await scanContradictions()).retired.find(r => r.retired.id === held.item.id);
+    expect(row?.replacedBy?.id).toBe(swap.item.id);
+    expect(row?.replacedBy?.status).toBe('superseded');
+  });
 });
 
 describe('same-subject pairs with a verified side (#165 R1)', () => {

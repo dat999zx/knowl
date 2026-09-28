@@ -40,7 +40,7 @@
  * an inspection command a person runs on purpose, and the wrong one for the write path, which
  * is why the write path's advisory gates on its own cue scan instead of calling this.
  */
-import type { KnowledgeItem, KnowledgeProvenance } from '../core/types.js';
+import type { KnowledgeItem, KnowledgeProvenance, KnowledgeStatus } from '../core/types.js';
 import * as repo from './repository.js';
 import { duplicateTokens, isVerifiedProvenance, polarityTokensDiffer, sameSubjectTokens } from './knowledge-writer.js';
 
@@ -60,7 +60,14 @@ export type VerifiedParty = ContradictionParty & { provenance: KnowledgeProvenan
 export type RetiredVerified = {
   kind: 'retired';
   retired: VerifiedParty;
-  replacedBy: VerifiedParty | null;
+  /**
+   * `status` because the row outlives the swap: once someone undoes it by superseding the
+   * replacement, the row still lists it for the rest of the window, and without the status it
+   * reads as a live swap a second reader would "fix" again. The row itself stays, since an undo
+   * that restores the retired value and a write that doubles down on the replacement look the
+   * same from here.
+   */
+  replacedBy: (VerifiedParty & { status: KnowledgeStatus }) | null;
   /** The retired item's `updatedAt`, which the supersede update stamps. */
   retiredAt: string;
 };
@@ -114,7 +121,12 @@ export async function scanContradictions(options: { now?: Date } = {}): Promise<
       && Date.parse(item.updatedAt) >= since)
     .map((item): RetiredVerified => {
       const next = item.supersededById ? byId.get(item.supersededById) : undefined;
-      return { kind: 'retired', retired: verifiedParty(item), replacedBy: next ? verifiedParty(next) : null, retiredAt: item.updatedAt };
+      return {
+        kind: 'retired',
+        retired: verifiedParty(item),
+        replacedBy: next ? { ...verifiedParty(next), status: next.status } : null,
+        retiredAt: item.updatedAt,
+      };
     })
     // Newest first: the store returns creation order and MCP keeps five rows, so an injected swap
     // of a recently created fact would sort last and be the row the truncation hides.
