@@ -72,6 +72,15 @@ compared active items only, so the retired fact had nothing to pair with (#165).
 lists `observed`/`user_stated` items retired in the last 14 days with what replaced each, and
 same-subject active pairs with a verified side, which the new write guards keep side by side
 instead of superseding. On this repository's own store both lists hold a handful of rows.
+
+### `knowl conflicts` says whether a listed retirement still stands
+
+A retired fact stayed listed for its whole 14 days with what replaced it, even after someone had
+undone the swap by superseding that replacement, so it read as a live swap a second reader might
+"fix" again. Each retirement's replacement now carries its `status`, and rows whose replacement is
+still `active` come first; undone ones stay listed after them, newest first in each group. On this
+repository's own store, 2 of the 5 listed retirements have already been undone.
+
 ## 5.23.1 — 2026-09-18
 
 ### Installing with pnpm produced a package that could not build or run
