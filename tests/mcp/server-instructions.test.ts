@@ -88,7 +88,7 @@ describe('the MCP handshake card is built from the config the server actually ha
     const server = createMcpServer(null, null, null, null, {
       getProjectId: () => projectId,
       getProjectRoot: () => TEST_ROOT,
-      getConfig: () => ({ version: 1, security: { rejectSecrets: true, secretPatterns: [] } }),
+      getConfig: () => ({ version: 1, security: { rejectSecrets: true, secretPatterns: [] }, search: { transcripts: { enabled: false } } }),
       getInitError: () => null,
       whenReady: async () => {},
     });

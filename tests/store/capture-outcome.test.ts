@@ -45,8 +45,11 @@ describe('capture nudge mode', () => {
     // `enforce` blocks a stop, and config.json is a file people edit by hand. A typo must not
     // be the thing that starts interrupting them.
     expect(captureNudgeMode({ ...DEFAULT_CONFIG, capture: { nudge: 'yes' } as never })).toBe('off');
-    expect(captureNudgeMode({ ...DEFAULT_CONFIG })).toBe('off');
-    expect(captureNudgeMode(undefined)).toBe('off');
+  });
+
+  it('rests in shadow when unset', () => {
+    expect(captureNudgeMode({ ...DEFAULT_CONFIG })).toBe('shadow');
+    expect(captureNudgeMode(undefined)).toBe('shadow');
   });
 });
 

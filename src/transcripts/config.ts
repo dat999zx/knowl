@@ -23,5 +23,5 @@ export function isTranscriptSharingEnabled(config: ProjectConfig): boolean {
  * turn every miss into a second, slower miss.
  */
 export function isTranscriptFallbackEnabled(config: ProjectConfig): boolean {
-  return isTranscriptSearchEnabled(config) && config.search?.transcripts?.fallback === true;
+  return isTranscriptSearchEnabled(config) && config.search?.transcripts?.fallback !== false;
 }

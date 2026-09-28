@@ -25,36 +25,15 @@ const withImpact = (enabled: unknown): ProjectConfig =>
   ({ ...baseConfig(), impact: { enabled: enabled as boolean } });
 
 describe('change impact config gate', () => {
-  it('is off when the config says nothing', () => {
-    expect(isImpactEnabled(baseConfig())).toBe(false);
+  it('is on when the config says nothing', () => {
+    expect(isImpactEnabled(baseConfig())).toBe(true);
+    expect(isImpactEnabled({ ...baseConfig(), impact: {} })).toBe(true);
+    expect(isImpactEnabled(undefined)).toBe(true);
   });
 
-  it('is off when the impact block exists but is empty', () => {
-    expect(isImpactEnabled({ ...baseConfig(), impact: {} })).toBe(false);
-  });
-
-  it('is on only when explicitly set to true', () => {
-    expect(isImpactEnabled(withImpact(true))).toBe(true);
-  });
-
-  it('is off when explicitly set to false', () => {
+  it('is off only when explicitly set to false', () => {
     expect(isImpactEnabled(withImpact(false))).toBe(false);
-  });
-
-  it('is off with no config at all, rather than throwing on the hook path', () => {
-    expect(isImpactEnabled(undefined)).toBe(false);
-    expect(isImpactEnabled({ version: 1 } as ProjectConfig)).toBe(false);
-  });
-
-  it('requires the literal true, so a hand-edited config cannot half-enable it', () => {
-    // A config.json is a file people edit. Each of these is a plausible way to write "on"
-    // by hand, and each one has to read as off: an ambiguous config must never switch on a
-    // subsystem that gates task finishes.
-    expect(isImpactEnabled(withImpact('yes'))).toBe(false);
-    expect(isImpactEnabled(withImpact('true'))).toBe(false);
-    expect(isImpactEnabled(withImpact(1))).toBe(false);
-    expect(isImpactEnabled(withImpact(null))).toBe(false);
-    expect(isImpactEnabled(withImpact({}))).toBe(false);
+    expect(isImpactEnabled(withImpact(true))).toBe(true);
   });
 });
 
@@ -79,21 +58,20 @@ describe('where the default is allowed to live', () => {
   it('leaves an existing repo untouched when the defaults are merged in', () => {
     const existing = baseConfig();
     const upgraded = mergeConfigDefaults(existing as Record<string, any>) as ProjectConfig;
-    expect(isImpactEnabled(upgraded)).toBe(false);
     expect(upgraded.impact).toBeUndefined();
   });
 
   it('does not write the key into a freshly initialized repo either', () => {
     expect(NEW_PROJECT_CONFIG.impact).toBeUndefined();
-    expect(isImpactEnabled(NEW_PROJECT_CONFIG)).toBe(false);
+
   });
 
-  it('is settable from the CLI, defaulting to false in the editor', () => {
+  it('is settable from the CLI, defaulting to true in the editor', () => {
     // `knowl config set impact.enabled true` resolves the key through this table; an
     // unregistered key throws instead, so this is the whole opt-in path.
     const field = getConfigField('impact.enabled');
     expect(field.type).toBe('boolean');
-    expect(field.defaultValue).toBe(false);
+    expect(field.defaultValue).toBe(true);
     expect(field.parse('true')).toBe(true);
     expect(field.parse('false')).toBe(false);
     expect(() => field.parse('yes')).toThrow();
@@ -114,10 +92,11 @@ const withGate = (impact: Record<string, unknown>): ProjectConfig =>
   ({ ...baseConfig(), impact: impact as ProjectConfig['impact'] });
 
 describe('write gate mode', () => {
-  it('is off when nothing is configured', () => {
-    expect(impactGateMode(undefined)).toBe('off');
-    expect(impactGateMode(baseConfig())).toBe('off');
-    expect(impactGateMode(withGate({}))).toBe('off');
+  it('is shadow when nothing is configured', () => {
+    expect(impactGateMode(undefined)).toBe('shadow');
+    expect(impactGateMode(baseConfig())).toBe('shadow');
+    expect(impactGateMode(withGate({}))).toBe('shadow');
+    expect(impactGateMode(withGate({ enabled: true }))).toBe('shadow');
   });
 
   it('reads shadow and enforce when detection is on', () => {
@@ -136,8 +115,7 @@ describe('write gate mode', () => {
    */
   it('is off when the gate is armed but detection is not', () => {
     expect(impactGateMode(withGate({ enabled: false, gate: 'enforce' }))).toBe('off');
-    expect(impactGateMode(withGate({ gate: 'enforce' }))).toBe('off');
-    expect(impactGateMode(withGate({ enabled: 'yes', gate: 'enforce' }))).toBe('off');
+
   });
 
   it('treats anything unrecognised as off', () => {
@@ -149,15 +127,13 @@ describe('write gate mode', () => {
     expect(impactGateMode(withGate({ enabled: true, gate: true }))).toBe('off');
     expect(impactGateMode(withGate({ enabled: true, gate: 1 }))).toBe('off');
     expect(impactGateMode(withGate({ enabled: true, gate: null }))).toBe('off');
-    expect(impactGateMode(withGate({ enabled: true }))).toBe('off');
   });
 
   it('leaves isImpactEnabled alone', () => {
     // The two switches answer different questions, so arming the gate must not imply detection
     // and enabling detection must not imply a gate.
     expect(isImpactEnabled(withGate({ enabled: true, gate: 'enforce' }))).toBe(true);
-    expect(isImpactEnabled(withGate({ gate: 'enforce' }))).toBe(false);
-    expect(impactGateMode(withGate({ enabled: true }))).toBe('off');
+    expect(isImpactEnabled(withGate({ enabled: false, gate: 'enforce' }))).toBe(false);
   });
 
   it('stays out of DEFAULT_CONFIG, like every other key in this block', () => {
@@ -167,11 +143,11 @@ describe('write gate mode', () => {
     expect(NEW_PROJECT_CONFIG.impact).toBeUndefined();
   });
 
-  it('is settable from the CLI as an enum, defaulting to off', () => {
+  it('is settable from the CLI as an enum, defaulting to shadow', () => {
     const field = getConfigField('impact.gate');
     expect(field.type).toBe('enum');
     expect(field.values).toEqual(['off', 'shadow', 'enforce']);
-    expect(field.defaultValue).toBe('off');
+    expect(field.defaultValue).toBe('shadow');
     expect(field.parse('shadow')).toBe('shadow');
     expect(field.parse('enforce')).toBe('enforce');
     expect(() => field.parse('true')).toThrow();

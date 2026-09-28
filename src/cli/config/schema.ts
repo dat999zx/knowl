@@ -115,7 +115,7 @@ const IMPACT_GATE_MODES = ['off', 'shadow', 'enforce'] as const;
 // than shared: they mean different things (one refuses a write, one withholds a stop), and a
 // shared list is how a fourth mode added for one of them silently becomes settable on the other.
 const CAPTURE_NUDGE_MODES = ['off', 'shadow', 'enforce'] as const;
-const CHECKPOINT_MODES = ['off', 'ask'] as const;
+const CHECKPOINT_MODES = ['off', 'shadow', 'ask'] as const;
 const CAPTURE_SCOPES = ['conversation', 'turn'] as const;
 // The capture ladder again, and its own constant for the reason CAPTURE_NUDGE_MODES is: a card
 // is advice on a channel the agent already reads, a nudge withholds a stop, and a mode added
@@ -173,7 +173,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
   },
   {
     key: 'search.transcripts.enabled', category: 'Search', type: 'boolean',
-    parse: booleanValue, defaultValue: false,
+    parse: booleanValue, defaultValue: true,
     label: 'Transcript search',
     description: 'Search this repo\'s past Claude Code and Codex sessions. Builds a separate index the first time you run `knowl reindex --transcripts`.',
   },
@@ -185,7 +185,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
   },
   {
     key: 'search.transcripts.fallback', category: 'Search', type: 'boolean',
-    parse: booleanValue, defaultValue: false,
+    parse: booleanValue, defaultValue: true,
     label: 'Transcript fallback on query miss',
     description: 'A knowl_query that missed runs transcript search itself and reports a verified negative when both stores miss, instead of suggesting the second tool in prose. Has no effect unless transcript search is on.',
   },
@@ -259,51 +259,51 @@ export const CONFIG_FIELDS: ConfigField[] = [
     description: 'Folder holding your personal namespace database.',
   },
   {
-    // `defaultValue: false` lives here and nowhere else. The same literal in DEFAULT_CONFIG
+    // `defaultValue: true` lives here and nowhere else. The same literal in DEFAULT_CONFIG
     // would be merged into every config on the machine by `upgradeConfigDefaults`, writing
     // the key into repositories that never asked about it; here it only tells the editor
     // what "unset" means and what `config reset` restores.
     key: 'impact.enabled', category: 'Change impact', type: 'boolean',
-    parse: booleanValue, defaultValue: false,
+    parse: booleanValue, defaultValue: true,
     label: 'Change impact detection',
     description: 'Record which code each session read, and flag work whose code changed underneath it. Findings reach the agent through the change card and knowl_impact.',
   },
   {
-    // `defaultValue: 'off'` lives here and nowhere else, for the same reason as `impact.enabled`
+    // `defaultValue: 'shadow'` lives here and nowhere else, for the same reason as `impact.enabled`
     // above and with more at stake: the literal in DEFAULT_CONFIG would be merged into every
-    // config on the machine by `upgradeConfigDefaults`, which for this key means arming a write
+    // config on the machine by `upgradeConfigDefaults`, which for this key would mean arming a write
     // gate in every repository the user has ever initialized.
     key: 'impact.gate', category: 'Change impact', type: 'enum', values: IMPACT_GATE_MODES,
-    parse: enumValue(IMPACT_GATE_MODES), defaultValue: 'off',
+    parse: enumValue(IMPACT_GATE_MODES), defaultValue: 'shadow',
     label: 'Write gate',
     description: 'Before an edit lands on code this session read and has not seen since: shadow records what it would have refused and lets the write through, enforce refuses it and hands back what changed. Needs change impact detection on.',
   },
   {
-    // `defaultValue: 'off'` lives here and nowhere else, for the same reason as `impact.gate`
+    // `defaultValue: 'shadow'` lives here and nowhere else, for the same reason as `impact.gate`
     // above: the literal in DEFAULT_CONFIG would be merged into every config on the machine by
-    // `upgradeConfigDefaults`, which for this key means every repository the user has ever
-    // initialized starts withholding stops.
+    // `upgradeConfigDefaults`, which would stamp the value into every
+    // repository the user has ever initialized and hide what they actually chose.
     //
     // Note what this key does *not* control: the counting. `knowl status` reports capture health
     // whatever this says, because the number is what a decision to arm has to be made against.
     key: 'capture.nudge', category: 'Capture', type: 'enum', values: CAPTURE_NUDGE_MODES,
-    parse: enumValue(CAPTURE_NUDGE_MODES), defaultValue: 'off',
+    parse: enumValue(CAPTURE_NUDGE_MODES), defaultValue: 'shadow',
     label: 'Empty-session nudge',
     description: 'When a conversation has run for several turns and stored nothing durable: shadow records the nudge it would have sent, enforce withholds the stop once and asks the agent to store what it learned. Measurement runs either way.',
   },
   {
-    // `defaultValue: 'off'` here and nowhere else, exactly as `capture.nudge` above: written
-    // into DEFAULT_CONFIG it would arm event inspection in every repository on the machine.
+    // `defaultValue: 'shadow'` here and nowhere else, exactly as `capture.nudge` above: written
+    // into DEFAULT_CONFIG it would be stamped into every repository on the machine.
     key: 'capture.events', category: 'Capture', type: 'enum', values: CAPTURE_NUDGE_MODES,
-    parse: enumValue(CAPTURE_NUDGE_MODES), defaultValue: 'off',
+    parse: enumValue(CAPTURE_NUDGE_MODES), defaultValue: 'shadow',
     label: 'Event lessons',
     description: 'Watch for destructive commands and user corrections, and hold each as a pending lesson until a durable write settles it: shadow records what it would have said, enforce nudges mid-turn and withholds a stop over unstored lessons, at most three times per conversation.',
   },
   {
     key: 'capture.checkpoint', category: 'Capture', type: 'enum', values: CHECKPOINT_MODES,
-    parse: enumValue(CHECKPOINT_MODES), defaultValue: 'off',
+    parse: enumValue(CHECKPOINT_MODES), defaultValue: 'shadow',
     label: 'Assumption checkpoint',
-    description: 'Every 20 assistant turns, ask the session what it is currently relying on that it never verified -- a number taken from a summary rather than the source, a fix called done without re-running its proof. Asks in the free mid-turn channel and never withholds a stop.',
+    description: 'Every 20 assistant turns, ask the session what it is currently relying on that it never verified -- a number taken from a summary rather than the source, a fix called done without re-running its proof. shadow records the checkpoint it would have asked and asks nothing; ask puts the question in the free mid-turn channel. Never withholds a stop.',
   },
   {
     key: 'capture.scope', category: 'Capture', type: 'enum', values: CAPTURE_SCOPES,
@@ -346,11 +346,11 @@ export const CONFIG_FIELDS: ConfigField[] = [
     description: 'When this turn\'s writes changed code another live session had read: enforce withholds the stop once and asks the agent to tell that session, which costs a turn; shadow records what it would have asked. Off skips the check. Same ladder as capture.nudge, for the same reason: how often it would fire is measured before it is allowed to.',
   },
   {
-    // `command` first: it is the transport every install already runs on, and the one a typo
-    // falls back to. Not a ladder -- neither value costs the person anything a hook did not
+    // `command` first: it is the transport every host can run, and the one a typo falls back
+    // to. Unset is `mcp`. Not a ladder -- neither value costs the person anything a hook did not
     // already cost; what `mcp` spends is one entry in the server's tool list.
     key: 'hooks.transport', category: 'Hooks', type: 'enum', values: HOOK_TRANSPORTS,
-    parse: enumValue(HOOK_TRANSPORTS), defaultValue: 'command',
+    parse: enumValue(HOOK_TRANSPORTS), defaultValue: 'mcp',
     label: 'Hook transport',
     description: 'How Claude Code and Codex reach Knowl\'s lifecycle handler. command spawns a fresh `knowl agent-hook` process per event, ~230ms each, serialized against the agent\'s own tool calls. mcp routes the mid-session events through the `knowl_hook` tool on the MCP server the host already holds open, and registers that tool; session start stays a command hook because it fires before servers connect. Takes effect at the next `knowl init <host>` or `knowl doctor --fix`, which rewrite the hooks file, and the next server start.',
   },

@@ -65,14 +65,23 @@ describe('assumption checkpoint', () => {
     expect(reclaimed, 'a settled window is not re-asked').toBe(false);
   });
 
-  it('is off unless armed, and does not read a mode it was not given', () => {
-    expect(captureCheckpointMode(undefined)).toBe('off');
-    expect(captureCheckpointMode({} as ProjectConfig)).toBe('off');
-    expect(captureCheckpointMode({ capture: {} } as ProjectConfig)).toBe('off');
+  it('rests in shadow unless set, and does not read a mode it was not given', () => {
+    expect(captureCheckpointMode(undefined)).toBe('shadow');
+    expect(captureCheckpointMode({} as ProjectConfig)).toBe('shadow');
+    expect(captureCheckpointMode({ capture: {} } as ProjectConfig)).toBe('shadow');
+    expect(captureCheckpointMode({ capture: { checkpoint: 'shadow' } } as ProjectConfig)).toBe('shadow');
     expect(captureCheckpointMode({ capture: { checkpoint: 'off' } } as ProjectConfig)).toBe('off');
     expect(captureCheckpointMode({ capture: { checkpoint: 'ask' } } as ProjectConfig)).toBe('ask');
     // A typo falls back to the quieter reading, matching every other capture mode.
     expect(captureCheckpointMode({ capture: { checkpoint: 'enforce' } } as unknown as ProjectConfig)).toBe('off');
+  });
+
+  it('shadow records the window as settled, so it is claimed once and never asked', async () => {
+    expect(await claimAssumptionCheckpoint(CONVERSATION, 1, 'shadow')).toBe(true);
+    expect(await claimAssumptionCheckpoint(CONVERSATION, 1, 'shadow')).toBe(false);
+    const { getClient } = await import('../../src/store/database.js');
+    const rows = await getClient().execute("SELECT resolved FROM pending_lessons WHERE kind = 'assumption'");
+    expect(rows.rows.map(row => row.resolved)).toEqual(['shadow']);
   });
 
   it('counts in turns, and the first window needs a real stretch of work', () => {

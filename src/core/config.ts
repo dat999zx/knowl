@@ -392,7 +392,7 @@ export function hasAiConfigured(config?: ProjectConfig): boolean {
  * re-exports this so the feature's own callers are unchanged.
  */
 export function isTranscriptSearchEnabled(config: ProjectConfig): boolean {
-  return config.search?.transcripts?.enabled === true;
+  return config.search?.transcripts?.enabled !== false;
 }
 
 /**

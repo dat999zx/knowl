@@ -30,9 +30,10 @@ afterAll(async () => {
 });
 
 describe('the setting', () => {
-  it('reads command for anything but a literal mcp', () => {
-    expect(hooksTransport(null)).toBe('command');
-    expect(hooksTransport({ version: 1 } as ProjectConfig)).toBe('command');
+  it('reads mcp when unset, command for an explicit command or anything unrecognised', () => {
+    expect(hooksTransport(null)).toBe('mcp');
+    expect(hooksTransport({ version: 1 } as ProjectConfig)).toBe('mcp');
+    expect(hooksTransport({ version: 1, hooks: { transport: 'command' } } as ProjectConfig)).toBe('command');
     expect(hooksTransport({ version: 1, hooks: { transport: 'mcp' } } as ProjectConfig)).toBe('mcp');
     expect(hooksTransport({ version: 1, hooks: { transport: 'MCP' as any } } as ProjectConfig)).toBe('command');
   });

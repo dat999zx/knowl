@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveStorage } from '../../src/store/storage-roles.js';
-import { isTranscriptSearchEnabled, isTranscriptSharingEnabled } from '../../src/transcripts/config.js';
+import { isTranscriptFallbackEnabled, isTranscriptSearchEnabled, isTranscriptSharingEnabled } from '../../src/transcripts/config.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
 const baseConfig = (): ProjectConfig => ({
@@ -10,23 +10,20 @@ const baseConfig = (): ProjectConfig => ({
 });
 
 describe('transcript search config gate', () => {
-  it('is disabled when the config says nothing', () => {
-    expect(isTranscriptSearchEnabled(baseConfig())).toBe(false);
+  it('is enabled when the config says nothing', () => {
+    expect(isTranscriptSearchEnabled(baseConfig())).toBe(true);
+    expect(isTranscriptSearchEnabled({ ...baseConfig(), search: { vector: { enabled: true } } })).toBe(true);
   });
 
-  it('is disabled when the search block exists but transcripts does not', () => {
-    const config = { ...baseConfig(), search: { vector: { enabled: true } } };
+  it('is disabled only by an explicit false', () => {
+    const config = { ...baseConfig(), search: { transcripts: { enabled: false } } };
     expect(isTranscriptSearchEnabled(config)).toBe(false);
   });
 
-  it('requires the literal true, not any truthy value', () => {
-    const config = { ...baseConfig(), search: { transcripts: { enabled: 1 as unknown as boolean } } };
-    expect(isTranscriptSearchEnabled(config)).toBe(false);
-  });
-
-  it('is enabled only when explicitly set', () => {
-    const config = { ...baseConfig(), search: { transcripts: { enabled: true } } };
-    expect(isTranscriptSearchEnabled(config)).toBe(true);
+  it('falls back on query miss by default, and not when search is off', () => {
+    expect(isTranscriptFallbackEnabled(baseConfig())).toBe(true);
+    expect(isTranscriptFallbackEnabled({ ...baseConfig(), search: { transcripts: { fallback: false } } })).toBe(false);
+    expect(isTranscriptFallbackEnabled({ ...baseConfig(), search: { transcripts: { enabled: false, fallback: true } } })).toBe(false);
   });
 
   it('does not share by default, even when enabled', () => {
@@ -35,7 +32,7 @@ describe('transcript search config gate', () => {
   });
 
   it('shares only when both enabled and share are true', () => {
-    const shareOnly = { ...baseConfig(), search: { transcripts: { share: true } } };
+    const shareOnly = { ...baseConfig(), search: { transcripts: { enabled: false, share: true } } };
     expect(isTranscriptSharingEnabled(shareOnly)).toBe(false);
 
     const both = { ...baseConfig(), search: { transcripts: { enabled: true, share: true } } };

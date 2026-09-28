@@ -7,6 +7,7 @@ const NUDGE_MODES: readonly CaptureNudgeMode[] = ['off', 'shadow', 'enforce'];
 /**
  * How a session that stored nothing should be handled, resolved in one place.
  *
+ * Unset is `shadow`, which records what the nudge would have done and shows the agent nothing.
  * Anything unrecognised is `off`, following `impactGateMode`'s rule and for the same reason
  * stated in its own terms: `enforce` blocks a stop, which spends a turn the person did not ask
  * for, and `config.json` is a file people edit by hand. A typo must fail towards silence.
@@ -22,6 +23,7 @@ const NUDGE_MODES: readonly CaptureNudgeMode[] = ['off', 'shadow', 'enforce'];
  */
 export function captureNudgeMode(config?: ProjectConfig): CaptureNudgeMode {
   const mode = config?.capture?.nudge;
+  if (mode === undefined) return 'shadow';
   return NUDGE_MODES.includes(mode as CaptureNudgeMode) ? mode as CaptureNudgeMode : 'off';
 }
 
@@ -34,6 +36,7 @@ export function captureNudgeMode(config?: ProjectConfig): CaptureNudgeMode {
  */
 export function captureEventsMode(config?: ProjectConfig): CaptureNudgeMode {
   const mode = config?.capture?.events;
+  if (mode === undefined) return 'shadow';
   return NUDGE_MODES.includes(mode as CaptureNudgeMode) ? mode as CaptureNudgeMode : 'off';
 }
 
@@ -63,8 +66,9 @@ export const CHECKPOINT_EVERY_TURNS = 20;
  * Whether the periodic assumption checkpoint is armed.
  *
  * `ask` puts one question into the mid-turn channel every `CHECKPOINT_EVERY_TURNS` turns: what
- * is this session currently relying on that it never verified. Off by default; `knowl posture
- * maximal` arms it.
+ * is this session currently relying on that it never verified. `shadow`, the default, claims the
+ * same window and settles it as `shadow` in `pending_lessons` -- the ledger `capture.events`
+ * shadows into -- and asks nothing. `knowl posture maximal` arms `ask`.
  *
  * **It asks the agent rather than a judge model, and that is a deliberate departure from #184.**
  * That issue proposed sending the recent window to a separate model, and measured ~90% precision
@@ -77,6 +81,10 @@ export const CHECKPOINT_EVERY_TURNS = 20;
  * The honest cost of that swap: a self-audit is not the same instrument as an independent judge,
  * so #184's precision number does NOT transfer and this ships unmeasured on that axis.
  */
-export function captureCheckpointMode(config?: ProjectConfig): 'off' | 'ask' {
-  return config?.capture?.checkpoint === 'ask' ? 'ask' : 'off';
+export type CaptureCheckpointMode = 'off' | 'shadow' | 'ask';
+
+export function captureCheckpointMode(config?: ProjectConfig): CaptureCheckpointMode {
+  const mode = config?.capture?.checkpoint;
+  if (mode === undefined) return 'shadow';
+  return mode === 'ask' || mode === 'shadow' ? mode : 'off';
 }

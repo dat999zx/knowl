@@ -66,10 +66,10 @@ describe('the posture keys', () => {
     for (const { key } of MAXIMAL) await resetConfigValue(ROOT, key);
 
     const config = await loadConfig(ROOT);
-    expect(isTranscriptFallbackEnabled(config)).toBe(false);
-    expect(captureEventsMode(config)).toBe('off');
+    expect(isTranscriptFallbackEnabled(config)).toBe(true);
+    expect(captureEventsMode(config)).toBe('shadow');
     expect(captureScope(config)).toBe('conversation');
-    expect(await getEffectiveConfigValue(ROOT, 'capture.events')).toBe('off');
+    expect(await getEffectiveConfigValue(ROOT, 'capture.events')).toBe('shadow');
     expect(await getEffectiveConfigValue(ROOT, 'capture.scope')).toBe('conversation');
     // The fleet's shipped defaults are not `off` across the board: the digest is, the nudge
     // rests in shadow. A reset that read both as off would be a reset to a posture that never
@@ -90,7 +90,7 @@ describe('the posture keys', () => {
 
   it('fallback stays inert without transcripts enabled -- the AND is the contract', async () => {
     await writeConfig();
-    await setConfigValue(ROOT, 'search.transcripts.fallback', 'true');
+    await setConfigValues(ROOT, [{ key: 'search.transcripts.enabled', raw: 'false' }, { key: 'search.transcripts.fallback', raw: 'true' }]);
     expect(isTranscriptFallbackEnabled(await loadConfig(ROOT))).toBe(false);
   });
 

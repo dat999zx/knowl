@@ -34,7 +34,7 @@ describe('capture events mode', () => {
     expect(captureEventsMode({ ...DEFAULT_CONFIG, capture: { events: 'shadow' } })).toBe('shadow');
     expect(captureEventsMode({ ...DEFAULT_CONFIG, capture: { events: 'enforce' } })).toBe('enforce');
     expect(captureEventsMode({ ...DEFAULT_CONFIG, capture: { events: 'banana' } as never })).toBe('off');
-    expect(captureEventsMode(undefined)).toBe('off');
+    expect(captureEventsMode(undefined)).toBe('shadow');
   });
 });
 

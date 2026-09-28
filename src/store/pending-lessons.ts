@@ -247,9 +247,10 @@ export function renderLessonStopReason(lessons: PendingLesson[]): string {
  *
  * Recorded as a lesson rather than a bare counter so a durable write settles it like any other:
  * `resolveLessonsBefore` is kind-agnostic, so storing something after the checkpoint closes it.
- * It never reaches the stop gate -- see `BLOCKING_KINDS`.
+ * It never reaches the stop gate -- see `BLOCKING_KINDS`. `settled: 'shadow'` records the window
+ * already settled, the way `markPendingLessons` settles a shadowed event lesson.
  */
-export async function claimAssumptionCheckpoint(conversation: string, window: number): Promise<boolean> {
+export async function claimAssumptionCheckpoint(conversation: string, window: number, settled?: 'shadow'): Promise<boolean> {
   const id = (conversation ?? '').trim();
   if (!id) return false;
   const className = `checkpoint:${window}`;
@@ -261,9 +262,9 @@ export async function claimAssumptionCheckpoint(conversation: string, window: nu
     });
     if (existing.rows.length > 0) return false;
     await client.execute({
-      sql: `INSERT INTO pending_lessons (id, conversation, kind, class, snippet, observed_at)
-            VALUES (?, ?, 'assumption', ?, NULL, ?)`,
-      args: [crypto.randomUUID(), id, className, new Date().toISOString()],
+      sql: `INSERT INTO pending_lessons (id, conversation, kind, class, snippet, observed_at, resolved)
+            VALUES (?, ?, 'assumption', ?, NULL, ?, ?)`,
+      args: [crypto.randomUUID(), id, className, new Date().toISOString(), settled ?? null],
     });
     return true;
   } catch {

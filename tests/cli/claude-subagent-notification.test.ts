@@ -49,7 +49,9 @@ describe('Claude subagent change notification CLI', () => {
     const settings = JSON.parse(await fs.readFile(path.join(TEST_DIR, '.claude', 'settings.local.json'), 'utf8'));
     for (const event of ['SubagentStart', 'SubagentStop']) {
       const handlers = settings.hooks[event].flatMap((entry: any) => entry.hooks);
-      expect(handlers.some((hook: any) => hook.command.includes(`agent-hook claude ${event} `))).toBe(true);
+      // Command or, under the default `mcp` transport, an `mcp_tool` call to `knowl_hook`.
+      expect(handlers.some((hook: any) => hook.command?.includes(`agent-hook claude ${event} `)
+        || (hook.type === 'mcp_tool' && JSON.stringify(hook).includes(event)))).toBe(true);
     }
   }, 120_000);
 

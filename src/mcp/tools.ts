@@ -248,7 +248,7 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
     tools.push(...FLEET_TOOL_DEFINITIONS);
   }
 
-  // Off unless asked for, because it is the one tool here that costs a catalog entry for
+  // On unless the repo chose `command`: the one tool here that costs a catalog entry for
   // something no agent should ever call. See `core/hooks-transport.ts`.
   if (config && hooksTransport(config) === 'mcp') {
     tools.push(...HOOK_TOOL_DEFINITIONS);

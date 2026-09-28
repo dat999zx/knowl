@@ -35,7 +35,7 @@ const baseConfig = (): ProjectConfig => ({
 // the surface's response to the flag, and reading it off a file would also be testing the config
 // plumbing that registers `impact.enabled`, which is a different lane's work and a different bug.
 const IMPACT_ON: ProjectConfig = { ...baseConfig(), impact: { enabled: true } };
-const IMPACT_OFF: ProjectConfig = baseConfig();
+const IMPACT_OFF: ProjectConfig = { ...baseConfig(), impact: { enabled: false } };
 
 class InMemoryTransport {
   onclose?: () => void;

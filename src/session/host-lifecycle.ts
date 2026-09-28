@@ -1217,7 +1217,8 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       // on a write that was happening anyway. Counted in TURNS rather than tool events, because
       // the sessions worth checkpointing are long on reasoning and short on tools, which is the
       // same reason `MIN_SUBSTANTIVE_TURNS` counts turns.
-      const checkpointWindow = captureCheckpointMode(captureConfig ?? undefined) === 'ask'
+      const checkpointMode = captureCheckpointMode(captureConfig ?? undefined);
+      const checkpointWindow = checkpointMode !== 'off'
         ? await readCaptureOutcome(conversationKey(input))
           .then(outcome => {
             const turns = outcome?.turns ?? 0;
@@ -1226,6 +1227,11 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           })
           .catch(() => null)
         : null;
+      // Shadow claims the window it would have asked in, already settled, and says nothing: the
+      // same ledger and the same `shadow` word `capture.events` records a withheld lesson with.
+      if (checkpointMode === 'shadow' && checkpointWindow !== null) {
+        await claimAssumptionCheckpoint(conversationKey(input), checkpointWindow, 'shadow');
+      }
       const impact = input.status === 'failed' ? [] : await runToolEventImpact(input, started.session.id);
       await observeToolTouch(input, projectId);
       // The fleet sees every event, failed ones included: a failure is the signal that
@@ -1342,7 +1348,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
             // Only a durable write quiets this one, by zeroing the verdict itself.
             await resetHostSuccessfulToolCount(key);
             hostOutput = profile.midTurnContext(renderTurnCapturePrompt());
-          } else if (checkpointWindow !== null
+          } else if (checkpointMode === 'ask' && checkpointWindow !== null
             && await claimAssumptionCheckpoint(conversationKey(input), checkpointWindow)) {
             // Below every observed-event branch and above the drift reminder, deliberately.
             //

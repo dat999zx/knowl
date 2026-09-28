@@ -79,7 +79,7 @@ describe('the write-side negative signal, through the hook path', () => {
   it('counts turns even when no nudge is configured', async () => {
     // Measurement before mechanism: the number exists whether or not anyone armed anything,
     // because the decision to arm has to be made against it.
-    const { root, projectId } = await withRepo(undefined);
+    const { root, projectId } = await withRepo('off');
 
     const result = await talkFor(root, projectId, MIN_SUBSTANTIVE_TURNS);
 

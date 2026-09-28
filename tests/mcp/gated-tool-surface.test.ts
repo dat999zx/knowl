@@ -32,14 +32,14 @@ describe('the gated tool surface', () => {
     expect(knowlToolDefinitions(workspaceConfig).map(t => t.name)).not.toContain('knowl_cloud');
   });
 
-  it('offers knowl_hook only to a repo that routes its hooks over MCP', () => {
-    // The one tool no agent should call, so it is paid for only by repos that asked for it:
-    // MCP has no hidden-tool concept, and the lifecycle target is a catalog entry like any other.
+  it('offers knowl_hook to every configured repo unless it routes its hooks as commands', () => {
+    // The one tool no agent should call. MCP has no hidden-tool concept, so the lifecycle target
+    // is a catalog entry like any other; `mcp` is the default, and `command` opts out of it.
     const mcpHooks = { version: 1, hooks: { transport: 'mcp' } } as ProjectConfig;
     const commandHooks = { version: 1, hooks: { transport: 'command' } } as ProjectConfig;
     expect(knowlToolDefinitions(mcpHooks).map(t => t.name)).toContain('knowl_hook');
     expect(knowlToolDefinitions(commandHooks).map(t => t.name)).not.toContain('knowl_hook');
-    expect(knowlToolDefinitions({ version: 1 } as ProjectConfig).map(t => t.name)).not.toContain('knowl_hook');
+    expect(knowlToolDefinitions({ version: 1 } as ProjectConfig).map(t => t.name)).toContain('knowl_hook');
     expect(knowlToolDefinitions(null).map(t => t.name)).not.toContain('knowl_hook');
     expect(HOOK_TOOL_DEFINITIONS[0].description).toMatch(/an agent never should/i);
   });

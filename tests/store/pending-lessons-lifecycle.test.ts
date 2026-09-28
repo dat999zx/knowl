@@ -65,7 +65,7 @@ describe('the pending-lesson gate, through the hook path', () => {
   });
 
   it('records nothing at all when the feature is off', async () => {
-    const { root, projectId } = await withRepo(undefined);
+    const { root, projectId } = await withRepo('off');
     const result = await handleHostLifecycleEvent(projectId, command(root, 'pkill -f node'));
     expect(contextOf(result)).not.toContain('KNOWL LESSON');
     expect(await openPendingLessons(conversationKey(hook(root, {})))).toHaveLength(0);

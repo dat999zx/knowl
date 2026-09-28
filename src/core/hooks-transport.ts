@@ -16,13 +16,13 @@ import { loadConfig } from './config.js';
  * server already holds the database open and, on a store with local embeddings, has already
  * loaded the model; every one of those is re-established per hook process today.
  *
- * Opt-in and `command` by default, because moving costs a tool. An `mcp_tool` hook names a
- * tool on the server and MCP has no hidden-tool concept, so the lifecycle target appears in
- * `tools/list` — a 34th tool against a surface already measured at ~10.5K tokens of
- * definitions. Registering it only for a repo that turned this on is what answers that
- * objection: a repo that never sets the key pays nothing, and the session-start event stays a
- * `command` hook everywhere because the host's own reference says it fires before servers
- * finish connecting.
+ * `mcp` by default, and the cost is accepted: an `mcp_tool` hook names a tool on the server and
+ * MCP has no hidden-tool concept, so the lifecycle target appears in `tools/list` as one more
+ * catalog entry. Only hosts whose profile declares `mcpToolHookEvents` (Claude Code, Codex) get
+ * `mcp_tool` hooks; every other host keeps command hooks whatever this says. The session-start
+ * event stays a `command` hook everywhere because the host's own reference says it fires
+ * before servers finish connecting -- which is also where the fallback to `command` runs when
+ * the host has no `knowl` server registered.
  */
 export type HookTransport = 'command' | 'mcp';
 
@@ -35,9 +35,10 @@ export const HOOK_TRANSPORTS: readonly HookTransport[] = ['command', 'mcp'];
  */
 export const HOOK_TOOL_NAME = 'knowl_hook';
 
-/** Anything unrecognised falls to `command`, the transport every install already works on. */
+/** Unset is `mcp`; anything unrecognised falls to `command`, the transport every host works on. */
 export function hooksTransport(config?: ProjectConfig | null): HookTransport {
   const value = config?.hooks?.transport;
+  if (value === undefined) return 'mcp';
   return HOOK_TRANSPORTS.includes(value as HookTransport) ? value as HookTransport : 'command';
 }
 
@@ -48,5 +49,6 @@ export function hooksTransport(config?: ProjectConfig | null): HookTransport {
  * accident is a hooks file that names a tool the server was never told to register.
  */
 export async function resolveHookTransport(root: string): Promise<HookTransport> {
-  return hooksTransport(await loadConfig(root).catch(() => null));
+  const config = await loadConfig(root).catch(() => null);
+  return config ? hooksTransport(config) : 'command';
 }

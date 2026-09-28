@@ -3,13 +3,10 @@ import type { ProjectConfig } from '../core/types.js';
 /**
  * Whether this repository has asked for change-impact detection.
  *
- * Only the literal `true` counts. Everything else -- the key absent, the block absent, a
- * hand-edited `"yes"` or `1` or `null`, or no config loaded at all -- reads as off, because
- * every failure mode of this subsystem is a failure of turning it on. It captures read sets,
- * writes findings, and declines to record a clean `task_finish` while a certain-tier finding
- * is unresolved; a repository that switched all of that on because a config was malformed
- * would find its work loop gated by machinery nobody in it opted into, and the gate is
- * designed to be hard for an agent to ignore.
+ * On unless the literal `false` says otherwise, as `search.pathsChanged` is: detection records
+ * read sets and writes findings, and the part that can get in the way -- the write gate -- has
+ * its own switch below, which rests in `shadow`. The key stays out of DEFAULT_CONFIG so an
+ * upgrade does not stamp it into every config on the machine.
  *
  * The argument is optional rather than required because the callers are on the hook and
  * lifecycle paths, where the config is only present once a project root resolved. Making
@@ -18,7 +15,7 @@ import type { ProjectConfig } from '../core/types.js';
  * the same reason.
  */
 export function isImpactEnabled(config?: ProjectConfig): boolean {
-  return config?.impact?.enabled === true;
+  return config?.impact?.enabled !== false;
 }
 
 export type ImpactGateMode = 'off' | 'shadow' | 'enforce';
@@ -35,16 +32,16 @@ const GATE_MODES: readonly ImpactGateMode[] = ['off', 'shadow', 'enforce'];
  * fire while reporting that it can. Answering that here rather than at each call site means one
  * place can be wrong about it instead of three.
  *
- * Anything unrecognised is `off`, following `isImpactEnabled`'s rule and for a sharper reason. A
- * malformed value there switches on machinery nobody asked for; a malformed value here can take
- * away somebody's ability to write a file, and a `config.json` is a file people edit by hand.
+ * Unset is `shadow`; anything unrecognised is `off`. A malformed value here can take away
+ * somebody's ability to write a file, and a `config.json` is a file people edit by hand.
  *
- * `shadow` is where this is expected to sit for a while: it computes the real verdict and
+ * `shadow` is the default and where this is expected to sit for a while: it computes the real verdict and
  * withholds the refusal, which is how plan §9's ≥95%-over-≥40-findings bar gets measured before
  * anything is allowed to block.
  */
 export function impactGateMode(config?: ProjectConfig): ImpactGateMode {
   if (!isImpactEnabled(config)) return 'off';
   const mode = config?.impact?.gate;
+  if (mode === undefined) return 'shadow';
   return GATE_MODES.includes(mode as ImpactGateMode) ? mode as ImpactGateMode : 'off';
 }
