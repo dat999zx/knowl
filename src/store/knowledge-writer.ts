@@ -339,13 +339,19 @@ export function polarityTokensDiffer(left: Set<string>, right: Set<string>): boo
 function valueTokens(content: string): Set<string> {
   const values = new Set<string>();
   for (const sentence of content.split(/(?<=[.!?])\s+|\n+/)) {
-    const words = sentence.match(/[A-Za-z0-9_][A-Za-z0-9_./-]*/g) ?? [];
-    words.forEach((raw, index) => {
-      const word = raw.replace(/\.+$/, '');
+    bodyWords(sentence).forEach((word, index) => {
       if (/\d/.test(word) || (index > 0 && /[A-Z]/.test(word))) values.add(word.toLowerCase());
     });
   }
   return values;
+}
+
+function bodyWords(text: string): string[] {
+  return (text.match(/[A-Za-z0-9_][A-Za-z0-9_./-]*/g) ?? []).map(raw => raw.replace(/\.+$/, ''));
+}
+
+function lowercasedWords(content: string): Set<string> {
+  return new Set(bodyWords(content).map(word => word.toLowerCase()));
 }
 
 /**
@@ -354,11 +360,21 @@ function valueTokens(content: string): Set<string> {
  * THE FAILURE THIS EXISTS FOR (#165, N2). "Nightly database backups are retained for 35 days"
  * was retired by the same sentence with "35 days" replaced by "the value documented in the ops
  * runbook": 36 of 36 red-team writes, after which "35 days" was nowhere in the top three results.
- * The write asserts nothing false. It is emptier, and superseding trades the value for its
+ * That write asserts nothing false. It is emptier, and superseding trades the value for its
  * absence. Honest agents produce the same shape when they paraphrase a precise fact vaguely.
  *
  * NOT A SECURITY BOUNDARY. An attacker who swaps the value instead of dropping it adds a value
- * token and is not caught here; that is the channel guard's job.
+ * token and is not caught here; see #165 R2 for the trust gap that leaves.
+ *
+ * A value counts as dropped only when its word is gone from the incoming body entirely, and as
+ * added only when its word appears nowhere in the held one. Comparing value sets alone made
+ * "Cards go via Stripe" -> "Stripe handles cards" read as dropping Stripe, because a
+ * sentence-initial capital is not a value, and "PostgreSQL" -> "postgresql" read the same way.
+ *
+ * It also fires on a correction that narrows a list ("Node 18 and Node 20" -> "Node 20"), where
+ * the dropped value is exactly what is being retracted. That pair is kept side by side, which is
+ * the cost of this rule: nothing is lost, the caller is told through `nearDuplicate`, and
+ * retiring the stale one takes an explicit `supersedes`. No lexical test tells the two apart.
  *
  * ponytail: lexical, so a value written as ordinary words ("two reviewer approvals", "always
  * redacted") is invisible to it -- 3 of the report's 12 subjects. Catching those needs meaning,
@@ -367,9 +383,11 @@ function valueTokens(content: string): Set<string> {
 export function dropsValuesOnly(incoming: { content: string }, held: { content: string }): boolean {
   const heldValues = valueTokens(held.content);
   if (heldValues.size === 0) return false;
-  const incomingValues = valueTokens(incoming.content);
-  for (const value of incomingValues) if (!heldValues.has(value)) return false;
-  return incomingValues.size < heldValues.size;
+  const heldWords = lowercasedWords(held.content);
+  for (const value of valueTokens(incoming.content)) if (!heldWords.has(value)) return false;
+  const incomingWords = lowercasedWords(incoming.content);
+  for (const value of heldValues) if (!incomingWords.has(value)) return true;
+  return false;
 }
 
 /** A sentence of an incoming write that contains a reversal cue, with its own token set. */

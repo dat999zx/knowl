@@ -90,6 +90,32 @@ describe('dropsValuesOnly', () => {
     )).toBe(false);
   });
 
+  it('does not read a value as dropped when it moved to the front of a sentence', () => {
+    expect(dropsValuesOnly(
+      { content: 'Stripe handles cards.' },
+      { content: 'Cards go via Stripe.' },
+    )).toBe(false);
+  });
+
+  it('does not read a value as dropped when only its case changed', () => {
+    expect(dropsValuesOnly(
+      { content: 'The store uses postgresql.' },
+      { content: 'The store uses PostgreSQL.' },
+    )).toBe(false);
+    expect(dropsValuesOnly(
+      { content: 'Retention: backups are kept 35 days.' },
+      { content: 'Retention: Backups are kept 35 days.' },
+    )).toBe(false);
+  });
+
+  it('also fires on a correction that narrows a list -- a known cost, not an oversight', () => {
+    // The dropped "18" is what this correction retracts, so both stay active and the caller is
+    // told through `nearDuplicate`; retiring the stale one takes an explicit `supersedes`.
+    expect(dropsValuesOnly(
+      { content: 'Tests run on Node 20.' },
+      { content: 'Tests run on Node 18 and Node 20.' },
+    )).toBe(true);
+  });
 });
 
 const held = (content: string): KnowledgeItem => ({
