@@ -78,8 +78,10 @@ export async function findCrossRepoOverlap(input: {
 
       // An exclusive key held by another repo is a genuine contradiction, not a near miss.
       // `visibility` goes into the query rather than being checked on the way out: a peer's
-      // private row must not be read into this process at all.
-      const conflicts = await checkKnowledgeConflict({ ...input.item, visibility: 'workspace' }, store);
+      // private row must not be read into this process at all. The key fields only: the writers
+      // hand in their whole input, and its `supersedes` names a local row, not a peer's answer.
+      const { conflictKey, conflictScope, conflictExclusive } = input.item;
+      const conflicts = await checkKnowledgeConflict({ conflictKey, conflictScope, conflictExclusive, visibility: 'workspace' }, store);
       for (const conflict of conflicts) {
         found.push({ repo: peer.name, id: conflict.id, title: conflict.title, kind: 'conflict', kin: isKin, role: peer.role });
       }

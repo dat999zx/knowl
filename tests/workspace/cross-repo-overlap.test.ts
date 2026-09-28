@@ -159,6 +159,37 @@ describe('cross-repo overlap', () => {
     }
   });
 
+  it('a local supersedes does not hide a peer holder that shares its id', async () => {
+    // The writers hand the whole input here, `supersedes` included. That exemption is for the
+    // local row this write retires; a peer's copy under the same id is still that repo's answer.
+    await initDb(WEB);
+    await getClient().execute(
+      "UPDATE knowledge_items SET conflict_key = 'session.store', conflict_exclusive = 1, visibility = 'workspace'",
+    );
+    const held = (await getClient().execute('SELECT id FROM knowledge_items')).rows[0].id as string;
+    await closeDb();
+
+    await initDb(API);
+    try {
+      const workspace = (await resolveWorkspace(API))!;
+      const overlap = await findCrossRepoOverlap({
+        workspace,
+        item: {
+          category: 'decision',
+          title: 'Session store is memcached',
+          content: 'Sessions are kept in memcached.',
+          conflictKey: 'session.store',
+          conflictExclusive: true,
+          supersedes: held,
+        } as Parameters<typeof findCrossRepoOverlap>[0]['item'],
+      });
+
+      expect(overlap.some(entry => entry.kind === 'conflict' && entry.id === held)).toBe(true);
+    } finally {
+      await closeDb();
+    }
+  });
+
   it('does not report an exclusive conflict the other repo kept private', async () => {
     // The privacy rule applies to the conflict path as well as the search path, and it has
     // to be a SQL predicate: reading a private row and then discarding it still means a
