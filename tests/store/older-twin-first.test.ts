@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { olderTwinFirst } from '../../src/store/agent-query.js';
+import { contestedOnPage, olderTwinFirst, scoreCandidates } from '../../src/store/agent-query.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
 
 const item = (over: Partial<KnowledgeItem>): KnowledgeItem => ({
@@ -66,5 +66,25 @@ describe('olderTwinFirst (#323)', () => {
   it('ignores items that are not active', () => {
     const retired = { ...verified, status: 'superseded' } as KnowledgeItem;
     expect(ids(olderTwinFirst([row(planted, 0.9), row(retired, 0.4)]))).toEqual(['planted', 'verified']);
+  });
+});
+
+describe('contestedOnPage (#323 option 3)', () => {
+  it('names both items of a kept-beside pair and nothing else', () => {
+    expect([...contestedOnPage([row(verified, 0.9), row(other, 0.5), row(planted, 0.4)])].sort()).toEqual(['planted', 'verified']);
+  });
+
+  it('is empty when the older item is unverified, or the pair is across repos', () => {
+    const unverified = { ...verified, provenance: null } as KnowledgeItem;
+    expect(contestedOnPage([row(unverified, 0.9), row(planted, 0.4)]).size).toBe(0);
+    expect(contestedOnPage([row(verified, 0.9), { result: { item: planted, repo: 'peer' }, score: 0.4 }]).size).toBe(0);
+  });
+
+  it('reaches the ranker explanation on both rows, and only on them', () => {
+    const rows = scoreCandidates([
+      { item: planted, bm25Rank: 1 }, { item: other, bm25Rank: 2 }, { item: verified, bm25Rank: 3 },
+    ], { query: 'database backup retention', limit: 3, usingVector: false, minRelevance: null });
+    expect(rows.map(r => r.item.id).slice(0, 2)).toEqual(['verified', 'planted']);
+    expect(rows.filter(r => r.explanation.contested).map(r => r.item.id).sort()).toEqual(['planted', 'verified']);
   });
 });

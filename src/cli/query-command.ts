@@ -19,7 +19,7 @@ import { configuredNamespaces, globalOnlyNamespaces, queryLayeredKnowledge } fro
  */
 export const CLI_QUERY_LIMIT = 20;
 
-export type CliQueryItem = KnowledgeItem & { repo?: string; score?: number; cosine?: number; abstained?: boolean; namespace?: string };
+export type CliQueryItem = KnowledgeItem & { repo?: string; score?: number; cosine?: number; abstained?: boolean; contested?: boolean; namespace?: string };
 
 export type CliQueryResult = {
   /**
@@ -58,9 +58,9 @@ function flat(items: CliQueryItem[]): CliQueryResult {
  * item, and the two numbers a reader acts on are these. `--as-of` carries neither, because
  * historical reconstruction does not run through the ranker at all.
  */
-function withRankerVerdict<T extends { explanation?: { finalScore?: number; abstained?: boolean; cosine?: number } }>(
+function withRankerVerdict<T extends { explanation?: { finalScore?: number; abstained?: boolean; contested?: boolean; cosine?: number } }>(
   entry: T,
-): Omit<T, 'explanation'> & { score?: number; cosine?: number; abstained?: boolean } {
+): Omit<T, 'explanation'> & { score?: number; cosine?: number; abstained?: boolean; contested?: boolean } {
   const { explanation, ...item } = entry;
   return {
     ...item,
@@ -70,6 +70,7 @@ function withRankerVerdict<T extends { explanation?: { finalScore?: number; abst
     // min-max scaled across this page, so on a two-row page its top is 1.0 regardless.
     ...(typeof explanation?.cosine === 'number' ? { cosine: Number(explanation.cosine.toFixed(3)) } : {}),
     ...(explanation?.abstained ? { abstained: true } : {}),
+    ...(explanation?.contested ? { contested: true } : {}),
   };
 }
 

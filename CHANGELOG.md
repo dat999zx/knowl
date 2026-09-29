@@ -17,6 +17,9 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   arrives through the automatic channel also ranks below the fact it corrects until someone
   resolves the pair. Recording the write channel (#165 R4) would remove that. Written by
   [@Adam13y](https://github.com/Adam13y).
+- A page that holds such a pair now says so (#323, option 3). The two rows carry `contested: true`
+  in the ranker explanation and `knowl query` output, and `knowl_query` adds a `CONTESTED:` note
+  naming both ids. It is judged on the returned page only, so a query does not scan the store.
 
 ## 5.24.0 — 2026-09-28
 
