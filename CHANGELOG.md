@@ -3,6 +3,21 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Search
+
+- A planted item kept beside a verified fact no longer ranks above it (#323). When two active items
+  share a repo, a category and a same-subject title (and are not a polarity pair), the older one
+  is verified, and the newer one outranks it, the older one moves to directly above it. Scores are
+  untouched, so a row's number still means what it did, but a page is no longer always in
+  descending score order for such a pair. Nothing is hidden, and `knowl conflicts` still lists the
+  pair. On the red-team harness, an automatic write that contradicts a verified fact was top-1 in
+  3 to 21 of 36 runs per attack shape and is now 0 of 36. The cost: a genuine correction that
+  arrives through the automatic channel also ranks below the fact it corrects until someone
+  resolves the pair. Recording the write channel (#165 R4) would remove that. Written by
+  [@Adam13y](https://github.com/Adam13y).
+
 ## 5.24.0 — 2026-09-28
 
 ### Red-team fixes (#165)
