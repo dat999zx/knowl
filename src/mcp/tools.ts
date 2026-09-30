@@ -1292,14 +1292,14 @@ export function registerTools(
           });
         }
         // Two answers on one page (#323): a same-subject pair where the older item is verified.
-        // The ranker already puts the older first; this is for the reader that would otherwise
-        // never learn there was a second answer.
+        // The ranker already puts the older first (polarity pairs excepted); this is for the reader
+        // that would otherwise never learn there was a second answer.
         const contested = resolvedItems.filter(item => (item.explanation as { contested?: boolean } | undefined)?.contested);
         if (contested.length) {
           blocks.push({
             type: 'text',
-            text: `CONTESTED: items ${contested.map(item => item.id).join(' and ')} are the same subject and both active. `
-              + 'The older one is verified; the newer one was kept beside it, not confirmed against it. Trust the older one unless you can check, and `knowl_conflicts` lists the pair.',
+            text: `CONTESTED: ${contested.map(item => item.id).join(', ')} ${contested.length > 1 ? 'each have' : 'has'} a same-subject item still active beside ${contested.length > 1 ? 'them' : 'it'}, and the older of each pair is verified. `
+              + 'They may be a duplicate, a correction or a planted claim; nothing here says which. Check before acting, and `knowl_conflicts` lists the pair.',
           });
         }
         // The floor's verdict, in words. It used to be delivered by returning nothing at all,

@@ -70,6 +70,17 @@ describe('olderTwinFirst (#323)', () => {
 });
 
 describe('contestedOnPage (#323 option 3)', () => {
+  it('flags a polarity twin even though the ranker leaves it in place', () => {
+    const negated = item({ id: 'negated', title: 'Database backup retention no longer', createdAt: '2026-09-02T00:00:00.000Z' });
+    expect([...contestedOnPage([row(negated, 0.9), row(verified, 0.4)])].sort()).toEqual(['negated', 'verified']);
+  });
+
+  it('flags a row whose twin was cut from the page, judging against the whole pool', () => {
+    const pool = [row(verified, 0.9), row(planted, 0.4)];
+    expect([...contestedOnPage([pool[0]], pool)]).toEqual(['verified']);
+    expect(contestedOnPage([pool[0]]).size).toBe(0);
+  });
+
   it('names both items of a kept-beside pair and nothing else', () => {
     expect([...contestedOnPage([row(verified, 0.9), row(other, 0.5), row(planted, 0.4)])].sort()).toEqual(['planted', 'verified']);
   });

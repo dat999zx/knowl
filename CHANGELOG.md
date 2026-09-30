@@ -19,7 +19,11 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   [@Adam13y](https://github.com/Adam13y).
 - A page that holds such a pair now says so (#323, option 3). The two rows carry `contested: true`
   in the ranker explanation and `knowl query` output, and `knowl_query` adds a `CONTESTED:` note
-  naming both ids. It is judged on the returned page only, so a query does not scan the store.
+  naming both ids. It is judged against the scored candidates, not the store, so a query does not
+  scan it. Polarity twins ("X" / "X no longer") are flagged too, so adding a negation to a planted
+  title does not dodge the note, though the ranker still does not reorder them. A page cut to
+  `limit` still flags a row whose twin fell off it. The note no longer tells the reader to trust the
+  older item: it may be a duplicate, a correction or a planted claim, and the note says so.
 
 ## 5.24.0 — 2026-09-28
 

@@ -236,9 +236,10 @@ export type KnowledgeSearchExplanation = {
    */
   abstained?: boolean;
   /**
-   * This row and another row on the page are the same subject, kept side by side, and the older
-   * one is verified (#323). Present only when true. The ranker puts the older item first; this
-   * says there is a second answer, and that the newer one was never confirmed against the older.
+   * This row has a same-subject twin, kept side by side, and the older of the two is verified
+   * (#323). The twin may not be on the page. Present only when true. The ranker puts the older
+   * item first; this says there is a second answer, and that the newer one was never confirmed
+   * against the older.
    */
   contested?: boolean;
   /**
