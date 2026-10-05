@@ -3,6 +3,20 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Fix: Antigravity and Windsurf were treated as configured in every repository on the machine
+
+- Both hosts keep their MCP entry in the user's home, so one `knowl init antigravity` anywhere made
+  `detect().configured` true in every repository. Doctor then warned "lifecycle hooks missing or
+  stale" in each, and `doctor --fix` (and the `knowl upgrade --all` sweep, which runs the same
+  repairs) ran `knowl init antigravity` and wrote `.agents/hooks.json` into repositories that had
+  never used the host: five of them in one sweep. For a host whose MCP entry lives in the user's
+  home, a repository now counts as configured only when it also has that host's hooks file, which
+  `knowl init <host>` writes. `init`'s own verify step is unchanged and still checks only the MCP
+  entry, so a first `knowl init antigravity` works. A repository that already has the hooks file
+  is unaffected.
+
 ## 5.24.1 — 2026-09-30
 
 ### Search

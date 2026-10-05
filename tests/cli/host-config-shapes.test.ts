@@ -333,6 +333,43 @@ describe('two failures that only show up on a host nobody has installed', () => 
     expect((await adapter.detect(dir)).configured).toBe(false);
   });
 
+  /**
+   * Antigravity and Windsurf keep their MCP entry in the user's home, so one `knowl init
+   * antigravity` anywhere made `detect().configured` true in EVERY repository on the machine.
+   * Doctor then warned "lifecycle hooks missing" in each, and `knowl init --all` (like
+   * `doctor --fix`) ran the repair and wrote `.agents/hooks.json` into repositories that had never
+   * used the host: five of them, in one sweep. The repository's own hooks file is its opt-in.
+   */
+  it('does not call a repository configured for a user-scope host because the HOME entry exists', async () => {
+    const { createHookHostAdapter, hookHostSpecs } = await import('../../src/cli/agents/hook-host-adapter.js');
+    const home = await workspace();
+    const repo = await workspace();
+    const environment = { platform: 'linux' as const, homeDir: home, appDataDir: home, commandExists: async () => true };
+    for (const name of ['antigravity', 'windsurf']) {
+      const adapter = createHookHostAdapter(hookHostSpecs(environment).find(s => s.name === name)!, environment);
+      // The machine-wide entry exists, as it does once the host has been set up anywhere.
+      await adapter.configure(home);
+      expect(await adapter.verify(repo)).toBe(true);
+      // This repository never chose the host.
+      expect(`${name}: ${(await adapter.detect(repo)).configured}`).toBe(`${name}: false`);
+      // Choosing it -- init writes the hooks file -- is what opts the repository in.
+      await adapter.configureLifecycle!(repo);
+      expect(`${name}: ${(await adapter.detect(repo)).configured}`).toBe(`${name}: true`);
+    }
+  });
+
+  it('still verifies a user-scope host on its first init, before any hooks file exists', async () => {
+    const { createHookHostAdapter, hookHostSpecs } = await import('../../src/cli/agents/hook-host-adapter.js');
+    const home = await workspace();
+    const repo = await workspace();
+    const environment = { platform: 'linux' as const, homeDir: home, appDataDir: home, commandExists: async () => true };
+    const adapter = createHookHostAdapter(hookHostSpecs(environment).find(s => s.name === 'antigravity')!, environment);
+    expect(await adapter.verify(repo)).toBe(false);
+    await adapter.configure(repo);
+    // init verifies here, and only afterwards writes the hooks file.
+    expect(await adapter.verify(repo)).toBe(true);
+  });
+
   it('survives a config file another vendor left empty', async () => {
     // Gemini CLI leaves a 0-byte mcp_config.json at the path Antigravity reads. Rethrowing the
     // parse error took detection for all nine hosts down before `knowl init` showed its picker.
@@ -428,16 +465,18 @@ describe('Antigravity MCP entry reaches both the IDE and the CLI', () => {
     const environment = { platform: 'linux' as const, homeDir: home, appDataDir: home, commandExists: async () => true };
     const adapter = createHookHostAdapter(hookHostSpecs(environment).find(spec => spec.name === 'antigravity')!, environment);
 
-    expect((await adapter.detect(home)).configured).toBe(false);
+    // `verify` answers "do the MCP files hold our entry"; `detect().configured` also asks whether
+    // this repository chose the host, which a hooks file answers (see the opt-in test above).
+    expect(await adapter.verify(home)).toBe(false);
     expect((await adapter.configure(home)).status).toBe('configured');
     for (const file of [ide, cli]) {
       expect((await readJson(file)).mcpServers.knowl.args, file).toEqual(['serve', '--host', 'antigravity']);
     }
-    expect((await adapter.detect(home)).configured).toBe(true);
+    expect(await adapter.verify(home)).toBe(true);
 
     // One file missing the entry is not configured: the host that reads it sees nothing.
     await writeFile(cli, '{}', 'utf8');
-    expect((await adapter.detect(home)).configured).toBe(false);
+    expect(await adapter.verify(home)).toBe(false);
     expect((await adapter.configure(home)).status).toBe('configured');
   });
 });
