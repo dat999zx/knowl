@@ -19,6 +19,11 @@ function commandEntry(environment: AgentEnvironment, host?: string): McpEntry {
     // The host goes on the command line because the MCP `initialize` card is captured by the SDK
     // at construction, before the client says who it is -- and `knowl init` already knows.
     args: host ? ['serve', '--host', host] : ['serve'],
+    // Claude Code defers every MCP tool behind ToolSearch by default, and the rules this server
+    // ships say "call knowl_query first" -- a call the model has to look up before it can make,
+    // and skips. `alwaysLoad` is its documented per-server exemption. No other host here has a
+    // verified equivalent, so none gets the field.
+    ...(host === 'claude' ? { alwaysLoad: true } : {}),
   };
 }
 
@@ -86,7 +91,15 @@ function createJsonProjectAdapter(
       const pathname = configPath(root);
       const source = await readConfig(pathname);
       const parsed = source ? JSON.parse(source) as Record<string, any> : {};
-      return { installed: await environment.commandExists(command), configured: equalEntry(parsed.mcpServers?.[KNOWL_MCP_SERVER_KEY], commandEntry(environment, name)), scope: 'project', configPath: pathname };
+      const { alwaysLoad: _current, ...legacy } = commandEntry(environment, name);
+      const server = parsed.mcpServers?.[KNOWL_MCP_SERVER_KEY];
+      return {
+        installed: await environment.commandExists(command),
+        configured: equalEntry(server, commandEntry(environment, name)),
+        present: equalEntry(server, legacy),
+        scope: 'project',
+        configPath: pathname,
+      };
     },
     async configure(root): Promise<AgentIntegrationResult> {
       const pathname = configPath(root);

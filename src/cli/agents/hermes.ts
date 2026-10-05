@@ -26,11 +26,26 @@ export function hermesPluginSourceDir(): string {
 }
 
 const PLUGIN_NAME = 'knowl';
-const PLUGIN_FILES = ['plugin.yaml', '__init__.py'];
+// guidance.json is generated from src/core/plugin-guidance.ts (npm run docs:generate); the plugin reads its rules from it.
+const PLUGIN_FILES = ['plugin.yaml', '__init__.py', 'guidance.json'];
 
 function stringItems(doc: Document, keys: string[]): string[] {
   const node = doc.getIn(keys, true);
   return isSeq(node) ? (node as YAMLSeq).items.map(item => String((item as any)?.value ?? item)) : [];
+}
+
+/**
+ * `memory.provider` is ours, or someone else's.
+ *
+ * Hermes runs one external memory provider, and it is the only route that puts `knowl_query`
+ * in front of the model without a `tool_search` step (plugin and MCP tools are deferred;
+ * a provider's tools are not). So an unset provider becomes ours -- and a provider the person
+ * already chose is never replaced: swapping their memory backend is not ours to decide.
+ */
+function providerOk(doc: Document): boolean {
+  const value = doc.getIn(['memory', 'provider']);
+  const text = String((value as any)?.value ?? value ?? '').trim();
+  return text !== '';
 }
 
 /** `plugins.enabled` lists us and `plugins.disabled` does not -- the two lists Hermes' loader reads. */
@@ -96,6 +111,10 @@ function hasShellHooks(doc: Document): boolean {
  */
 export function mutateHermesConfig(doc: Document, entry: McpEntry): boolean {
   let changed = removeShellHooks(doc);
+  if (!providerOk(doc)) {
+    doc.setIn(['memory', 'provider'], PLUGIN_NAME);
+    changed = true;
+  }
   if (!serverMatches(doc, entry)) {
     doc.setIn(['mcp_servers', KNOWL_MCP_SERVER_KEY], doc.createNode({ command: entry.command, args: entry.args }));
     changed = true;
@@ -110,16 +129,29 @@ export function mutateHermesConfig(doc: Document, entry: McpEntry): boolean {
   return changed;
 }
 
+/**
+ * The plugin is installed AND is the copy this package ships.
+ *
+ * The files are copied, so an npm update never reaches them: Hermes keeps loading the old plugin
+ * and nothing says so. Comparing bytes makes "stale" read as "not configured", which is what
+ * `doctor` and `init` already know how to repair.
+ */
 async function pluginInstalled(home: string): Promise<boolean> {
   try {
-    await Promise.all(PLUGIN_FILES.map(file => fs.access(path.join(home, 'plugins', PLUGIN_NAME, file))));
-    return true;
+    const same = await Promise.all(PLUGIN_FILES.map(async file => {
+      const [installed, shipped] = await Promise.all([
+        fs.readFile(path.join(home, 'plugins', PLUGIN_NAME, file)),
+        fs.readFile(path.join(hermesPluginSourceDir(), file)),
+      ]);
+      return installed.equals(shipped);
+    }));
+    return same.every(Boolean);
   } catch {
     return false;
   }
 }
 
-const RESTART_NOTE = 'Restart Hermes (or start a new session) to load the plugin; /reload-mcp connects the knowl server in a running chat. Optional: pick knowl under Settings > Memory & Context > Memory Provider to add system-prompt recall and a checkpoint before Hermes compacts a long conversation.';
+const RESTART_NOTE = 'Restart Hermes (or start a new session) to load the plugin; /reload-mcp connects the knowl server in a running chat. Knowl is set as the memory provider (Settings > Memory & Context) so knowl_query and knowl_store are always available; if you already use another provider it was left alone, and the tools stay behind tool_search.';
 
 /**
  * Hermes: one global `config.yaml` plus a plugin directory.
@@ -146,11 +178,15 @@ export function createHermesAdapter(environment: AgentEnvironment): AgentAdapter
       const configured = doc !== undefined
         && serverMatches(doc, entry)
         && pluginEnabled(doc)
+        && providerOk(doc)
         && !hasShellHooks(doc)
         && await pluginInstalled(hermesHomeDir(environment));
+      // A plugin directory that exists but differs from the shipped one is an install an update left behind.
+      const present = configured || await fs.access(path.join(hermesHomeDir(environment), 'plugins', PLUGIN_NAME, '__init__.py')).then(() => true, () => false);
       return {
         installed: await environment.commandExists('hermes'),
         configured,
+        present,
         scope: 'global',
         configPath: configPath(),
       };

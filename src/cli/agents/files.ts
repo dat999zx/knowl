@@ -9,6 +9,12 @@ import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
 export interface McpEntry {
   command: string;
   args: string[];
+  /**
+   * Claude Code's per-server switch that exempts a server from tool-search deferral. Only a host
+   * that documents it gets it; every other adapter leaves it unset, and an unset value is not
+   * compared, so entries written before this field existed still match.
+   */
+  alwaysLoad?: boolean;
 }
 
 export type MergeStatus = 'configured' | 'updated' | 'unchanged';
@@ -30,6 +36,7 @@ export function mcpEntryMatches(value: unknown, entry: McpEntry) {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<McpEntry>;
   if (candidate.command !== entry.command || !Array.isArray(candidate.args)) return false;
+  if (entry.alwaysLoad !== undefined && candidate.alwaysLoad !== entry.alwaysLoad) return false;
   const args = candidate.args;
   if (args.length === entry.args.length) return args.every((arg, index) => arg === entry.args[index]);
   const withoutHost = entry.args.slice(0, entry.args.indexOf('--host'));

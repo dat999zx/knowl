@@ -186,6 +186,11 @@ class PluginTest(unittest.TestCase):
         rendered = ctx.sections["knowl.project-memory"][0]({})
         self.assertIn("knowl_query", rendered)
         self.assertIn("no project open", rendered.lower())
+        # Both memories, on every task: a rule scoped to questions "about you" left a model asked
+        # "what do you know about me" answering from the built-in memory and offering to query.
+        self.assertIn("together", rendered)
+        self.assertIn("every task or question", rendered)
+        self.assertNotIn("Before answering from general knowledge", rendered)
 
     def test_no_rules_when_there_is_no_memory_at_all(self):
         self.plugin._has_knowl_project = lambda cwd: False
@@ -333,6 +338,28 @@ class PluginTest(unittest.TestCase):
             self.plugin._Runner.run = original
         event, _payload, cwd = self.calls[-1]
         self.assertEqual((event, cwd), ("post_tool_call", project))
+
+    # -- guidance data -------------------------------------------------------
+
+    def test_rules_come_from_the_generated_file_not_from_the_plugin(self):
+        """The rule prose lives in src/core/plugin-guidance.ts and reaches the plugin as
+        guidance.json. A plugin that carried its own copy would drift from every other host again."""
+        path = os.path.join(os.path.dirname(os.path.abspath(self.plugin.__file__)), "guidance.json")
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(self.plugin.RULES_SECTION, data["projectRules"])
+        self.assertEqual(self.plugin.GLOBAL_RULES_SECTION, data["globalRules"])
+        self.assertIn("knowl_update", self.plugin.RULES_SECTION)
+
+    def test_a_missing_guidance_file_gives_empty_rules_and_a_warning_not_a_crash(self):
+        real_open = open
+        def fake_open(file, *a, **k):
+            if str(file).endswith("guidance.json"):
+                raise FileNotFoundError(file)
+            return real_open(file, *a, **k)
+        with unittest.mock.patch("builtins.open", fake_open), self.assertLogs("hermes.plugins.knowl", level="WARNING") as logs:
+            self.assertEqual(self.plugin._load_guidance(), {})
+        self.assertTrue(any("guidance.json" in line for line in logs.output))
 
     # -- payload shape --------------------------------------------------------
 
@@ -683,10 +710,31 @@ class MemoryProviderTest(unittest.TestCase):
                 "hook's job on every host. See the class docstring.",
             )
 
-    def test_no_tool_schemas_because_the_hook_pass_already_registers_them(self):
-        """Both halves load on a session where Knowl is the selected provider, so returning
-        the tools here too would put two `knowl_query` in front of the model."""
-        self.assertEqual(self.ctx.provider.get_tool_schemas(), [])
+    def test_the_provider_offers_the_memory_tools_eagerly(self):
+        """Hermes defers every plugin and MCP tool behind tool_search, and a provider's schemas
+        are appended after that decision -- so this is what keeps knowl_query in front of the
+        model without a search step. The plugin pass must not register a second copy."""
+        names = [schema["name"] for schema in self.ctx.provider.get_tool_schemas()]
+        self.assertEqual(sorted(names), ["knowl_query", "knowl_store"])
+
+    def test_the_provider_runs_its_own_tools(self):
+        self.plugin._memory_cwd = lambda: os.getcwd()
+        self.plugin._Runner.cli = lambda _self, args, cwd, timeout=30.0: (0, json.dumps([{"id": "1"}]), "")
+        out = json.loads(self.ctx.provider.handle_tool_call("knowl_query", {"query": "x"}))
+        self.assertEqual(len(out["items"]), 1)
+        self.assertIn("error", json.loads(self.ctx.provider.handle_tool_call("nope", {})))
+
+    def test_the_plugin_pass_keeps_its_tools_as_the_fallback_for_a_session_without_the_provider(self):
+        """The provider loads only when `is_available()` holds, the session is not skip_memory
+        and the memory toolset is on. A plugin pass that stepped aside for it left no copy of
+        knowl_query in any session where it did not."""
+        plugin = load_plugin()
+        plugin._has_knowl_project = lambda cwd: True
+        plugin._is_hermes_source_clone = lambda cwd: False
+        plugin._resolve_cwd = lambda: os.getcwd()
+        ctx = FakeCollector()
+        plugin.register(ctx)
+        self.assertEqual(sorted(ctx.tools), ["knowl_query", "knowl_store"])
 
     # -- compaction -----------------------------------------------------------
 

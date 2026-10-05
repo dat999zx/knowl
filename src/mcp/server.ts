@@ -191,6 +191,7 @@ export async function startMcpServer(options: { host?: string } = {}): Promise<v
   let config: ProjectConfig | null = null;
   let project: any = null;
   let initError: string | null = null;
+  let globalOnlySuffix = '';
 
   // Root and config settle BEFORE the server is built, deliberately, and they are the only
   // two things that do. Neither is the database open the handshake is racing -- one walks
@@ -239,6 +240,12 @@ export async function startMcpServer(options: { host?: string } = {}): Promise<v
       projectRoot = null;
       config = await tracePhase('globalLoadConfig', () => loadConfig(knowlHome()));
       initError = null;
+      // The card above this is written for "project work", and this session has none: no repository
+      // means no AGENTS.md either, so the card is the only thing that can say what these tools are
+      // for here. One line, on the same channel as the auto-init note below.
+      globalOnlySuffix = '\nNOTE: no project is open, so knowl_query and knowl_store use the machine-wide personal-defaults store: ' +
+        'preferences and environment quirks that hold across projects. Query it before answering from general knowledge ' +
+        'about how this person or machine works.';
     } else {
       initError = error.message;
     }
@@ -283,6 +290,7 @@ export async function startMcpServer(options: { host?: string } = {}): Promise<v
     whenReady: () => ready,
     modeLine: mcpModeLineForHost(options.host),
     host: options.host,
+    ...(globalOnlySuffix ? { instructionsSuffix: globalOnlySuffix } : {}),
     ...(autoInitialized ? {
       // The path is collapsed to single spaces before it goes in: this card is the
       // highest-trust text the server hands a model, and a POSIX directory name may contain

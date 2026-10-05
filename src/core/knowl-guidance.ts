@@ -81,6 +81,28 @@ export type KnowlMcpToolName = typeof KNOWL_MCP_TOOL_GROUPS[number]['tools'][num
 export const KNOWL_MCP_TOOL_NAMES = KNOWL_MCP_TOOL_GROUPS
   .flatMap(group => [...group.tools]) as KnowlMcpToolName[];
 
+/**
+ * The sentences every agent-facing text is built from. A nudge, a reminder, an instruction file
+ * and the Hermes plugin's rules each used to carry their own hand-written version of "store it",
+ * and they drifted: three capture nudges said "knowl_store or knowl_decide" and never named
+ * `knowl_update` long after the reminder learned to, so an agent told to write was never told to
+ * correct. Write each rule ONCE here and compose; a text that needs a rule imports it.
+ *
+ * Plain strings, not template functions, because the Hermes plugin is Python and cannot import
+ * this module: `scripts/generate-docs.ts` renders `plugin-guidance.ts` into a JSON file it reads.
+ */
+export const KNOWL_WRITE_ROUTING =
+  'call knowl_store for a verified finding, a stated goal, or a recurring diagnosis; '
+  + 'call knowl_update when stored memory is stale or contradicted, instead of storing a duplicate; '
+  + 'call knowl_decide for a confirmed decision';
+export const KNOWL_LOAD_SCHEMA_LINE = 'If a tool is listed but not callable, load its schema first.';
+export const KNOWL_NO_SECRETS_LINE = 'Never store secrets or routine noise.';
+/** For a session with no project: the host's own memory and Knowl are two sources, not rivals. */
+export const KNOWL_USE_TOGETHER_LINE =
+  'Use Knowl together with any built-in memory this host has, on every task or question, not only ones about the person: '
+  + 'before you answer or start work, call knowl_query with the words that name the subject, then answer from both. '
+  + 'If they disagree, say so and prefer the more recent.';
+
 const REQUIRED_WORKFLOW = `### Required workflow
 
 1. For every project-specific request, call \`knowl_query\` before repository files or commands, using the words that name the subject: another on-subject term retrieves better, an off-subject one retrieves worse, so do not pad the query and do not trim a real term to shorten it.
@@ -230,7 +252,14 @@ export function mcpServerInstructions(config: ProjectConfig | null, modeLine?: s
   if (!transcripts && line === KNOWL_HOST_NEUTRAL_MODE_LINE) return KNOWL_MCP_SERVER_INSTRUCTIONS;
   return renderCompactKnowlGuidance(line, transcripts ? { transcripts: true } : {});
 }
-export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with the words that name the subject before repository files or commands. Store durable findings, stated goals, and recurring diagnoses. Claude hooks own lifecycle; do not start the manual task loop.';
+export const KNOWL_CLAUDE_CONTINUATION_REMINDER = [
+  'KNOWL CONTINUATION: Keep using Knowl for this work, to write as well as read.',
+  'Read: before a new project area, call knowl_query with the words that name the subject.',
+  `Write: ${KNOWL_WRITE_ROUTING}.`,
+  KNOWL_LOAD_SCHEMA_LINE,
+  KNOWL_NO_SECRETS_LINE,
+  'Hooks own the lifecycle; do not start the manual task loop.',
+].join(' ');
 
 // Short per-prompt reminder (UserPromptSubmit). The full tool routing lives in
 // KNOWL.md and the MCP initialize instructions, so the per-prompt card only needs

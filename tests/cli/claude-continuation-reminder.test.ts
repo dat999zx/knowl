@@ -27,9 +27,9 @@ describe('Claude continuation reminder CLI', () => {
     await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {});
   });
 
-  it('emits PostToolUse context after 12 non-Knowl successes and resets after Stop', () => {
+  it('emits PostToolUse context after 6 non-Knowl successes and resets after Stop', () => {
     const outputs = [];
-    for (let index = 1; index <= 12; index++) {
+    for (let index = 1; index <= 6; index++) {
       outputs.push(run(['agent-hook', 'claude', 'PostToolUse', '--json'], JSON.stringify({
         session_id: 'cli-long-session',
         cwd: TEST_DIR,
@@ -39,8 +39,8 @@ describe('Claude continuation reminder CLI', () => {
       })));
     }
 
-    expect(outputs.slice(0, 11).every(output => output === '')).toBe(true);
-    expect(JSON.parse(outputs[11])).toEqual({
+    expect(outputs.slice(0, 5).every(output => output === '')).toBe(true);
+    expect(JSON.parse(outputs[5])).toEqual({
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext: KNOWL_CLAUDE_CONTINUATION_REMINDER,
@@ -69,12 +69,12 @@ describe('Claude continuation reminder CLI', () => {
       tool_response: { exit_code: 0 },
     }));
 
-    // Drift to 11 — one short of the reminder threshold.
-    for (let index = 1; index <= 11; index++) post('Bash', `tool-${index}`);
+    // Drift to 5 — one short of the reminder threshold.
+    for (let index = 1; index <= 5; index++) post('Bash', `tool-${index}`);
     // A Knowl call resets the streak, so the call that *would* have been the
-    // 12th stays quiet. (Full reset semantics are covered in host-lifecycle.test.ts.)
+    // 6th stays quiet. (Full reset semantics are covered in host-lifecycle.test.ts.)
     expect(post('mcp__knowl__knowl_query', 'query')).toBe('');
-    expect(post('Bash', 'would-have-been-twelfth')).toBe('');
+    expect(post('Bash', 'would-have-been-sixth')).toBe('');
   }, 120_000);
 
   // `reminders.driftEvery`. Through the built CLI rather than the predicate alone, because the
@@ -83,7 +83,7 @@ describe('Claude continuation reminder CLI', () => {
   it('reminders.driftEvery 0 silences the reminder entirely', () => {
     run(['config', 'set', 'reminders.driftEvery', '0']);
     const outputs = [];
-    // Twice the shipped cadence: a stale `% 12` would have fired at 12 and again at 24.
+    // Four times the shipped cadence: a stale `% 6` would have fired at 6, 12, 18 and 24.
     for (let index = 1; index <= 24; index++) {
       outputs.push(run(['agent-hook', 'claude', 'PostToolUse', '--json'], JSON.stringify({
         session_id: 'cli-drift-off', cwd: TEST_DIR, tool_name: 'Bash',

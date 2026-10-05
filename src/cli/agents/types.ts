@@ -10,6 +10,12 @@ export type LifecycleEvent = 'session-start' | 'session-event' | 'session-stop' 
 export interface AgentDetection {
   installed: boolean;
   configured: boolean;
+  /**
+   * Set up in some form, possibly out of date. `configured` means current; this exists so a
+   * sweep can find an install an npm update left behind, which `configured` correctly calls
+   * not-configured and therefore cannot be used to find. Unset means "same as configured".
+   */
+  present?: boolean;
   scope: IntegrationScope;
   configPath: string;
 }

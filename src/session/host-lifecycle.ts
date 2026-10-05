@@ -105,7 +105,7 @@ import {
   promoteByConfirmedFeedbackBestEffort, promoteByObservedUseBestEffort,
 } from '../store/tier.js';
 
-// The cadence moved to `reminders.driftEvery` (default DEFAULT_DRIFT_REMINDER_EVERY = 12, `0`
+// The cadence moved to `reminders.driftEvery` (default DEFAULT_DRIFT_REMINDER_EVERY = 6, `0`
 // off), so the number lives beside its predicate in core/config.ts rather than twice.
 
 /**
@@ -1391,7 +1391,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
             // that is querying/storing memory never sees a reminder.
             await resetHostSuccessfulToolCount(key);
           } else {
-            // `reminders.driftEvery` (default 12, `0` off) and `reminders.driftBackoff`
+            // `reminders.driftEvery` (default 6, `0` off) and `reminders.driftBackoff`
             // (default on, gap doubles per delivery). The counter still advances when the
             // reminder is silent: it is shared state that the branches above reset as a "go use
             // memory" signal, and freezing it would change what THEY mean. It is also what the

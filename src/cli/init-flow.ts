@@ -61,7 +61,7 @@ export async function runAgentInitFlow(
     const choices = detected.map(({ adapter, detection }) => ({
       value: adapter.name,
       name: `${adapter.label}${detection.configured ? ' (configured)' : ''}${detection.scope === 'global' ? ' (global)' : ''}`,
-      checked: detection.configured,
+      checked: detection.configured || Boolean(detection.present),
     }));
     selected = await prompts.selectAgents(choices);
   }

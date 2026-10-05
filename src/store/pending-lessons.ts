@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { getClient } from './database.js';
+import { KNOWL_WRITE_ROUTING } from '../core/knowl-guidance.js';
 import { DESTRUCTIVE_LABELS, type DestructiveCommandHit, type DestructiveCommandId } from '../core/lesson-signals.js';
 
 /**
@@ -215,7 +216,7 @@ export function renderCorrectionNudge(): string {
   return [
     'KNOWL LESSON: this prompt reads as a CORRECTION, not a new task.',
     'A correction is durable knowledge you were supposed to be holding and were not -- store the rule that',
-    'prevents it next time with knowl_store (or knowl_update if it corrects something already stored), then answer.',
+    `prevents it next time: ${KNOWL_WRITE_ROUTING}. Then answer.`,
     'If it is already in memory, say so with the item id in one line. If this is not actually a correction,',
     'say that instead: this is a local pattern on the prompt text, not a verdict.',
   ].join(' ');

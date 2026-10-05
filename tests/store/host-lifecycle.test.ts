@@ -18,6 +18,7 @@ import {
 import * as repo from '../../src/store/repository.js';
 import { recordPendingSessionHandoff } from '../../src/session/session-handoff.js';
 import { startMemorySession } from '../../src/store/session-repository.js';
+import { DEFAULT_DRIFT_REMINDER_EVERY as EVERY } from '../../src/core/config.js';
 
 const ROOT = path.resolve('.knowl-host-lifecycle-test');
 
@@ -331,32 +332,32 @@ describe('host lifecycle orchestration', () => {
     expect(rows.rows).toHaveLength(1);
   });
 
-  it('reminds Claude after 12 consecutive non-Knowl tool events and resets on a Knowl tool', async () => {
+  it('reminds Claude after the default cadence of consecutive non-Knowl tool events and resets on a Knowl tool', async () => {
     const drift = (command: string) => hook({
       host: 'claude', event: 'session-event', externalSessionId: 'claude-long-turn', externalTurnId: undefined,
       type: 'command', payload: { command, exitCode: 0 },
     });
     const results = [];
-    for (let index = 1; index <= 13; index++) {
+    for (let index = 1; index <= EVERY + 1; index++) {
       results.push(await handleHostLifecycleEvent(projectId, drift(`tool-${index}`)));
     }
 
-    expect(results.slice(0, 11).every(result => result.hostOutput === undefined)).toBe(true);
-    expect(results[11].hostOutput).toEqual({
+    expect(results.slice(0, EVERY - 1).every(result => result.hostOutput === undefined)).toBe(true);
+    expect(results[EVERY - 1].hostOutput).toEqual({
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext: KNOWL_CLAUDE_CONTINUATION_REMINDER,
       },
     });
-    expect(results[12].hostOutput).toBeUndefined();
+    expect(results[EVERY].hostOutput).toBeUndefined();
 
-    // Using a Knowl tool resets the drift counter, so the next 11 non-Knowl calls stay quiet.
+    // Using a Knowl tool resets the drift counter, so the next EVERY - 1 non-Knowl calls stay quiet.
     await handleHostLifecycleEvent(projectId, hook({
       host: 'claude', event: 'session-event', externalSessionId: 'claude-long-turn', externalTurnId: undefined,
       type: 'checkpoint', payload: { summary: 'mcp__knowl__knowl_query completed' }, knowlTool: true,
     }));
     const afterReset = [];
-    for (let index = 1; index <= 11; index++) {
+    for (let index = 1; index <= EVERY - 1; index++) {
       afterReset.push(await handleHostLifecycleEvent(projectId, drift(`post-reset-${index}`)));
     }
     expect(afterReset.every(result => result.hostOutput === undefined)).toBe(true);
@@ -386,7 +387,7 @@ describe('host lifecycle orchestration', () => {
       payload: { message: 'tool failed' },
     }));
     const following = [];
-    for (let index = 2; index <= 12; index++) {
+    for (let index = 2; index <= EVERY; index++) {
       following.push(await handleHostLifecycleEvent(projectId, hook({
         ...base,
         type: 'command',
@@ -397,8 +398,8 @@ describe('host lifecycle orchestration', () => {
     expect(first.hostOutput).toBeUndefined();
     expect(duplicate.reason).toBe('debounced');
     expect(failure.hostOutput).toBeUndefined();
-    expect(following.slice(0, 10).every(result => result.hostOutput === undefined)).toBe(true);
-    expect(following[10].hostOutput).toEqual({
+    expect(following.slice(0, EVERY - 2).every(result => result.hostOutput === undefined)).toBe(true);
+    expect(following[EVERY - 2].hostOutput).toEqual({
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext: KNOWL_CLAUDE_CONTINUATION_REMINDER,
@@ -1152,7 +1153,7 @@ describe('host lifecycle orchestration', () => {
     };
     await handleHostLifecycleEvent(projectId, claudeToolEvent('precedence-session'));
     // Park drift one short of the threshold so the next event would emit the static card.
-    for (let index = 0; index < 11; index++) await incrementHostSuccessfulToolCount(key);
+    for (let index = 0; index < EVERY - 1; index++) await incrementHostSuccessfulToolCount(key);
 
     await repo.createKnowledgeCommit(projectId, 'Sibling at drift boundary', [
       { itemId: 'precedence-1', action: 'insert', after: { id: 'precedence-1', category: 'fact', title: 'Boundary fact' } },

@@ -782,7 +782,7 @@ describe('CLI Integration', () => {
     }
 
     expect(output).toContain('Fix: run `knowl init`');
-    expect(output).toContain('Fix: add `.knowl/` to `.gitignore` or run `knowl upgrade`');
+    expect(output).toContain('Fix: add `.knowl/` to `.gitignore` or run `knowl init`');
 
     await fs.rm(staleDir, { recursive: true, force: true });
   });
