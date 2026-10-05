@@ -764,18 +764,15 @@ def register(ctx: Any) -> None:
     project_cwd = _project_cwd
     memory_cwd = _memory_cwd
 
-    def fire(event: str, session_id: str, *, timeout: Optional[float] = None, **extra: Any):
-        cwd = project_cwd()
+    def fire(event: str, session_id: str, *, timeout: Optional[float] = None, cwd: Optional[str] = None, **extra: Any):
+        # `cwd` is passed by a caller that is about to leave its thread. The session's folder lives
+        # in a context variable Hermes sets for the turn (agent.runtime_cwd), and a new thread does
+        # not inherit it: looked up over there it was the process directory, which is no project,
+        # so every event from `post_tool_call` was silently dropped.
+        cwd = cwd or project_cwd()
         if cwd is None:
             return None, 0, ""
         return runner.run(event, _payload(event, session_id, cwd, **extra), cwd, timeout=timeout)
-
-    def fire_async(event: str, session_id: str, **extra: Any) -> None:
-        threading.Thread(
-            target=lambda: fire(event, session_id, timeout=POST_TOOL_TIMEOUT_SECONDS, **extra),
-            name=f"knowl-{event}",
-            daemon=True,
-        ).start()
 
     # -- session start is deliberately NOT forwarded. The engine binds a session on its
     #    session-start event and emits the bootstrap card there; Hermes discards whatever
@@ -953,6 +950,9 @@ def register(ctx: Any) -> None:
         error_message: Any = None,
         **_: Any,
     ) -> None:
+        # Resolved HERE, on the turn's own thread, and handed to the one below. See `fire`.
+        session_cwd = project_cwd()
+
         def collect() -> None:
             try:
                 # Hermes reports "ok" or "error" here; the engine reads root `status`/`error`
@@ -963,6 +963,7 @@ def register(ctx: Any) -> None:
                     "post_tool_call",
                     session_id,
                     timeout=POST_TOOL_TIMEOUT_SECONDS,
+                    cwd=session_cwd,
                     tool_name=tool_name,
                     tool_input=args or {},
                     status=("failed" if failed else "finished"),

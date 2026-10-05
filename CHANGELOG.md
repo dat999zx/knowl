@@ -17,6 +17,17 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   entry, so a first `knowl init antigravity` works. A repository that already has the hooks file
   is unaffected.
 
+### Fix: the Hermes plugin dropped every tool event, so none of the mid-turn reminders ran
+
+- `post_tool_call` handed its work to a new thread, and that thread looked up the session's folder
+  in a context variable Hermes sets for the turn. A thread does not inherit it, so the lookup
+  returned the process directory, which is not a Knowl project, and the event was dropped before it
+  reached the engine. Everything built on tool events was dead on Hermes: the continuation
+  reminder, same-turn change cards, skill nudges and turn capture. One real repository held 92
+  Hermes sessions with only start and stop events and no tool event at all. The folder is now
+  resolved on the turn's own thread and passed to the observer. Also removed `fire_async`, which
+  had no callers. Reinstall with `knowl init hermes` to load it.
+
 ## 5.24.1 — 2026-09-30
 
 ### Search
