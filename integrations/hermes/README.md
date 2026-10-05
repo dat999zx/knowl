@@ -5,7 +5,7 @@ Project memory for [Hermes Agent](https://hermes-agent.nousresearch.com). This i
 The plugin is a ~300-line shim. Each Hermes lifecycle hook builds the JSON that Hermes would have piped to a shell hook and runs `knowl agent-hook hermes <event> --json`, so the Knowl engine's Hermes host profile does all the work. What the shim adds:
 
 - **Correct project on Desktop.** The working directory comes from Hermes' per-session context, not the gateway process cwd (which is Hermes' own source clone).
-- **Rules in the system prompt.** A frozen section tells the model to query memory first, using the `mcp__knowl__*` tool names Hermes gives MCP tools and how to reach them through `tool_search`.
+- **Rules in the system prompt.** A frozen section tells the model to query memory first and to write as it goes: `knowl_store` for a finding, `knowl_update` for stale memory instead of a duplicate, `knowl_decide` for a decision. With no project open it says to use Knowl together with Hermes' own memory. The text is not written in the plugin: it is rendered from `src/core/plugin-guidance.ts` into `guidance.json`, which sits beside `__init__.py` and is copied with it. A plugin installed without that file loads with empty rules and logs a warning; `knowl init hermes` puts it back.
 - **No stub cards.** Context is bounded under Hermes' 10,000-char spill threshold.
 
 ## What fires when
@@ -29,18 +29,23 @@ Provider**, beside Mem0, Honcho and the rest -- and this plugin fills it. It is 
 directory: `knowl init hermes` already installs into `$HERMES_HOME/plugins/`, which is one of the
 four sources Hermes scans for providers, so Knowl appears in that dropdown with no extra step.
 
-1. `knowl init hermes`, then restart Hermes.
-2. **Settings > Memory & Context > Memory Provider > knowl** — or `memory.provider: knowl` in
-   `config.yaml`.
-3. Restart Hermes again.
+1. `knowl init hermes`, then restart Hermes. It sets `memory.provider: knowl` for you, but only
+   when no provider is selected. A provider you chose (Honcho, Mem0 and the rest) is left alone.
+2. To pick it by hand instead: **Settings > Memory & Context > Memory Provider > knowl**, or
+   `memory.provider: knowl` in `config.yaml`.
+3. Restart Hermes again if you changed it by hand.
 
 Check it took with `hermes plugins doctor knowl`, which should report `(standalone)` with 2 tools
 and 7 hooks — that is both halves registered at once. `standalone` is the word that matters: if
 it ever reads `exclusive`, `plugin.yaml` has lost its explicit `kind` and Hermes has stopped
 loading the hooks.
 
-Selecting it is optional and additive. The hooks above run either way; the provider adds the
-three things a hook cannot reach:
+Selecting it is what keeps the tools in front of the model. Hermes defers every plugin and MCP
+tool behind `tool_search`, so without the provider `knowl_query` is not in the first tool list and
+the model has to go looking for it. Tools a memory provider returns from `get_tool_schemas()` are
+added after that decision and are never deferred, so with Knowl selected `knowl_query` and
+`knowl_store` are direct tools from the first turn. The other tools stay behind `tool_search`.
+The hooks above run either way; the provider adds what a hook cannot reach:
 
 - **Recall in the system prompt.** `pre_llm_call` can only append to the *user* message. The
   provider's `system_prompt_block` and `prefetch` put the rules and the recalled items where
@@ -55,8 +60,10 @@ Knowl deselects Mem0 or Honcho if one was active. And the recall card then comes
 provider only -- the `pre_llm_call` hook still fires, because that is what binds the session and
 carries capture, but it stops injecting so the card is never delivered twice.
 
-The plugin's own `knowl_query` and `knowl_store` tools are registered by the hook half, on every
-session, so they are there whether or not Knowl is the selected provider.
+The plugin registers `knowl_query` and `knowl_store` itself on every session, so they exist
+whether or not Knowl is the selected provider. Selected, they are also direct tools; not
+selected, they are reachable through `tool_search`. If the `memory` toolset is turned off Hermes
+skips the provider entirely, and the same is true.
 
 ## Install
 
@@ -78,7 +85,7 @@ python integrations/hermes/install.py          # copies knowl/ into <HERMES_HOME
 uv pip install --python <HERMES_HOME>/hermes-agent/venv/Scripts/python.exe knowl-hermes   # into Hermes' own venv, via the hermes_agent.plugins entry point
 ```
 
-Both register under the plugin key `knowl`; installing two of them makes Hermes load the directory copy and warn about the duplicate.
+Both register under the plugin key `knowl`; installing two of them makes Hermes load the directory copy and warn about the duplicate. `install.py` copies every file in the plugin directory, including `guidance.json`, and the pip package ships it as package data.
 
 Then add to `<HERMES_HOME>/config.yaml` (`%LOCALAPPDATA%\hermes\config.yaml` on Windows, `~/.hermes/config.yaml` elsewhere). If the file already has a `plugins:` key, merge into it instead of adding a second one:
 

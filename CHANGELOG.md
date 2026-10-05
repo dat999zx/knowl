@@ -28,6 +28,15 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   resolved on the turn's own thread and passed to the observer. Also removed `fire_async`, which
   had no callers. Reinstall with `knowl init hermes` to load it.
 
+### Hermes: the manual install routes ship the rules file too
+
+- `integrations/hermes/install.py` copied a fixed list of two files, and the pip package listed only
+  `plugin.yaml` as package data, so either route left `guidance.json` behind and the plugin loaded
+  with empty rules. `install.py` now copies every file in the plugin directory and the package ships
+  `*.json`. `knowl init hermes` already copied it. The Hermes, hosts and reference docs now describe
+  the memory-provider route, the tool-visibility table per host, `knowl init --all` and the cadence
+  change.
+
 ### Hermes and Claude Code: the memory tools are no longer behind tool search
 
 - **`knowl_query` and `knowl_store` stay visible on Hermes.** Hermes defers every plugin and MCP tool
@@ -537,7 +546,6 @@ a pointer and sends nothing, `push` asks first unless given `--yes`. It connects
 name `.knowl`: unreadable in a listing, and identical for every person, so two people connecting
 their machine stores to one workspace would collide. `--repo` overrides it.
 
-
 **Global skills: reusable playbooks with project bindings.** A skill can now live once on the machine (`~/.knowl/skills/<name>/`) as a reusable playbook, while each repository provides its own commands and paths via project bindings in `.knowl/config.json`. A playbook and a binding are two keys: neither runs anything alone.
 - **Layering and Shadowing**: Project skills shadow global skills of the same name. `knowl skill list` identifies whether each skill is `project` or `global`.
 - **`requires` block**: Manifests (`skill.yaml` or `skill.json`) declare `inputs`, `capabilities` (`process`, `network`, `write`, `publish`, `delete`), and fail-closed `preconditions` (`clean_worktree`, `on_branch:<name>`, `command_exists:<bin>`).
@@ -559,7 +567,6 @@ Both safe routes remain, and the refusal names them. Every bound input is now ex
 `KNOWL_SKILL_INPUT_<NAME>`, which the command reads rather than the shell parsing it; or use a
 `script` entrypoint, whose arguments are passed as an array and never reach a shell. Script
 entrypoints are unaffected, which is what the documented example already used.
-
 
 ## 5.20.0 — 2026-09-04
 
@@ -660,7 +667,6 @@ member, `normalizePayload`, applied once before anything reads a field.
 **Codex lost two thirds of its shell commands**, found while verifying the above. `isShellEvent`
 delegated to the shared helper, which knows `bash` and `shell` -- but across this machine's codex
 sessions the tool is called `shell_command` 14,329 times against `shell` 2,059.
-
 
 **`knowl cloud push` can drain a queue again.** Two independent faults could each leave staged
 knowledge unsendable indefinitely.
@@ -945,7 +951,6 @@ median asks the useful question instead: is this claim unusual *for its kind*.
 - `docs/reference.md` covers both new `knowl status` blocks, and the README feature list gains
   the un-restated claims report and the recall gap's main-thread/subagent split.
 - Parallel agents in git worktrees share the main checkout's store.
-
 
 ## 5.14.0 — 2026-08-26
 
@@ -1521,7 +1526,6 @@ failure mode is "Knowl recorded nothing" rather than a gate that reports blockin
 through — but `impact.gate` and `capture.nudge` are opt-in on every host for a reason, and this is
 it. Per-host detail, and which claims are observed versus quoted, is in
 [docs/hosts.md](docs/hosts.md).
-
 
 ## 5.8.0 — 2026-08-20
 

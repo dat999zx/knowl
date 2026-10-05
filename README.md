@@ -87,6 +87,9 @@ runtime directly is not supported.
 registers Knowl with whichever agents it detects. It also warms a local embedding model (~53 MB)
 in the background — `init` succeeds either way, and without it you still get keyword search.
 
+To refresh every repository and every machine-wide host after an update, run `knowl init --all`
+once. It replaces `knowl upgrade --all`, which still works for one release.
+
 That is the whole setup. You do not record memory by hand: your agent reads and writes it as it
 works.
 
@@ -175,8 +178,8 @@ the agent picks up its guidance, and it will query and write memory on its own.
 **gate** means Knowl can refuse an edit that invalidates code another session is holding.
 Neovim and Kiro work the same way as Zed and JetBrains, through `knowl acp`. Cline needs one
 line pointing it at the shipped plugin. Hermes Agent gets a Python plugin, installed for you,
-that works in the terminal and in Hermes Desktop alike, and can additionally be picked as
-Hermes' memory provider. OpenClaw runs in-process inside its gateway via an extension plugin,
+that works in the terminal and in Hermes Desktop alike; `knowl init` also selects it as Hermes'
+memory provider when none is set, which is what keeps `knowl_query` out of Hermes' tool search. OpenClaw runs in-process inside its gateway via an extension plugin,
 evaluating write gates without subprocess overhead — `knowl init openclaw` copies it and prints
 the two commands that register it. Any other MCP client works with
 no integration at all.

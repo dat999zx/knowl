@@ -41,6 +41,23 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 
 ⚠️ means Knowl emits the envelope and the host accepts it, but nobody has watched it reach the model. Anything deciding "has this agent already been told" reads `midTurnDeliveryVerified`, never the presence of an envelope — so a ⚠️ host keeps getting the MCP copy and is never left silent on a guess. Flipping one to ✅ is a one-line change once someone observes a real session.
 
+## Are the tools visible from the first turn?
+
+Several hosts defer MCP tools behind a search step and show the model only their names. Knowl
+fixes this where the host gives a way to, and says plainly where it does not:
+
+| Host | Tools visible from the first turn | How |
+| --- | --- | --- |
+| Claude Code | Yes | `"alwaysLoad": true` on the `.mcp.json` entry, written by `knowl init` |
+| Hermes Agent | `knowl_query`, `knowl_store` | Selected as the memory provider, which `knowl init hermes` does when none is set |
+| Claude Desktop app | No | It ignores `alwaysLoad` (anthropics/claude-code#86284) |
+| Codex, Cursor, Copilot, OpenCode, Windsurf, OpenHands, Antigravity, Cline | Not claimed | No documented equivalent was found; the agent selects the tool by exact name, and the rules in `AGENTS.md` say to load a listed tool's schema |
+
+A host with no project-level `AGENTS.md` (a session opened in a folder with no repository) has
+nothing for those rules to ride in. `knowl init --global <host>` adds a short managed block to the
+global instruction file of Claude Code, Codex, Antigravity and Windsurf, the four that document
+one, and the Hermes plugin carries the same text in its system prompt.
+
 ## One process per event, or one server
 
 Every hook above except OpenClaw is installed as a `command` hook: a fresh `knowl agent-hook` process per event, ~230ms of Node startup each, serialized against the agent's own tool calls because the host waits on the pre-tool hook. Over 102 real Claude Code sessions that is 31s at the median session and 190s at the 90th percentile.
@@ -156,17 +173,27 @@ The plugin sends exactly what a shell hook would have sent, so the engine does a
 backend, and `knowl init hermes` installs into `$HERMES_HOME/plugins/` — one of the four
 directories Hermes scans for candidates — so Knowl appears in that list with no extra step:
 
-1. Run `knowl init hermes` and restart Hermes.
-2. Open **Settings > Memory & Context**.
-3. Set **Memory Provider** to **knowl** (or put `memory.provider: knowl` in `config.yaml`).
-4. Restart Hermes again.
+1. Run `knowl init hermes` and restart Hermes. It selects `knowl` as the provider **only when none
+   is set**; a provider you chose is left alone.
+2. To pick it by hand instead: **Settings > Memory & Context > Memory Provider > knowl**, or
+   `memory.provider: knowl` in `config.yaml`.
+3. Restart Hermes again if you changed it by hand.
 
-This is optional and additive: the hooks run either way, and they keep everything tool-shaped,
-which a provider never sees. What the provider adds is what a hook cannot reach — recall in the
-system prompt rather than appended to the user message, Hermes' deterministic "recalled N
-memories" indicator, and **a checkpoint before context compression**, which is otherwise
-invisible because Hermes fires no hook before it compacts, so a long session's knowledge is
-summarised away before capture sees it. That last one is the reason to bother.
+The hooks run either way, and they keep everything tool-shaped, which a provider never sees. What
+selecting the provider adds is what a hook cannot reach, and the first item is why `init` does it
+for you:
+
+- **The tools are always in front of the model.** Hermes defers every plugin and MCP tool behind
+  `tool_search`, and there is no setting that exempts one (`tools.tool_search.always_visible` is
+  an open request upstream, hermes-agent#83109). Tools a memory provider returns from
+  `get_tool_schemas()` are added after that decision, so with Knowl selected `knowl_query` and
+  `knowl_store` are direct tools from the first turn. The other Knowl tools stay behind
+  `tool_search`, and the rules say how to load them.
+- Recall in the system prompt rather than appended to the user message.
+- Hermes' deterministic "recalled N memories" indicator.
+- **A checkpoint before context compression**, which is otherwise invisible because Hermes fires
+  no hook before it compacts, so a long session's knowledge is summarised away before capture
+  sees it.
 
 Two things follow from selecting it. Hermes runs one *external* provider at a time, so choosing
 Knowl deselects Mem0 or Honcho — but its own built-in memory is always first in the list and

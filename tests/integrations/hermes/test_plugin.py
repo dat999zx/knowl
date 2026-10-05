@@ -361,6 +361,37 @@ class PluginTest(unittest.TestCase):
             self.assertEqual(self.plugin._load_guidance(), {})
         self.assertTrue(any("guidance.json" in line for line in logs.output))
 
+    # -- manual install route -------------------------------------------------
+
+    def test_the_manual_install_copies_every_file_in_the_plugin_directory(self):
+        """install.py used to copy a hand-kept list of two files, so guidance.json -- the rules text
+        the model is given -- was left behind and the plugin loaded with empty rules. It now copies
+        whatever the plugin directory holds."""
+        import runpy, sys, tempfile, shutil
+        root = os.path.join(HERE, "..", "..", "..", "integrations", "hermes")
+        home = tempfile.mkdtemp(prefix="knowl-hh-")
+        # Run install.py in-process rather than as a child: other tests in this file assign
+        # `plugin.subprocess.run = <fake>` on the shared subprocess module and never restore it, so a
+        # child launched through subprocess.run here gets a canned "boom" instead of the script.
+        old_home, old_argv = os.environ.get("HERMES_HOME"), sys.argv
+        os.environ["HERMES_HOME"] = home
+        try:
+            sys.argv = [os.path.join(root, "install.py")]
+            with self.assertRaises(SystemExit) as exit_info:
+                runpy.run_path(os.path.join(root, "install.py"), run_name="__main__")
+            self.assertEqual(exit_info.exception.code, 0)
+            shipped = {n for n in os.listdir(os.path.join(root, "knowl")) if os.path.isfile(os.path.join(root, "knowl", n))}
+            installed = set(os.listdir(os.path.join(home, "plugins", "knowl")))
+            self.assertTrue({"__init__.py", "plugin.yaml", "guidance.json"} <= shipped)
+            self.assertEqual(installed, shipped)
+        finally:
+            sys.argv = old_argv
+            if old_home is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = old_home
+            shutil.rmtree(home, ignore_errors=True)
+
     # -- payload shape --------------------------------------------------------
 
     def test_payload_matches_the_hermes_shell_hook_shape(self):

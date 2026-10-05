@@ -35,8 +35,11 @@ def main() -> int:
         return 1
     dest = home / "plugins" / "knowl"
     dest.mkdir(parents=True, exist_ok=True)
-    for name in ("plugin.yaml", "__init__.py"):
-        shutil.copy2(src / name, dest / name)
+    # Every file in the plugin directory, not a list: the rules the model is given live in
+    # guidance.json beside __init__.py, and a list is how the next data file gets left behind.
+    for path in sorted(src.iterdir()):
+        if path.is_file():
+            shutil.copy2(path, dest / path.name)
     print(f"installed -> {dest}")
 
     knowl_bin = shutil.which("knowl.cmd" if sys.platform == "win32" else "knowl") or shutil.which("knowl")
