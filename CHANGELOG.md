@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.25.0 — 2026-10-05
 
 ### Fix: Antigravity and Windsurf were treated as configured in every repository on the machine
 
