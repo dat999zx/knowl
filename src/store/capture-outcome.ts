@@ -1,3 +1,4 @@
+import { KNOWL_WRITE_ROUTING } from '../core/knowl-guidance.js';
 import { canonicalProjectRoot } from '../core/project-path.js';
 import { getClient } from './database.js';
 
@@ -388,7 +389,7 @@ export async function resetTurnCapture(turnKey: string): Promise<void> {
 export function renderTurnCapturePrompt(): string {
   return [
     'KNOWL CAPTURE: this turn has done substantial work and stored nothing durable.',
-    'If something here would help a later session -- a finding you verified, a decision and its reasoning, a diagnosis that will recur -- store it now with knowl_store or knowl_decide, while the details are still in front of you.',
+    `If something here would help a later session, write it now while the details are still in front of you: ${KNOWL_WRITE_ROUTING}.`,
     'Querying memory does not persist anything; only a write does. If nothing durable exists yet, carry on -- this asks at most once per turn.',
   ].join(' ');
 }
@@ -405,7 +406,7 @@ export function renderTurnCapturePrompt(): string {
 export function renderMidSessionSilenceNudge(): string {
   return [
     'KNOWL: this session has consulted memory several times and stored nothing durable.',
-    'If anything you have established here would help a later session -- a verified finding, a decision and its reasoning, a diagnosis that will recur -- store it now with knowl_store or knowl_decide.',
+    `If anything you have established here would help a later session, write it now: ${KNOWL_WRITE_ROUTING}.`,
     'If there is genuinely nothing durable yet, carry on; this will not ask again.',
   ].join(' ');
 }
@@ -413,7 +414,7 @@ export function renderMidSessionSilenceNudge(): string {
 export function renderSilenceNudge(): string {
   return [
     'KNOWL: this session is ending and nothing durable was stored.',
-    'If any of it was a decision, a plan, or a direction you were given — store it now with knowl_store or knowl_decide. Stated intent counts before it settles.',
+    `If any of it was a decision, a plan, or a direction you were given, write it now: ${KNOWL_WRITE_ROUTING}. Stated intent counts before it settles.`,
     'If there was genuinely nothing worth keeping, say so and stop; this will not ask again.',
   ].join('\n');
 }

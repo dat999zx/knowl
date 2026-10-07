@@ -38,6 +38,17 @@ describe('reminders.driftEvery', () => {
   });
 });
 
+describe('the default cadence', () => {
+  it('is 6, because most long stretches without a Knowl call in a real Hermes history were 6 to 11 calls', () => {
+    // Four days of real sessions: 356 stretches, 128 of them 6 or more calls long, and only 50 of
+    // those reached 12. So the old default of 12 could never speak in 61% of the stretches long
+    // enough to be worth a reminder, and the median stretch was 4. Pinned by value on purpose: the
+    // number is the decision, and moving it changes how often every agent on every host is
+    // interrupted.
+    expect(DEFAULT_DRIFT_REMINDER_EVERY).toBe(6);
+  });
+});
+
 describe('the backoff schedule', () => {
   /** Every drift count that fires, up to `limit`, at the default cadence. */
   const firesUpTo = (limit: number, every = DEFAULT_DRIFT_REMINDER_EVERY, backoff = true) => {
@@ -47,20 +58,20 @@ describe('the backoff schedule', () => {
   };
 
   it('doubles the gap after each delivery', () => {
-    expect(firesUpTo(400)).toEqual([12, 36, 84, 180, 372]);
-    // Which is to say the gaps are 12, 24, 48, 96, 192 -- each twice the last.
-    expect(firesUpTo(400).map((n, i, all) => n - (all[i - 1] ?? 0))).toEqual([12, 24, 48, 96, 192]);
+    expect(firesUpTo(400)).toEqual([6, 18, 42, 90, 186, 378]);
+    // Which is to say the gaps are 6, 12, 24, 48, 96, 192 -- each twice the last.
+    expect(firesUpTo(400).map((n, i, all) => n - (all[i - 1] ?? 0))).toEqual([6, 12, 24, 48, 96, 192]);
   });
 
   it('never goes silent, which is the whole reason it is not a cap', () => {
     // The heaviest session in the measured archive drifted ~2,900 events. A cap of 3 would have
     // stopped speaking at event 36 and never spoken again over the remaining 2,868.
-    expect(firesUpTo(2904).length).toBe(7);
-    expect(firesUpTo(2904).at(-1)).toBe(1524);
+    expect(firesUpTo(2904).length).toBe(8);
+    expect(firesUpTo(2904).at(-1)).toBe(1530);
   });
 
   it('repeats forever at the fixed cadence when backoff is off', () => {
-    expect(firesUpTo(60, DEFAULT_DRIFT_REMINDER_EVERY, false)).toEqual([12, 24, 36, 48, 60]);
+    expect(firesUpTo(60, DEFAULT_DRIFT_REMINDER_EVERY, false)).toEqual([6, 12, 18, 24, 30, 36, 42, 48, 54, 60]);
   });
 
   it('scales the whole schedule with the cadence, and 0 silences it', () => {

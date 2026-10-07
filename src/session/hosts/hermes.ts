@@ -125,7 +125,7 @@ export const hermesProfile: HostProfile = {
   nativeOutput: true,
   // Observed 2026-09-06: driving the real plugin hooks against the real engine in a real
   // project, the drift reminder was delivered on tool call 11 (0-indexed) of 14 read_file
-  // calls -- the tick DEFAULT_DRIFT_REMINDER_EVERY = 12 predicts -- appended to the tool
+  // calls -- the tick the cadence predicts (12 at the time; the default is now 6) -- appended to the tool
   // result by `transform_tool_result`. The card the model receives, not merely an envelope
   // the host accepts.
   midTurnDeliveryVerified: true,

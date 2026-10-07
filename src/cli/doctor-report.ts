@@ -94,8 +94,8 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       status: ignoresKnowl ? 'OK' : 'WARN',
       message: ignoresKnowl
         ? '.gitignore ignores .knowl/'
-        : '.gitignore should ignore .knowl/; run knowl upgrade',
-      fix: ignoresKnowl ? undefined : 'add `.knowl/` to `.gitignore` or run `knowl upgrade`',
+        : '.gitignore should ignore .knowl/; run knowl init',
+      fix: ignoresKnowl ? undefined : 'add `.knowl/` to `.gitignore` or run `knowl init`',
       remedy: ignoresKnowl ? undefined : { kind: 'gitignore' },
     });
 
@@ -153,16 +153,16 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       checks.push({
         status: vectorEnabled ? 'FAIL' : 'WARN',
         message: vectorEnabled
-          ? 'Database schema is missing knowledge_embeddings, so vector search has nowhere to store or read embeddings and cannot return anything; run knowl upgrade'
-          : 'Database schema missing knowledge_embeddings; run knowl upgrade',
-        fix: 'run `knowl upgrade`',
+          ? 'Database schema is missing knowledge_embeddings, so vector search has nowhere to store or read embeddings and cannot return anything; run knowl init'
+          : 'Database schema missing knowledge_embeddings; run knowl init',
+        fix: 'run `knowl init`',
       });
     }
     try {
       await (getDb() as any).all(sql`SELECT 1 FROM code_symbols LIMIT 1`);
       checks.push({ status: 'OK', message: 'Code symbol index schema ready' });
     } catch {
-      checks.push({ status: 'WARN', message: 'Code symbol index schema missing; run knowl upgrade' });
+      checks.push({ status: 'WARN', message: 'Code symbol index schema missing; run knowl init' });
     }
     checks.push({ status: 'OK', message: 'Local viewer available through `knowl view`' });
     const configuredNamespaces = [config.memory?.organization, config.memory?.global].filter(entry => entry?.enabled).length;
@@ -177,7 +177,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         remedy: stale.length ? { kind: 'session-recover' } : undefined,
       });
     } catch {
-      checks.push({ status: 'WARN', message: 'Database schema missing memory sessions; run knowl upgrade' });
+      checks.push({ status: 'WARN', message: 'Database schema missing memory sessions; run knowl init' });
     }
 
     // Resolved once. Both coverage checks below filter on the profile that search actually uses,
@@ -247,7 +247,19 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
           });
         }
         const detection = await adapter.detect(root);
-        if (!detection.configured) continue;
+        if (!detection.configured && detection.present) {
+          // Installed once and left behind by an update: `configured` is false on purpose, and
+          // the repair is the same `init` that would have installed it.
+          checks.push({
+            status: 'WARN',
+            message: `${adapter.name} integration is out of date`,
+            fix: `run \`knowl init ${adapter.name}\``,
+            remedy: { kind: 'host-init', host: adapter.name },
+          });
+        }
+        // A stale install is still an install: it keeps every check below (a hooks transport that
+        // does not match, missing instructions), and gains the warning above.
+        if (!detection.configured && !detection.present) continue;
         configuredAgentCount += 1;
         if (adapter.verifyInstructions) {
           const verified = await adapter.verifyInstructions(root);

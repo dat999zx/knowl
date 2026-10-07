@@ -24,6 +24,7 @@ import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, FLEET_TOOL_DEFINITIONS, 
 import { DEFAULT_PRESET_ID, VECTOR_PRESETS } from '../src/core/vector-profile.js';
 import { stripManagedKnowlGuidance } from '../src/core/agents-guidance.js';
 import { renderManagedKnowlGuidanceSection } from '../src/core/knowl-guidance.js';
+import { hermesPluginGuidance } from '../src/core/plugin-guidance.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const check = process.argv.includes('--check');
@@ -200,6 +201,25 @@ if (check && guidanceStale) {
   console.log(guidanceStale
     ? 'Project guidance rewritten from src/core/knowl-guidance.ts.'
     : 'Project guidance already matches src/core/knowl-guidance.ts.');
+}
+
+/**
+ * The Hermes plugin's rule texts. The plugin is Python and cannot import them, so they are rendered
+ * from `src/core/plugin-guidance.ts` into a JSON file it reads. Compared as LF text: a checkout
+ * with core.autocrlf holds CRLF, which is not drift.
+ */
+const pluginGuidanceFile = path.join(root, 'integrations', 'hermes', 'knowl', 'guidance.json');
+const pluginGuidance = `${JSON.stringify(hermesPluginGuidance(), null, 2)}\n`;
+const pluginGuidanceCurrent = fs.existsSync(pluginGuidanceFile)
+  ? fs.readFileSync(pluginGuidanceFile, 'utf8').replaceAll('\r\n', '\n')
+  : '';
+if (pluginGuidanceCurrent !== pluginGuidance) {
+  if (check) {
+    failures.push('integrations/hermes/knowl/guidance.json does not match src/core/plugin-guidance.ts. Run: npm run docs:generate');
+  } else {
+    fs.writeFileSync(pluginGuidanceFile, pluginGuidance);
+    console.log('Hermes plugin guidance rewritten from src/core/plugin-guidance.ts.');
+  }
 }
 
 for (const failure of failures) console.error(`✗ ${failure}`);

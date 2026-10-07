@@ -68,7 +68,7 @@ export function createAgentReminderOutput(host: string, text: string = promptRem
  * boundary, and it is already maintained unconditionally.
  *
  * Turn 0 always speaks: a conversation that has never seen the card gets it once. After that
- * backoff lands deliveries at 12, 36, 84, 180 completed turns.
+ * backoff lands deliveries at 6, 18, 42, 90 completed turns.
  *
  * Fail-open. Every failure emits the card, because a store that cannot be read must not
  * silently switch guidance off for the rest of a session -- it degrades to the old behaviour,

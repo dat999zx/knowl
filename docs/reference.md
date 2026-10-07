@@ -1015,19 +1015,22 @@ knowl config set reminders.driftBackoff false   # repeat at that cadence forever
 knowl config set reminders.skills false         # stop the two skill nudges
 ```
 
-- **`reminders.driftEvery`** (default `12`) — how many consecutive successful tool calls that
+- **`reminders.driftEvery`** (default `6`) — how many consecutive successful tool calls that
   used no Knowl tool trigger the continuation reminder. Any Knowl tool call resets the count,
   so a session already using memory never sees it. The cadence *is* the switch: `0` is off, and
   raising it is the lever for a long mechanical session that pays the reminder repeatedly for a
-  rule it followed the first time. Measured against a 197-session archive, the shipped cadence
-  fires ~19 times per session and ~1,750 tokens with it — more than three times the guidance
-  card, and unbounded, because it scales with how long the session runs rather than sitting at a
-  fixed size. The heaviest session in that archive took it 242 times.
+  rule it followed the first time. The default was 12 until 5.25.0. It is 6 because in four days
+  of real Hermes history 128 stretches of tool calls ran 6 or more without a Knowl call and only
+  50 reached 12, so the old default never spoke in most of the stretches long enough to matter.
+  Measured against a 197-session archive at the old default of 12, the reminder fired ~19 times
+  per session and ~1,750 tokens with it — more than three times the guidance card, and unbounded,
+  because it scales with how long the session runs rather than sitting at a fixed size. The
+  heaviest session in that archive took it 242 times. Backoff, below, is what bounds that cost.
 - **`reminders.driftBackoff`** (default `true`) — double the gap after each delivery, so the
-  reminder lands at 12, 36, 84, 180, 372 rather than every 12 forever. The message is
+  reminder lands at 6, 18, 42, 90, 186 rather than every 6 forever. The message is
   byte-identical every time it is sent: after two or three the agent has either adopted the rule
-  or decided against it, and the rest is furniture. Over the same archive this removes 86% of
-  deliveries, and the worst session drops from 242 to 7.
+  or decided against it, and the rest is furniture. Over the same archive (cadence 12) this
+  removes 86% of deliveries, and the worst session drops from 242 to 7.
 
   It backs off rather than stopping, and that is the point. A hard cap of three would remove 89%
   — barely more — but goes permanently silent after event 36 and says nothing across the
@@ -2477,8 +2480,11 @@ Four hosts need one extra step:
   beside the MCP entry, and removes any shell hooks an earlier version wrote. Restart Hermes
   afterwards so it loads the plugin. That same directory is one of the four Hermes scans for
   memory providers, so Knowl also appears under **Settings > Memory & Context > Memory
-  Provider**; picking it there (or setting `memory.provider: knowl`) is optional and additive
-  — see [hosts](hosts.md).
+  Provider**. `knowl init hermes` selects it when no provider is set and leaves a provider you
+  chose alone. Selected, `knowl_query` and `knowl_store` are direct tools from the first turn
+  instead of sitting behind `tool_search` — see [hosts](hosts.md). Claude Code gets the same
+  guarantee from `"alwaysLoad": true` on its `.mcp.json` entry; the Claude Desktop app ignores
+  that key (anthropics/claude-code#86284), and no other host has a documented equivalent.
 - **OpenClaw** runs in-process inside the gateway. `knowl init openclaw` merges
   `plugins.entries.knowl` into `openclaw.json` with both permission gates and copies the plugin
   to `~/.openclaw/knowl-plugin`, then prints two commands it deliberately does not run:
@@ -2708,8 +2714,9 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 
 | Command | Description |
 | --- | --- |
-| `knowl init [agents...] [--global] [-y\|--yes]` | Initialize or upgrade the project in this directory and configure selected agents. `--global` switches to machine scope: the personal-defaults store plus any hosts named, with nothing written into the current directory |
-| `knowl upgrade` | Refresh project files, schema, guidance, and `.gitignore` without agent setup |
+| `knowl init [agents...] [--global] [-y\|--yes]` | Initialize or upgrade the project in this directory and configure selected agents. `--global` switches to machine scope: the personal-defaults store plus any hosts named, with nothing written into the current directory. Naming `claude`, `codex`, `antigravity` or `windsurf` with `--global` also adds a short managed block to that host's global instruction file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`, `~/.codeium/windsurf/memories/global_rules.md`) so a session in a folder with no `AGENTS.md` still knows to use Knowl; only with `--yes` or an interactive yes, the previous file is kept as `<file>.backup`, and a host with no documented file is named and skipped |
+| `knowl init --all [--root <dir...>] [--dry-run] [--reindex] [--no-snapshot]` | Upgrade and repair every Knowl repository on this machine, snapshotting each first. An integration an update left out of date (the copied Hermes plugin, a Claude Code entry from before `alwaysLoad`) is re-registered in the repository that already has it; no repository is opted into an agent it did not use. Machine-wide hosts are refreshed once, not once per repository |
+| `knowl upgrade` | Deprecated alias for `knowl init`'s project maintenance (`upgrade --all` for `init --all`); prints a notice and will be removed |
 | `knowl status` | Show repository, memory, AI, commit, and workspace status |
 | `knowl doctor` | Check project, vector coverage, agent, and workspace readiness |
 | `knowl state` | Print the active hierarchical project memory |

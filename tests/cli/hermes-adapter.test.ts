@@ -53,6 +53,8 @@ describe('hermes adapter', () => {
 
     expect(await readFile(pluginFile('__init__.py'), 'utf8')).toContain('agent-hook');
     expect(await readFile(pluginFile('plugin.yaml'), 'utf8')).toContain('name: knowl');
+    // The rules the model is given come from this file; a plugin installed without it has none.
+    expect(JSON.parse(await readFile(pluginFile('guidance.json'), 'utf8')).projectRules).toContain('knowl_update');
     expect(await adapter.verify('/repo')).toBe(true);
     expect(await adapter.verifyLifecycle!('/repo')).toBe(true);
     expect((await adapter.configureLifecycle!('/repo')).status).toBe('unchanged');
@@ -141,6 +143,44 @@ describe('hermes adapter', () => {
     const result = await adapter.configure('/repo');
     expect(result.status).toBe('failed');
     expect(await readFile(path.join(home, 'config.yaml'), 'utf8')).toBe('a: [\n');
+    expect((await adapter.detect('/repo')).configured).toBe(false);
+  });
+
+  it('selects knowl as the memory provider when none is set, so its tools are never deferred', async () => {
+    const adapter = createHermesAdapter(env(true));
+    await adapter.configure('/repo');
+    expect((await config()).memory.provider).toBe('knowl');
+    expect((await adapter.detect('/repo')).configured).toBe(true);
+  });
+
+  it('never replaces a memory provider the person already chose', async () => {
+    await writeFile(path.join(home, 'config.yaml'), '# hermes\nmemory:\n  provider: honcho\n  memory_enabled: true\n', 'utf8');
+    const adapter = createHermesAdapter(env(true));
+    await adapter.configure('/repo');
+    const text = await readFile(path.join(home, 'config.yaml'), 'utf8');
+    expect(text).toContain('# hermes');
+    expect((parse(text) as Record<string, any>).memory).toEqual({ provider: 'honcho', memory_enabled: true });
+  });
+
+  it('reads a plugin copy that differs from the shipped one as not configured, and configure repairs it', async () => {
+    const adapter = createHermesAdapter(env(true));
+    await adapter.configure('/repo');
+    expect((await adapter.detect('/repo')).configured).toBe(true);
+
+    // An npm update replaces the package but never the copied plugin.
+    await writeFile(pluginFile('__init__.py'), '# an older release\n', 'utf8');
+    expect((await adapter.detect('/repo')).configured).toBe(false);
+    expect(await adapter.verifyLifecycle!('/repo')).toBe(false);
+
+    await adapter.configure('/repo');
+    expect((await adapter.detect('/repo')).configured).toBe(true);
+    expect(await readFile(pluginFile('__init__.py'), 'utf8')).toBe(await readFile(path.join(hermesPluginSourceDir(), '__init__.py'), 'utf8'));
+  });
+
+  it('reports a plugin installed without its guidance file as out of date', async () => {
+    const adapter = createHermesAdapter(env(true));
+    await adapter.configure('/repo');
+    await rm(pluginFile('guidance.json'));
     expect((await adapter.detect('/repo')).configured).toBe(false);
   });
 

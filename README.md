@@ -12,6 +12,8 @@
 
 <a href="https://discord.gg/YrWbHe8FBB"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?logo=discord&logoColor=white&style=for-the-badge" alt="Join the Knowl Discord" height="40" /></a>
 
+<a href="https://peerpush.com/p/knowl" target="_blank" rel="noopener"><img src="https://peerpush.com/p/knowl/badge.png" alt="Knowl on PeerPush" width="230" /></a>
+
 <p align="center">
   <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="Scores 90 on MemoryAgentBench FactConsolidation single-hop at 262K" height="38" /></picture></a>
   <a href="#quick-start"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-nokeys.svg"><img src="docs/assets/chips/stat-nokeys.svg" alt="0 API keys needed" height="38" /></picture></a>
@@ -86,6 +88,9 @@ runtime directly is not supported.
 `knowl init` creates `.knowl/`, installs the project guidance files, updates `.gitignore`, and
 registers Knowl with whichever agents it detects. It also warms a local embedding model (~53 MB)
 in the background — `init` succeeds either way, and without it you still get keyword search.
+
+To refresh every repository and every machine-wide host after an update, run `knowl init --all`
+once. It replaces `knowl upgrade --all`, which still works for one release.
 
 That is the whole setup. You do not record memory by hand: your agent reads and writes it as it
 works.
@@ -175,8 +180,8 @@ the agent picks up its guidance, and it will query and write memory on its own.
 **gate** means Knowl can refuse an edit that invalidates code another session is holding.
 Neovim and Kiro work the same way as Zed and JetBrains, through `knowl acp`. Cline needs one
 line pointing it at the shipped plugin. Hermes Agent gets a Python plugin, installed for you,
-that works in the terminal and in Hermes Desktop alike, and can additionally be picked as
-Hermes' memory provider. OpenClaw runs in-process inside its gateway via an extension plugin,
+that works in the terminal and in Hermes Desktop alike; `knowl init` also selects it as Hermes'
+memory provider when none is set, which is what keeps `knowl_query` out of Hermes' tool search. OpenClaw runs in-process inside its gateway via an extension plugin,
 evaluating write gates without subprocess overhead — `knowl init openclaw` copies it and prints
 the two commands that register it. Any other MCP client works with
 no integration at all.

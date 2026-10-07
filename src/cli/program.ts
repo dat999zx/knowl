@@ -89,6 +89,7 @@ import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-
 import { formatAgentInitSummary, runAgentInitFlow } from './init-flow.js';
 import { formatWarmResult, warmEmbeddingModel } from './warm-embeddings.js';
 import { parseAgentNames } from './agents/registry.js';
+import type { AgentName } from './agents/types.js';
 import { reindexKnowledgeEmbeddings } from '../store/vector-index.js';
 import { applyKnowledgeGc, previewKnowledgeGc, isHot } from '../store/gc.js';
 import { listForgetLog, pruneForgetLog } from '../store/forget-log.js';
@@ -322,6 +323,34 @@ program
   .version(PACKAGE_VERSION);
 
 // --- 1. INIT COMMAND ---
+/**
+ * `init --global <host>`: tell the host about Knowl in every folder, through the global instruction
+ * file it documents. That file is the person's own, so it is written only with `--yes` or an
+ * interactive yes, and a host with no documented file is skipped by name rather than guessed at.
+ */
+async function installGlobalInstructionsFor(hosts: AgentName[], yes: boolean) {
+  const { globalInstructionHosts, globalInstructionPath, installGlobalInstructions } = await import('./agents/global-instructions.js');
+  for (const host of hosts) {
+    const target = globalInstructionPath(host);
+    if (!target) {
+      console.log(`${host}: no documented global instruction file, so none was written (supported: ${globalInstructionHosts().join(', ')}).`);
+      continue;
+    }
+    let approved = yes;
+    if (!approved && process.stdin.isTTY && process.stdout.isTTY) {
+      const clack = await import('@clack/prompts');
+      const answer = await clack.confirm({ message: `Add the Knowl personal-defaults block to ${target}? The current file is kept as ${target}.backup.` });
+      approved = answer === true;
+    }
+    if (!approved) {
+      console.log(`${host}: ${target} left alone (pass --yes to write it).`);
+      continue;
+    }
+    const result = await installGlobalInstructions(host);
+    console.log(`${host}: ${result!.status} ${result!.configPath}`);
+  }
+}
+
 program
   .command('init')
   .description('Initialize (or re-run on an existing repo to upgrade) and register agent integrations. On an existing project this performs `knowl upgrade` first, then agent setup.')
@@ -333,7 +362,12 @@ program
   // empty `global.db` costs a few kilobytes, `knowl init` in a repository creates one anyway, and
   // the pair forced a reader to hold two axes in their head to answer "how do I set up Hermes".
   .option('--global', 'Machine scope: the personal-defaults store, and any hosts named beside it')
-  .action(async (agents: string[], options: { yes?: boolean; global?: boolean }) => {
+  .option('--all', 'Upgrade every Knowl repository on this machine and re-register the agents each already uses')
+  .option('--root <dir...>', 'With --all, also scan these directories for repositories not yet known')
+  .option('--reindex', 'With --all, also re-embed items missing vector coverage (slow)')
+  .option('--no-snapshot', 'With --all, skip the per-repository snapshot')
+  .option('--dry-run', 'With --all, list the repositories that would be swept and change nothing')
+  .action(async (agents: string[], options: SweepFlags & { yes?: boolean; global?: boolean }) => {
     const cwd = process.cwd();
     const knowlDir = path.join(cwd, '.knowl');
     const name = path.basename(cwd) || 'My Project';
@@ -341,12 +375,23 @@ program
     try {
       parseAgentNames(agents);
 
+      if (options.all) {
+        // Named agents and --global both mean "set this up", and a sweep only refreshes what a
+        // repository already has. Mixing them would quietly do less than was asked.
+        if (agents.length > 0) throw new Error('--all refreshes the agents each repository already uses; to add one, run `knowl init <agent>` in that repository.');
+        if (options.global) throw new Error('--all and --global are separate scopes; run them as two commands.');
+        await runRepoSweep(options);
+        return;
+      }
+      rejectSweepOnlyFlags(options, 'knowl init');
+
       if (options.global) {
         const { runGlobalInit } = await import('./global-init.js');
         const result = await runGlobalInit();
         console.log(result.created
           ? `Created global store at ${result.path}`
           : `Global store already exists at ${result.path}`);
+        await installGlobalInstructionsFor(parseAgentNames(agents), Boolean(options.yes));
         if (agents.length > 0 || (process.stdin.isTTY && process.stdout.isTTY && !options.yes)) {
           const flow = await runAgentInitFlow(cwd, {
             agentNames: agents,
@@ -3659,63 +3704,80 @@ program
   });
 
 // --- 11. UPGRADE COMMAND ---
+type SweepFlags = { all?: boolean; root?: string[]; reindex?: boolean; snapshot?: boolean; dryRun?: boolean };
+
+/** Flags that only mean something for a sweep. Rejected, not ignored, so nobody believes one ran. */
+function rejectSweepOnlyFlags(options: SweepFlags, command: string) {
+  for (const [flag, present] of [['--root', Boolean(options.root)], ['--reindex', Boolean(options.reindex)], ['--no-snapshot', options.snapshot === false], ['--dry-run', Boolean(options.dryRun)]] as const) {
+    if (present) throw new Error(`${flag} only applies to \`${command} --all\`.`);
+  }
+}
+
+/**
+ * Upgrade and repair every known repository.
+ *
+ * Agent setup is not a separate step here: `doctor` flags an integration an update left stale
+ * ("out of date") with a `host-init` remedy, and the sweep applies doctor's remedies. That
+ * repair only ever re-runs `init` for an agent the repository already has, so a sweep cannot
+ * opt a repository into one.
+ */
+async function runRepoSweep(options: SweepFlags) {
+  // Read before discovery so the registry is healed first and the sweep list below is
+  // already the corrected one. A registry line is dropped only when the filesystem
+  // positively says it is not a repository, and a sweep must not shrink in silence:
+  // these are the paths `init --all` and `doctor --fix` will stop acting on.
+  const { forgotten } = await readKnownRepos({ persist: !options.dryRun });
+  for (const stale of forgotten) {
+    console.log(`Forgot ${stale} -- recorded as a Knowl repository, but no longer one.`);
+  }
+  if (forgotten.length > 0) console.log('');
+
+  const discovered = await discoverRepos({ roots: options.root, record: !options.dryRun });
+  if (discovered.length === 0) {
+    console.log('No Knowl repositories found. Run `knowl init` in a repository, or pass --root <dir> to scan for existing ones.');
+    return;
+  }
+
+  const verb = options.dryRun ? 'Would sweep' : 'Sweeping';
+  console.log(`${verb} ${discovered.length} repositor${discovered.length === 1 ? 'y' : 'ies'}:`);
+  for (const repository of discovered) console.log(`  ${repository.root}  (found via ${repository.source})`);
+  console.log('');
+
+  if (options.dryRun) {
+    console.log('Dry run: nothing was changed. Re-run without --dry-run to sweep.');
+    return;
+  }
+
+  const results = await sweepRepos(discovered.map(repository => repository.root), {
+    reindex: options.reindex,
+    snapshot: options.snapshot,
+  });
+  console.log(formatSweepReport(results));
+
+  // Set rather than exited: a hard exit while database handles are still closing crashes
+  // the process on Windows instead of reporting a status.
+  if (results.some(result => !result.ready)) process.exitCode = 1;
+}
+
 program
-  .command('upgrade')
-  .description('Refresh project files only (config, schema, guidance, .gitignore) — no agent setup. `knowl init` runs this plus agent registration.')
+  .command('upgrade', { hidden: true })
+  .description('Deprecated: `knowl init` upgrades a repository and registers agents; `knowl init --all` does it for every repository.')
   .option('--all', 'Upgrade and repair every Knowl repository on this machine')
   .option('--root <dir...>', 'With --all, also scan these directories for repositories not yet known')
   .option('--reindex', 'With --all, also re-embed items missing vector coverage (slow)')
   .option('--no-snapshot', 'With --all, skip the per-repository snapshot')
   .option('--dry-run', 'With --all, list the repositories that would be swept and change nothing')
-  .action(async (options: { all?: boolean; root?: string[]; reindex?: boolean; snapshot?: boolean; dryRun?: boolean }) => {
+  .action(async (options: SweepFlags) => {
     try {
+      console.error('`knowl upgrade` is deprecated and will be removed: use `knowl init` (this repository) or `knowl init --all` (every repository).');
       if (!options.all) {
-        // Rejected rather than ignored: a flag that silently does nothing is how you end up
-        // believing a sweep ran.
-        for (const [flag, present] of [['--root', Boolean(options.root)], ['--reindex', Boolean(options.reindex)], ['--no-snapshot', options.snapshot === false], ['--dry-run', Boolean(options.dryRun)]] as const) {
-          if (present) throw new Error(`${flag} only applies to \`knowl upgrade --all\`.`);
-        }
+        rejectSweepOnlyFlags(options, 'knowl upgrade');
         const root = await findProjectRoot(process.cwd());
         const result = await upgradeExistingRepository(root, path.basename(root) || 'My Project');
         printUpgradeStatus(result);
         return;
       }
-
-      // Read before discovery so the registry is healed first and the sweep list below is
-      // already the corrected one. A registry line is dropped only when the filesystem
-      // positively says it is not a repository, and a sweep must not shrink in silence:
-      // these are the paths `upgrade --all` and `doctor --fix` will stop acting on.
-      const { forgotten } = await readKnownRepos({ persist: !options.dryRun });
-      for (const stale of forgotten) {
-        console.log(`Forgot ${stale} -- recorded as a Knowl repository, but no longer one.`);
-      }
-      if (forgotten.length > 0) console.log('');
-
-      const discovered = await discoverRepos({ roots: options.root, record: !options.dryRun });
-      if (discovered.length === 0) {
-        console.log('No Knowl repositories found. Run `knowl init` in a repository, or pass --root <dir> to scan for existing ones.');
-        return;
-      }
-
-      const verb = options.dryRun ? 'Would sweep' : 'Sweeping';
-      console.log(`${verb} ${discovered.length} repositor${discovered.length === 1 ? 'y' : 'ies'}:`);
-      for (const repository of discovered) console.log(`  ${repository.root}  (found via ${repository.source})`);
-      console.log('');
-
-      if (options.dryRun) {
-        console.log('Dry run: nothing was changed. Re-run without --dry-run to sweep.');
-        return;
-      }
-
-      const results = await sweepRepos(discovered.map(repository => repository.root), {
-        reindex: options.reindex,
-        snapshot: options.snapshot,
-      });
-      console.log(formatSweepReport(results));
-
-      // Set rather than exited: a hard exit while database handles are still closing crashes
-      // the process on Windows instead of reporting a status.
-      if (results.some(result => !result.ready)) process.exitCode = 1;
+      await runRepoSweep(options);
     } catch (error: any) {
       console.error(`❌ Error upgrading KNOWL: ${error.message}`);
       process.exit(1);

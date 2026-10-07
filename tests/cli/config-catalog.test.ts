@@ -85,7 +85,7 @@ describe('renderConfigCatalog', () => {
       {
         field: field({
           key: 'reminders.driftBackoff',
-          description: 'Double the gap after each reminder -- 12, 24, 48, 96 -- instead of repeating at the same cadence forever. The message is identical every time, so the fortieth is worth nothing; this keeps the long-session safety net without the nagging.',
+          description: 'Double the gap after each reminder -- 6, 12, 24, 48 -- instead of repeating at the same cadence forever. The message is identical every time, so the fortieth is worth nothing; this keeps the long-session safety net without the nagging.',
         }),
         value: true,
       },

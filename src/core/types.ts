@@ -381,7 +381,7 @@ export interface ProjectConfig {
      */
     driftEvery?: number;
     /**
-     * Double the gap after each delivery -- 12, 24, 48, 96 -- rather than repeating at a fixed
+     * Double the gap after each delivery -- 6, 12, 24, 48 -- rather than repeating at a fixed
      * cadence forever. On by default.
      *
      * The reminder is byte-identical every time it is sent, so its value decays: after two or

@@ -3,6 +3,109 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.25.0 — 2026-10-05
+
+### Fix: Antigravity and Windsurf were treated as configured in every repository on the machine
+
+- Both hosts keep their MCP entry in the user's home, so one `knowl init antigravity` anywhere made
+  `detect().configured` true in every repository. Doctor then warned "lifecycle hooks missing or
+  stale" in each, and `doctor --fix` (and the `knowl upgrade --all` sweep, which runs the same
+  repairs) ran `knowl init antigravity` and wrote `.agents/hooks.json` into repositories that had
+  never used the host: five of them in one sweep. For a host whose MCP entry lives in the user's
+  home, a repository now counts as configured only when it also has that host's hooks file, which
+  `knowl init <host>` writes. `init`'s own verify step is unchanged and still checks only the MCP
+  entry, so a first `knowl init antigravity` works. A repository that already has the hooks file
+  is unaffected.
+
+### Fix: the Hermes plugin dropped every tool event, so none of the mid-turn reminders ran
+
+- `post_tool_call` handed its work to a new thread, and that thread looked up the session's folder
+  in a context variable Hermes sets for the turn. A thread does not inherit it, so the lookup
+  returned the process directory, which is not a Knowl project, and the event was dropped before it
+  reached the engine. Everything built on tool events was dead on Hermes: the continuation
+  reminder, same-turn change cards, skill nudges and turn capture. One real repository held 92
+  Hermes sessions with only start and stop events and no tool event at all. The folder is now
+  resolved on the turn's own thread and passed to the observer. Also removed `fire_async`, which
+  had no callers. Reinstall with `knowl init hermes` to load it.
+
+### Hermes: the manual install routes ship the rules file too
+
+- `integrations/hermes/install.py` copied a fixed list of two files, and the pip package listed only
+  `plugin.yaml` as package data, so either route left `guidance.json` behind and the plugin loaded
+  with empty rules. `install.py` now copies every file in the plugin directory and the package ships
+  `*.json`. `knowl init hermes` already copied it. The Hermes, hosts and reference docs now describe
+  the memory-provider route, the tool-visibility table per host, `knowl init --all` and the cadence
+  change.
+
+### Hermes and Claude Code: the memory tools are no longer behind tool search
+
+- **`knowl_query` and `knowl_store` stay visible on Hermes.** Hermes defers every plugin and MCP tool
+  behind `tool_search`, so a model told to call `knowl_query` first had to look it up first, and
+  skipped it. A memory provider's tools are added after that decision, so the Hermes plugin now
+  offers the two tools as its provider's tools, and `knowl init hermes` sets `memory.provider:
+  knowl` when none is set. A provider you already chose is left alone, and then the tools stay
+  deferred. There is one copy of each tool in front of the model, not two.
+- **Claude Code gets `alwaysLoad: true`** on the `knowl` entry in `.mcp.json`, its documented
+  exemption from MCP tool deferral. The Claude Desktop app does not honor it yet
+  (anthropics/claude-code#86284). No other host has a verified equivalent, so none is changed.
+- **A stale Hermes plugin is now visible.** The plugin is a copy, and an npm update never reached
+  it. `knowl doctor` now reports an installed integration that differs from the shipped one as
+  "out of date", and `--fix` / `knowl init <agent>` repairs it.
+
+### Sessions with no project
+
+- **`knowl init --global <host>` now tells the host about Knowl in every folder.** A project's
+  `AGENTS.md` is what tells an agent to use Knowl, and a session with no project, or in a folder
+  nobody ran `init` in, has none. For Claude Code, Codex, Antigravity and Windsurf, the four hosts
+  whose global instruction file is documented, it adds a short managed block (its own markers, the
+  rest of the file untouched, the old file kept as `<file>.backup`) saying to query personal
+  defaults first. It asks first, or takes `--yes`. Cursor and the rest have no documented file and
+  are named and skipped instead of guessed at.
+- **The server's handshake card now says what the tools are for when no project is open.** It said
+  "for project work" and nothing more, to a session that has no project.
+
+### Every agent-facing text is built from shared sentences
+
+- The reminder, the three capture nudges, the correction nudge, the global instruction block and the
+  Hermes plugin's rules each hand-wrote their own "store it" line and had drifted: three nudges named
+  `knowl_store or knowl_decide` and never `knowl_update`. `KNOWL_WRITE_ROUTING`,
+  `KNOWL_LOAD_SCHEMA_LINE`, `KNOWL_NO_SECRETS_LINE` and `KNOWL_USE_TOGETHER_LINE` now live once in
+  `src/core/knowl-guidance.ts` and each text composes them; a test fails if a writing text omits the
+  routing. The Hermes plugin is Python and cannot import them, so `npm run docs:generate` renders
+  its rules from `src/core/plugin-guidance.ts` into `integrations/hermes/knowl/guidance.json`,
+  `docs:check` fails when that file is stale, and the installer copies it with the plugin. Its rules
+  now also name `knowl_update` and `knowl_decide`, and say to load them through `tool_search`.
+  A plugin installed without the file loads with empty rules and a logged warning: run `knowl init`.
+
+### The mid-turn reminder now covers writing, not just reading
+
+- The continuation reminder said "call knowl_query" and a generic "store durable findings", so a
+  model that obeyed it queried and never wrote. It now names `knowl_store` for a verified finding,
+  stated goal or recurring diagnosis, `knowl_update` for stale memory (instead of a duplicate) and
+  `knowl_decide` for a confirmed decision, and says to load a tool's schema if it is listed but not
+  callable. It no longer names Claude, since eight hosts receive it. Four hosts have no mid-turn
+  channel at all (Claude Desktop, Cline, Windsurf and the generic host) and are unchanged: they
+  rely on the server card and the instruction files.
+
+### Default change: the continuation reminder now speaks after 6 tool calls, not 12
+
+- `reminders.driftEvery` defaults to **6**. It counts consecutive successful tool calls that used no
+  Knowl tool, and any Knowl call resets it. In four days of real Hermes sessions, 128 stretches ran
+  6 or more calls without a Knowl call, and only 50 reached 12, so the old default never spoke in
+  most of the stretches long enough to matter. With backoff on, it now lands at 6, 18, 42, 90, 186
+  rather than 12, 36, 84, 180, 372, so a long session pays for one more reminder, not many. A repo
+  that set the key keeps its value; `knowl config set reminders.driftEvery 12` restores the old
+  cadence and `0` turns it off.
+
+### `knowl init --all` replaces `knowl upgrade --all`
+
+- `knowl init --all` upgrades every repository on the machine (project files, schema, guidance) and
+  applies doctor's repairs, which now include re-registering an out-of-date integration in the
+  repository that already has it. It never adds an agent a repository did not use, and machine-wide
+  hosts are refreshed once per run. It takes `--root`, `--dry-run`, `--reindex` and `--no-snapshot`.
+- `knowl upgrade` and `knowl upgrade --all` still work, are hidden from help, and print a
+  deprecation notice. Anything gating CI on `knowl upgrade --all` keeps working until it is removed.
+
 ## 5.24.1 — 2026-09-30
 
 ### Search
@@ -443,7 +546,6 @@ a pointer and sends nothing, `push` asks first unless given `--yes`. It connects
 name `.knowl`: unreadable in a listing, and identical for every person, so two people connecting
 their machine stores to one workspace would collide. `--repo` overrides it.
 
-
 **Global skills: reusable playbooks with project bindings.** A skill can now live once on the machine (`~/.knowl/skills/<name>/`) as a reusable playbook, while each repository provides its own commands and paths via project bindings in `.knowl/config.json`. A playbook and a binding are two keys: neither runs anything alone.
 - **Layering and Shadowing**: Project skills shadow global skills of the same name. `knowl skill list` identifies whether each skill is `project` or `global`.
 - **`requires` block**: Manifests (`skill.yaml` or `skill.json`) declare `inputs`, `capabilities` (`process`, `network`, `write`, `publish`, `delete`), and fail-closed `preconditions` (`clean_worktree`, `on_branch:<name>`, `command_exists:<bin>`).
@@ -465,7 +567,6 @@ Both safe routes remain, and the refusal names them. Every bound input is now ex
 `KNOWL_SKILL_INPUT_<NAME>`, which the command reads rather than the shell parsing it; or use a
 `script` entrypoint, whose arguments are passed as an array and never reach a shell. Script
 entrypoints are unaffected, which is what the documented example already used.
-
 
 ## 5.20.0 — 2026-09-04
 
@@ -566,7 +667,6 @@ member, `normalizePayload`, applied once before anything reads a field.
 **Codex lost two thirds of its shell commands**, found while verifying the above. `isShellEvent`
 delegated to the shared helper, which knows `bash` and `shell` -- but across this machine's codex
 sessions the tool is called `shell_command` 14,329 times against `shell` 2,059.
-
 
 **`knowl cloud push` can drain a queue again.** Two independent faults could each leave staged
 knowledge unsendable indefinitely.
@@ -851,7 +951,6 @@ median asks the useful question instead: is this claim unusual *for its kind*.
 - `docs/reference.md` covers both new `knowl status` blocks, and the README feature list gains
   the un-restated claims report and the recall gap's main-thread/subagent split.
 - Parallel agents in git worktrees share the main checkout's store.
-
 
 ## 5.14.0 — 2026-08-26
 
@@ -1427,7 +1526,6 @@ failure mode is "Knowl recorded nothing" rather than a gate that reports blockin
 through — but `impact.gate` and `capture.nudge` are opt-in on every host for a reason, and this is
 it. Per-host detail, and which claims are observed versus quoted, is in
 [docs/hosts.md](docs/hosts.md).
-
 
 ## 5.8.0 — 2026-08-20
 

@@ -192,6 +192,23 @@ describe('canonical Knowl agent guidance', () => {
    * compact cards get this wrong the moment someone drops an adjective to buy back characters,
    * which is the same pressure that produced the original omission.
    */
+  /**
+   * The mid-turn reminder is the one card a long session sees repeatedly, and it used to say only
+   * "call knowl_query" plus a generic "store durable findings". A model that read it queried
+   * and never wrote. It has to name the write tools, and update before it stores a duplicate.
+   * It is also sent to every host with hooks, so it cannot claim one host's name.
+   */
+  it('the continuation reminder names the write tools, not just the read tool, and no single host', () => {
+    for (const tool of ['knowl_query', 'knowl_store', 'knowl_update', 'knowl_decide']) {
+      expect(KNOWL_CLAUDE_CONTINUATION_REMINDER).toContain(tool);
+    }
+    expect(KNOWL_CLAUDE_CONTINUATION_REMINDER).toMatch(/instead of storing a duplicate/);
+    // Hosts that defer tools (Hermes) list knowl_update/knowl_decide without loading them.
+    expect(KNOWL_CLAUDE_CONTINUATION_REMINDER).toMatch(/listed but not callable, load its schema/);
+    expect(KNOWL_CLAUDE_CONTINUATION_REMINDER).not.toMatch(/Claude/);
+    expect(KNOWL_CLAUDE_CONTINUATION_REMINDER.length).toBeLessThan(700);
+  });
+
   it('names stated intent and recurring diagnoses as storable in every storage cue that reaches an agent', () => {
     const recurrence = /recurring diagnos|diagnosis whose cause will recur/;
     for (const surface of [

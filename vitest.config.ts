@@ -60,6 +60,13 @@ export default defineConfig({
       // relative value here would scatter a scratch home under every fixture instead of one
       // shared, swept location. `.knowl-` prefixed, so global teardown sweeps it.
       KNOWL_HOME: path.resolve('./.knowl-test-home'),
+      // The same hazard for Hermes, whose home is NOT under KNOWL_HOME: `knowl init --all` and
+      // `doctor --fix` refresh a Hermes plugin that differs from the shipped one, and a suite
+      // that spawns the CLI without this refreshed the developer's REAL plugin directory
+      // (%LOCALAPPDATA%/hermes/plugins/knowl) on a machine that has Hermes installed. CI has no
+      // Hermes, which is why only a developer's own run could do it. Absent on purpose, so
+      // nothing here is "installed"; suites that need a Hermes home set their own.
+      HERMES_HOME: path.resolve('./.knowl-test-hermes-home'),
     },
   },
 });

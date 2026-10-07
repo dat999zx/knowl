@@ -360,7 +360,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'reminders.driftBackoff', category: 'Reminders', type: 'boolean',
     parse: booleanValue, defaultValue: true,
     label: 'Back the reminder off',
-    description: 'Double the gap after each reminder -- 12, 24, 48, 96 -- instead of repeating at the same cadence forever. The message is identical every time, so the fortieth is worth nothing; this keeps the long-session safety net without the nagging. Set false for the old every-N-forever behaviour.',
+    description: 'Double the gap after each reminder -- 6, 12, 24, 48 -- instead of repeating at the same cadence forever. The message is identical every time, so the fortieth is worth nothing; this keeps the long-session safety net without the nagging. Set false for the old every-N-forever behaviour.',
   },
   {
     key: 'reminders.skills', category: 'Reminders', type: 'boolean',

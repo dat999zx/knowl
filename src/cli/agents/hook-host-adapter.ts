@@ -62,6 +62,19 @@ async function jsonMcpConfigured(pathname: string, expected: McpEntry): Promise<
 export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: AgentEnvironment): AgentAdapter {
   const entry = commandEntry(environment, spec.name);
   const mcpScope: IntegrationScope = spec.mcp.kind === 'json' ? spec.mcp.scope : 'project';
+  /**
+   * Whether the host's MCP config holds our entry -- everywhere it reads from, not the first file
+   * (a host reading the one without the entry sees no server). A `manual` target is "configured"
+   * exactly when the host is installed.
+   *
+   * Kept apart from `detect().configured` because the two answer different questions: this one
+   * gates `init`'s verify, which runs BEFORE the hooks file is written; `configured` is what
+   * doctor and the sweep read to decide which repositories have opted in.
+   */
+  const mcpConfigured = async (root: string, installed: boolean) => spec.mcp.kind === 'json'
+    ? (await Promise.all(spec.mcp.configPaths(root).map(file => jsonMcpConfigured(file, entry)))).every(Boolean)
+    : installed;
+  const exists = (file: string) => fs.access(file).then(() => true, () => false);
   return {
     name: spec.name,
     label: spec.label,
@@ -85,10 +98,10 @@ export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: Ag
         // ran unattended -- writing `.openhands/hooks.json` into projects that had never heard of
         // OpenHands. That is the same defect the Copilot `.mcp.json` collision caused, arriving
         // through a different door.
-        // Every file, not the first: a host reading the one without the entry sees no server.
-        configured: spec.mcp.kind === 'json'
-          ? (await Promise.all(configPaths.map(file => jsonMcpConfigured(file, entry)))).every(Boolean)
-          : installed,
+        // A host whose MCP entry lives in the user's home answers for the whole machine, so
+        // "the entry exists" cannot mean "THIS repository chose the host". The repository's own
+        // hooks file is that choice -- see `mcpConfigured`.
+        configured: (await mcpConfigured(root, installed)) && (mcpScope !== 'global' || await exists(spec.hooksPath(root))),
         scope: mcpScope,
         configPath,
       };
@@ -117,7 +130,9 @@ export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: Ag
       // Docker or `uvx` and often has no `openhands` on the developer's PATH at all -- the very
       // case its own profile documents, where hooks run inside the container.
       if (spec.mcp.kind === 'manual') return true;
-      return (await this.detect(root)).configured;
+      // The MCP entry only, never the opt-in gate in `detect`: init verifies before it writes the
+      // hooks file, so asking `detect` here would fail every first `knowl init antigravity`.
+      return mcpConfigured(root, await environment.commandExists(spec.command));
     },
     async lifecycleCapability() { return 'supported'; },
     async configureLifecycle(root) {

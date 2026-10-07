@@ -414,7 +414,7 @@ export function isPathsChangedEnabled(config: ProjectConfig): boolean {
 }
 
 /** The default continuation-reminder cadence, in consecutive non-Knowl tool events. */
-export const DEFAULT_DRIFT_REMINDER_EVERY = 12;
+export const DEFAULT_DRIFT_REMINDER_EVERY = 6;
 
 /**
  * How many consecutive non-Knowl tool events trigger the continuation reminder; `0` is off.
@@ -444,7 +444,7 @@ export function isDriftBackoffEnabled(config?: ProjectConfig | null): boolean {
  * Whether this drift count earns the continuation reminder.
  *
  * With backoff the gap doubles after every delivery -- 12, then 24, then 48 -- so deliveries
- * land at cumulative `every * (2^k - 1)`: 12, 36, 84, 180, 372. Which is to say `drift/every+1`
+ * land at cumulative `every * (2^k - 1)`: 6, 18, 42, 90, 186 at the default. Which is to say `drift/every+1`
  * is a power of two at exactly those points, so the whole schedule is a test on the counter
  * that already exists. No new column, no new row, nothing to reset.
  *

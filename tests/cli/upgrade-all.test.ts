@@ -95,6 +95,47 @@ describe('upgrade --all sweep', () => {
     expect(results[0].warnings.join(' ')).toMatch(/no knowledge stored yet/i);
   });
 
+  describe('integrations an update left stale', () => {
+    const HERMES = path.join(BASE, 'hermes-home');
+    const savedHermes = process.env.HERMES_HOME;
+    const legacyClaude = { mcpServers: { knowl: { command: process.platform === 'win32' ? 'knowl.cmd' : 'knowl', args: ['serve', '--host', 'claude'] } } };
+    const mcp = (root: string) => path.join(root, '.mcp.json');
+    const readMcp = async (root: string) => JSON.parse(await fs.readFile(mcp(root), 'utf-8'));
+
+    beforeEach(() => { process.env.HERMES_HOME = HERMES; });
+    afterEach(() => { if (savedHermes === undefined) delete process.env.HERMES_HOME; else process.env.HERMES_HOME = savedHermes; });
+
+    it('re-registers a stale agent in the repository that has it, and opts no other repository in', async () => {
+      await fs.writeFile(mcp(A), JSON.stringify(legacyClaude));
+
+      await sweepRepos([A, B], {});
+
+      expect((await readMcp(A)).mcpServers.knowl.alwaysLoad).toBe(true);
+      await expect(fs.access(mcp(B))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('refreshes a stale machine-wide Hermes plugin, keeping the comments in config.yaml', async () => {
+      await fs.mkdir(path.join(HERMES, 'plugins', 'knowl'), { recursive: true });
+      await fs.writeFile(path.join(HERMES, 'plugins', 'knowl', '__init__.py'), '# older release\n');
+      await fs.writeFile(path.join(HERMES, 'plugins', 'knowl', 'plugin.yaml'), 'name: knowl\n');
+      await fs.writeFile(path.join(HERMES, 'config.yaml'), '# mine\nplugins:\n  enabled:\n    - knowl\n');
+      const shipped = await fs.readFile(path.resolve('integrations/hermes/knowl/__init__.py'), 'utf-8');
+
+      await sweepRepos([A, B], {});
+
+      expect(await fs.readFile(path.join(HERMES, 'plugins', 'knowl', '__init__.py'), 'utf-8')).toBe(shipped);
+      const config = await fs.readFile(path.join(HERMES, 'config.yaml'), 'utf-8');
+      expect(config).toContain('# mine');
+      expect(config).toContain('provider: knowl');
+    });
+
+    it('leaves Hermes alone when it was never set up', async () => {
+      await sweepRepos([A], {});
+
+      await expect(fs.access(HERMES)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
   it('sweeps every discovered repository from the command line', { timeout: 120_000 }, async () => {
     // One spawn covering the whole path: discovery from the registry, the per-repo loop, the
     // report, and the exit code. The unit tests above cover the branches.
@@ -119,6 +160,31 @@ describe('upgrade --all sweep', () => {
     expect(swept.stdout).toMatch(/2 of 2 repositories ready/);
     expect(swept.stdout).toMatch(/no knowledge stored yet/i);
     expect(swept.status).toBe(0);
+  });
+
+  it('sweeps with `init --all`, and keeps `upgrade --all` working with a deprecation notice', { timeout: 120_000 }, async () => {
+    const CLI = path.resolve('./dist/index.js');
+    const run = (args: string[], cwd: string) => spawnSync(process.execPath, [CLI, ...args], {
+      cwd, encoding: 'utf-8', env: { ...process.env, KNOWL_HOME: HOME, KNOWL_NO_UPDATE_CHECK: '1' },
+    });
+    await recordKnownRepo(A);
+    await recordKnownRepo(B);
+
+    const swept = run(['init', '--all'], BASE);
+    expect(swept.stdout).toContain('KNOWL SWEEP');
+    expect(swept.stdout).toContain(A);
+    expect(swept.stdout).toContain(B);
+    expect(swept.status).toBe(0);
+
+    const old = run(['upgrade', '--all', '--dry-run'], BASE);
+    expect(old.status).toBe(0);
+    expect(old.stderr).toMatch(/deprecated/i);
+    expect(old.stdout).toContain(A);
+
+    // A sweep refreshes what each repository has; it cannot be asked to add an agent or mix scopes.
+    expect(run(['init', '--all', 'claude'], BASE).stderr).toMatch(/already uses/);
+    expect(run(['init', '--all', '--global'], BASE).stderr).toMatch(/separate scopes/);
+    expect(run(['init', '--reindex'], A).stderr).toMatch(/--reindex only applies to `knowl init --all`/);
   });
 
   it('lists what a sweep would visit without touching anything', { timeout: 120_000 }, async () => {

@@ -186,6 +186,11 @@ class PluginTest(unittest.TestCase):
         rendered = ctx.sections["knowl.project-memory"][0]({})
         self.assertIn("knowl_query", rendered)
         self.assertIn("no project open", rendered.lower())
+        # Both memories, on every task: a rule scoped to questions "about you" left a model asked
+        # "what do you know about me" answering from the built-in memory and offering to query.
+        self.assertIn("together", rendered)
+        self.assertIn("every task or question", rendered)
+        self.assertNotIn("Before answering from general knowledge", rendered)
 
     def test_no_rules_when_there_is_no_memory_at_all(self):
         self.plugin._has_knowl_project = lambda cwd: False
@@ -296,6 +301,96 @@ class PluginTest(unittest.TestCase):
             self.assertTrue(plugin._has_knowl_project(project))
         finally:
             plugin.os.path.isdir = os.path.isdir
+
+    # -- the observer thread -------------------------------------------------
+
+    def test_the_observer_thread_runs_in_the_sessions_folder_not_its_own(self):
+        """`post_tool_call` hands its work to a thread, and a thread does not inherit the turn's
+        context variables. Hermes pins the session's folder in one (`agent.runtime_cwd`), so a
+        folder looked up INSIDE the thread was the process directory -- not a Knowl project -- and
+        every tool event was dropped before it reached the engine. Measured on a real machine: 92
+        Hermes sessions in one repository held only start and stop events, never a tool event, so
+        the drift reminder, change cards, skill nudges and turn capture had never run there.
+
+        The existing tests stubbed the folder lookup with a constant, which is why none of them
+        could see it. This one uses a real ContextVar, as Hermes does.
+        """
+        import contextvars, threading
+        pinned = contextvars.ContextVar("pinned_cwd", default=None)
+        project = os.path.join(os.getcwd(), "the-session-folder")
+        self.plugin._resolve_cwd = lambda: pinned.get() or os.path.join(os.getcwd(), "the-process-dir")
+        self.plugin._has_knowl_project = lambda cwd: cwd == project
+
+        done = threading.Event()
+        original = self.plugin._Runner.run
+        def run(_self, event, payload, cwd, timeout=None):
+            self.calls.append((event, payload, cwd))
+            done.set()
+            return None, 0, ""
+        self.plugin._Runner.run = run
+        try:
+            ctx = FakeCtx()
+            self.plugin.register(ctx)
+            pinned.set(project)  # the turn thread; the observer thread started below does not see it
+            ctx.hooks["post_tool_call"](tool_name="read_file", args={"path": "a.py"}, session_id="s1", status="ok")
+            self.assertTrue(done.wait(5), "the tool event never reached the engine")
+        finally:
+            self.plugin._Runner.run = original
+        event, _payload, cwd = self.calls[-1]
+        self.assertEqual((event, cwd), ("post_tool_call", project))
+
+    # -- guidance data -------------------------------------------------------
+
+    def test_rules_come_from_the_generated_file_not_from_the_plugin(self):
+        """The rule prose lives in src/core/plugin-guidance.ts and reaches the plugin as
+        guidance.json. A plugin that carried its own copy would drift from every other host again."""
+        path = os.path.join(os.path.dirname(os.path.abspath(self.plugin.__file__)), "guidance.json")
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(self.plugin.RULES_SECTION, data["projectRules"])
+        self.assertEqual(self.plugin.GLOBAL_RULES_SECTION, data["globalRules"])
+        self.assertIn("knowl_update", self.plugin.RULES_SECTION)
+
+    def test_a_missing_guidance_file_gives_empty_rules_and_a_warning_not_a_crash(self):
+        real_open = open
+        def fake_open(file, *a, **k):
+            if str(file).endswith("guidance.json"):
+                raise FileNotFoundError(file)
+            return real_open(file, *a, **k)
+        with unittest.mock.patch("builtins.open", fake_open), self.assertLogs("hermes.plugins.knowl", level="WARNING") as logs:
+            self.assertEqual(self.plugin._load_guidance(), {})
+        self.assertTrue(any("guidance.json" in line for line in logs.output))
+
+    # -- manual install route -------------------------------------------------
+
+    def test_the_manual_install_copies_every_file_in_the_plugin_directory(self):
+        """install.py used to copy a hand-kept list of two files, so guidance.json -- the rules text
+        the model is given -- was left behind and the plugin loaded with empty rules. It now copies
+        whatever the plugin directory holds."""
+        import runpy, sys, tempfile, shutil
+        root = os.path.join(HERE, "..", "..", "..", "integrations", "hermes")
+        home = tempfile.mkdtemp(prefix="knowl-hh-")
+        # Run install.py in-process rather than as a child: other tests in this file assign
+        # `plugin.subprocess.run = <fake>` on the shared subprocess module and never restore it, so a
+        # child launched through subprocess.run here gets a canned "boom" instead of the script.
+        old_home, old_argv = os.environ.get("HERMES_HOME"), sys.argv
+        os.environ["HERMES_HOME"] = home
+        try:
+            sys.argv = [os.path.join(root, "install.py")]
+            with self.assertRaises(SystemExit) as exit_info:
+                runpy.run_path(os.path.join(root, "install.py"), run_name="__main__")
+            self.assertEqual(exit_info.exception.code, 0)
+            shipped = {n for n in os.listdir(os.path.join(root, "knowl")) if os.path.isfile(os.path.join(root, "knowl", n))}
+            installed = set(os.listdir(os.path.join(home, "plugins", "knowl")))
+            self.assertTrue({"__init__.py", "plugin.yaml", "guidance.json"} <= shipped)
+            self.assertEqual(installed, shipped)
+        finally:
+            sys.argv = old_argv
+            if old_home is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = old_home
+            shutil.rmtree(home, ignore_errors=True)
 
     # -- payload shape --------------------------------------------------------
 
@@ -646,10 +741,31 @@ class MemoryProviderTest(unittest.TestCase):
                 "hook's job on every host. See the class docstring.",
             )
 
-    def test_no_tool_schemas_because_the_hook_pass_already_registers_them(self):
-        """Both halves load on a session where Knowl is the selected provider, so returning
-        the tools here too would put two `knowl_query` in front of the model."""
-        self.assertEqual(self.ctx.provider.get_tool_schemas(), [])
+    def test_the_provider_offers_the_memory_tools_eagerly(self):
+        """Hermes defers every plugin and MCP tool behind tool_search, and a provider's schemas
+        are appended after that decision -- so this is what keeps knowl_query in front of the
+        model without a search step. The plugin pass must not register a second copy."""
+        names = [schema["name"] for schema in self.ctx.provider.get_tool_schemas()]
+        self.assertEqual(sorted(names), ["knowl_query", "knowl_store"])
+
+    def test_the_provider_runs_its_own_tools(self):
+        self.plugin._memory_cwd = lambda: os.getcwd()
+        self.plugin._Runner.cli = lambda _self, args, cwd, timeout=30.0: (0, json.dumps([{"id": "1"}]), "")
+        out = json.loads(self.ctx.provider.handle_tool_call("knowl_query", {"query": "x"}))
+        self.assertEqual(len(out["items"]), 1)
+        self.assertIn("error", json.loads(self.ctx.provider.handle_tool_call("nope", {})))
+
+    def test_the_plugin_pass_keeps_its_tools_as_the_fallback_for_a_session_without_the_provider(self):
+        """The provider loads only when `is_available()` holds, the session is not skip_memory
+        and the memory toolset is on. A plugin pass that stepped aside for it left no copy of
+        knowl_query in any session where it did not."""
+        plugin = load_plugin()
+        plugin._has_knowl_project = lambda cwd: True
+        plugin._is_hermes_source_clone = lambda cwd: False
+        plugin._resolve_cwd = lambda: os.getcwd()
+        ctx = FakeCollector()
+        plugin.register(ctx)
+        self.assertEqual(sorted(ctx.tools), ["knowl_query", "knowl_store"])
 
     # -- compaction -----------------------------------------------------------
 

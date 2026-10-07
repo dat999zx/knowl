@@ -89,6 +89,18 @@ describe('agent adapters', () => {
     expect(await adapter.verify(PROJECT)).toBe(true);
   });
 
+  it('upgrades a Claude entry written before alwaysLoad existed, and leaves other servers alone', async () => {
+    const claude = createClaudeCodeAdapter(environment);
+    await fs.mkdir(PROJECT, { recursive: true });
+    await writeJson(path.join(PROJECT, '.mcp.json'), { mcpServers: { other: { command: 'other' }, knowl: { command: 'knowl.cmd', args: ['serve', '--host', 'claude'] } } });
+    expect((await claude.detect(PROJECT)).configured).toBe(false);
+    expect(await claude.configure(PROJECT)).toMatchObject({ status: 'updated' });
+    const saved = await readJson(path.join(PROJECT, '.mcp.json'));
+    expect(saved.mcpServers.knowl.alwaysLoad).toBe(true);
+    expect(saved.mcpServers.other).toEqual({ command: 'other' });
+    expect((await claude.detect(PROJECT)).configured).toBe(true);
+  });
+
   it('configures Claude Code and Cursor in project JSON configs', async () => {
     const claude = createClaudeCodeAdapter(environment);
     const cursor = createCursorAdapter(environment);
@@ -96,6 +108,9 @@ describe('agent adapters', () => {
     await cursor.configure(PROJECT);
     expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.command).toBe('knowl.cmd');
     expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.args).toEqual(['serve', '--host', 'claude']);
+    // Claude Code defers MCP tools behind ToolSearch; this exempts the server. Codex and Cursor have no verified equivalent.
+    expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.alwaysLoad).toBe(true);
+    expect((await readJson(path.join(PROJECT, '.cursor', 'mcp.json'))).mcpServers.knowl.alwaysLoad).toBeUndefined();
     expect((await readJson(path.join(PROJECT, '.cursor', 'mcp.json'))).mcpServers.knowl.command).toBe('knowl.cmd');
   });
 
