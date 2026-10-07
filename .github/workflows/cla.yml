@@ -29,8 +29,8 @@ jobs:
       - name: Check CLA signature
         if: >-
           github.event_name == 'pull_request_target'
-          || github.event.comment.body == 'recheck'
-          || github.event.comment.body == 'I have read the Knowl Contributor License Agreement and I agree to it.'
+          || contains(github.event.comment.body, 'recheck')
+          || contains(github.event.comment.body, 'I have read the Knowl Contributor License Agreement and I agree to it.')
         uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
