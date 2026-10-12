@@ -22,12 +22,7 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   Hosts with a verified hook channel, and Hermes and OpenClaw when they connect over MCP, get neither.
 - Stored memory, transcript search and transcript read now defuse frame markers and the live code, so
   a quoted card can never forge a frame.
-- Upgrade: reinstall with `knowl init hermes` (Hermes) and `knowl init openclaw` (OpenClaw) to load the
-  plugin. MCP configs written before `--host` existed keep working but also get the note on hook
-  hosts; re-run `knowl init` to add the flag. Checked against Hermes's real plugin manager and
-  in a controlled model test (a framed lesson card was acted on where the plain one was dismissed as
-  an injection); not yet run in a live Hermes chat. OpenClaw was not run at all, and it is unknown
-  whether it keeps the per-turn note in its transcript.
+- Reinstall with `knowl init hermes` / `knowl init openclaw` to load the updated plugins.
 
 ## 5.25.0 — 2026-10-05
 

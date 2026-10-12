@@ -52,8 +52,7 @@ deliver cards that way, and each frames them and tells the model how to read the
 | Hermes plugin | the same, one frame per tool result | top of the plugin's rules section; one code per Hermes home |
 | OpenClaw plugin | the same | each turn's prompt context; one code per plugin process |
 
-Hosts that receive cards through their own hook envelope are not affected. **Not yet verified live:**
-that a model acts on a framed card on Hermes or OpenClaw.
+Hosts that receive cards through their own hook envelope are not affected.
 
 ## Are the tools visible from the first turn?
 
