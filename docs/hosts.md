@@ -41,6 +41,20 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 
 ⚠️ means Knowl emits the envelope and the host accepts it, but nobody has watched it reach the model. Anything deciding "has this agent already been told" reads `midTurnDeliveryVerified`, never the presence of an envelope — so a ⚠️ host keeps getting the MCP copy and is never left silent on a guess. Flipping one to ✅ is a one-line change once someone observes a real session.
 
+## Do injection-aware models trust the cards?
+
+A card that rides inside a tool result is, to a careful model, untrusted tool output. Three hosts
+deliver cards that way, and each frames them and tells the model how to read the frame:
+
+| Carrier | Frame | Where the note goes |
+| --- | --- | --- |
+| MCP clients without a verified hook channel | `[KNOWL CARD <code>: ...]` around the appended change notice and capture nudge | start of the server `instructions` |
+| Hermes plugin | the same, one frame per tool result | top of the plugin's rules section; one code per Hermes home |
+| OpenClaw plugin | the same | each turn's prompt context; one code per plugin process |
+
+Hosts that receive cards through their own hook envelope are not affected. **Not yet verified live:**
+that a model acts on a framed card on Hermes or OpenClaw.
+
 ## Are the tools visible from the first turn?
 
 Several hosts defer MCP tools behind a search step and show the model only their names. Knowl

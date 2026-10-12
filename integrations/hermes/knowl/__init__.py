@@ -46,13 +46,18 @@ never break a turn.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
+import re
+import secrets
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -256,6 +261,105 @@ def _hermes_home() -> Optional[str]:
         return str(get_hermes_home())
     except Exception:
         return os.environ.get("HERMES_HOME")
+
+
+# -- card trust marker (docs/superpowers/specs/2026-10-12-card-trust-marker.md)
+#
+# A card that rides a tool result is framed with a code the model was told in the rules section,
+# so only this plugin's own cards read as Knowl's. The texts come from guidance.json (rendered from
+# src/core/card-marker.ts); only the code and the strip regex live here.
+#
+# The install code is the secret half: one per Hermes home, in `<home>/knowl/card-code`. NEVER next
+# to this file -- `install.py` copies the whole plugin directory and the npm package ships it, so a
+# code kept there would be published. The card code is derived from it once per HOME, not per
+# session: Hermes freezes the rules section when a session's prompt is built, but a compaction can
+# rotate the session id afterwards, so a per-session code would leave the note announcing one code
+# while every later frame carries another. Deleting the file mints a new code, and rules frozen
+# into running sessions then announce a code the plugin no longer uses: those sessions see an
+# unrecognised frame (no worse than an unframed card).
+_CARD_CODE_RE = re.compile(r"^[0-9a-f]{32,64}$")
+_install_codes: Dict[str, str] = {}  # per home: gateways serve several profiles
+_install_code_lock = threading.Lock()
+
+# Port of `stripCardMarkers` in src/core/card-marker.ts; keep the two in step. The whitespace class
+# is spelled out because Python's `\s` and JS's `\s` disagree on a few characters.
+_W = "\t\n\v\f\r \u00a0\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff"
+_CARD_MARKER_RE = re.compile(
+    r"[\[\uff3b][" + _W + r"]*([/\uff0f]?)[" + _W + r"]*KNOWL[" + _W + r"_-]*CARD(?:[" + _W + r"]+[0-9a-f]{32})?",
+    re.IGNORECASE,
+)
+
+
+def _strip_card_markers(text: str) -> str:
+    """Defuses any frame marker in `text`, so a card body can neither forge nor close a frame."""
+    return _CARD_MARKER_RE.sub(r"[\1KNOWL-CARD", text)
+
+
+def _read_card_code(path: str) -> Optional[str]:
+    try:
+        with open(path, encoding="ascii") as handle:
+            value = handle.read().strip()
+    except (OSError, ValueError):
+        return None
+    return value if _CARD_CODE_RE.match(value) else None
+
+
+def _install_card_code() -> Optional[str]:
+    """This Hermes home's card secret, created on first use. None when it cannot be had."""
+    try:
+        home = _hermes_home()
+    except Exception:
+        return None
+    if not home:
+        return None
+    cached = _install_codes.get(home)
+    if cached is not None:
+        return cached or None  # "" caches a failure: one read per process, not one per card
+    with _install_code_lock:
+        cached = _install_codes.get(home)
+        if cached is not None:
+            return cached or None
+        code = ""
+        try:
+            path = os.path.join(home, "knowl", "card-code")
+            code = _read_card_code(path) or ""
+            if not code and not os.path.exists(path):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                # Written complete to a private temp name, then linked into place: the file is
+                # either absent or whole, so a loser of the race never reads a half-written one
+                # and a crash never leaves an empty file that stalls every later call.
+                tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+                try:
+                    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                    with os.fdopen(fd, "w", encoding="ascii") as handle:
+                        handle.write(secrets.token_hex(16))
+                    try:
+                        os.link(tmp, path)
+                    except FileExistsError:
+                        pass  # another process won; read what it wrote
+                finally:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+                code = _read_card_code(path) or ""
+        except Exception as exc:
+            logger.debug("knowl: no card code (%s)", exc)
+        _install_codes[home] = code
+        return code or None
+
+
+def _session_code(session_id: Any) -> Optional[str]:
+    """The card code, or None when the frame and its note cannot both be delivered.
+
+    `session_id` only gates: a session with no id has no rules section to carry the note.
+    """
+    if not session_id or not all(_GUIDANCE.get(key) for key in ("cardNote", "cardOpen", "cardClose")):
+        return None
+    install = _install_card_code()
+    if not install:
+        return None
+    return hmac.new(install.encode(), b"knowl-card", hashlib.sha256).hexdigest()[:32]
 
 
 def _session_folder() -> Optional[str]:
@@ -813,6 +917,8 @@ def register(ctx: Any) -> None:
         return
 
     runner = _Runner(ctx)
+    # The frame is only legible with the note, and the note rides the rules section.
+    rules_enabled = bool(_setting(ctx, "rules_section", True))
 
     project_cwd = _project_cwd
     memory_cwd = _memory_cwd
@@ -1111,7 +1217,17 @@ def register(ctx: Any) -> None:
                 cards.append(engine_card)
             if not cards:
                 return None
-            return result.rstrip() + "\n\n" + "\n\n".join(cards)
+            joined = "\n\n".join(cards)
+            # One frame per result, wrapped AFTER every cap above so the close marker cannot be cut.
+            # Only when the rules section is on: that is the one place the note is delivered.
+            code = _session_code(session_id) if rules_enabled else None
+            if code:
+                joined = (
+                    _GUIDANCE["cardOpen"].replace("{code}", code)
+                    + "\n" + _strip_card_markers(joined) + "\n"
+                    + _GUIDANCE["cardClose"].replace("{code}", code)
+                )
+            return result.rstrip() + "\n\n" + joined
         except Exception as exc:
             logger.debug("knowl transform_tool_result: %s", exc)
             return None
@@ -1212,7 +1328,7 @@ def register(ctx: Any) -> None:
 
     # -- the rules, frozen into each new session's system prompt when the session's
     #    cwd is a Knowl project. Empty string means "no section" for other directories.
-    if _setting(ctx, "rules_section", True):
+    if rules_enabled:
         def rules(session_info: Any) -> str:
             """The rules for whichever memory this session actually has.
 
@@ -1229,6 +1345,11 @@ def register(ctx: Any) -> None:
                 if _is_hermes_source_clone(cwd):
                     return ""
                 if _has_knowl_project(cwd):
+                    # The note goes FIRST: `max_chars` cuts the tail, and mid-turn cards are
+                    # project-only, so the global rules need no note.
+                    code = _session_code(session_info.get("session_id") if isinstance(session_info, dict) else None)
+                    if code:
+                        return _GUIDANCE["cardNote"].replace("{code}", code) + "\n" + RULES_SECTION
                     return RULES_SECTION
                 return GLOBAL_RULES_SECTION if _has_global_store() else ""
             except Exception:

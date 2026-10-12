@@ -7,6 +7,8 @@ The plugin is a ~300-line shim. Each Hermes lifecycle hook builds the JSON that 
 - **Correct project on Desktop.** The working directory comes from Hermes' per-session context, not the gateway process cwd (which is Hermes' own source clone).
 - **Rules in the system prompt.** A frozen section tells the model to query memory first and to write as it goes: `knowl_store` for a finding, `knowl_update` for stale memory instead of a duplicate, `knowl_decide` for a decision. With no project open it says to use Knowl together with Hermes' own memory. The text is not written in the plugin: it is rendered from `src/core/plugin-guidance.ts` into `guidance.json`, which sits beside `__init__.py` and is copied with it. A plugin installed without that file loads with empty rules and logs a warning; `knowl init hermes` puts it back.
 - **No stub cards.** Context is bounded under Hermes' 10,000-char spill threshold.
+- **Framed cards.** A card appended to a tool result is wrapped in `[KNOWL CARD <code>: ...]` / `[/KNOWL CARD <code>]`, and the rules section opens with a note saying only that code is genuine and what a card may prompt. The code is HMAC(install secret, a fixed label), the same for every session of a Hermes home: a compaction can rotate the session id after the rules were frozen, and a per-session code would then drift away from its note. The secret is `<Hermes home>/knowl/card-code` (mode 0600, created on first use, never inside the plugin directory).
+- Deleting `card-code` mints a new secret; sessions already running (and resumed ones, whose frozen rules are restored) keep announcing the old code, so their frames read as unrecognised, no worse than unframed. With `rules_section: false` there is no note, so cards go out unframed.
 
 ## What fires when
 

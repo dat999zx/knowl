@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  NOTE_MAX, cardTrustNote, newCardCode, stripCardMarkers, wrapCard,
+  CARD_CLOSE_TEMPLATE, CARD_OPEN_TEMPLATE, NOTE_MAX, cardNoteTemplate, cardTrustNote, newCardCode, stripCardMarkers,
+  wrapCard,
 } from '../../src/core/card-marker.js';
+import { hermesPluginGuidance } from '../../src/core/plugin-guidance.js';
 
 describe('card marker', () => {
   it('mints distinct 32-hex codes', () => {
@@ -39,6 +41,22 @@ describe('card marker', () => {
       expect(out, JSON.stringify(form)).not.toContain(code);
       expect(out, JSON.stringify(form)).toContain('KNOWL-CARD');
     }
+  });
+
+  it('exposes the texts as {code} templates that substitute to exactly what wrapCard and cardTrustNote say', () => {
+    const code = newCardCode();
+    expect(cardNoteTemplate().split('{code}')).toHaveLength(2);
+    expect(cardNoteTemplate().replaceAll('{code}', code)).toBe(cardTrustNote(code));
+    expect(`${CARD_OPEN_TEMPLATE}\nbody\n${CARD_CLOSE_TEMPLATE}`.replaceAll('{code}', code)).toBe(wrapCard('body', code));
+  });
+
+  it('hands the Hermes plugin the same templates through its guidance', () => {
+    const g = hermesPluginGuidance();
+    expect(g.cardNote).toBe(cardNoteTemplate());
+    expect(g.cardOpen).toBe(CARD_OPEN_TEMPLATE);
+    expect(g.cardClose).toBe(CARD_CLOSE_TEMPLATE);
+    const code = 'ab'.repeat(16);
+    expect(`${g.cardOpen}\nx\n${g.cardClose}`.replaceAll('{code}', code)).toBe(wrapCard('x', code));
   });
 
   it('keeps the note inside its budget and names the code and the excluded tools', () => {

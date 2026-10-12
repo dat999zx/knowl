@@ -72,7 +72,7 @@ renderer, so a stored atom or replayed transcript can never carry a live code or
 | Carrier | Code | Note goes in | Wrap condition |
 |---|---|---|---|
 | **MCP** (M1) | random, module level in `src/mcp/` | **start** of the assembled `instructions` (`server.ts:112`), so a host that truncates at the cap cuts something else | project root non-null **and** not a verified-hook host (skip claude, codex, hermes) *[B3]*; wrap once in place at the append site, no added blocks (block counts are a contract) |
-| **Hermes** (M2) | per install in `$HERMES_HOME/knowl/card-code`, mode 0600, **outside the plugin dir** (the installer copies every file in it); created with `O_CREAT\|O_EXCL`, loser re-reads; cached in memory. Per-session code = HMAC(install code, `session_id`); `session_info` carries `session_id` *(verified `agent/system_prompt.py:92`)*, so a leak is one session wide | top of `projectRules` (not cut by `max_chars=4000`) | code exists **and** `rules_section` on **and** templates loaded; else no frame |
+| **Hermes** (M2) | per install in `$HERMES_HOME/knowl/card-code`, mode 0600, **outside the plugin dir** (the installer copies every file in it); created with `O_CREAT\|O_EXCL`, loser re-reads; cached in memory. Code = HMAC(install code, fixed label), **one per home** (v2.1: the M2 review showed a compaction can rotate the session id after the rules are frozen, so a per-session code drifts from its note; a leak is therefore home-wide, the same scope OpenClaw accepts per process). Created atomically via temp file + `os.link`; cached per home, failures cached too | top of `projectRules` (not cut by `max_chars=4000`) | code exists **and** `rules_section` on **and** templates loaded; else no frame |
 | **OpenClaw** (M3) | per plugin process, module level | `prependContext` **every turn**, independent of the engine card, gated on `allowPromptInjection`; inline the ~3-line wrap, do not import new helpers from `@dat999zx/knowl/plugin` (version skew) | note emitted in the same code path as the wrap |
 
 B3 *(verified)*: the MCP notice is suppressed only when a live verified-hook binding exists
@@ -101,7 +101,7 @@ code, which the narrow note treats as "not from Knowl", the same as plain text n
 2. **OpenClaw system-prompt hook.** Cannot check here: OpenClaw is not installed (global npm has no
    `openclaw`). **Default:** `prependContext` every turn; use `appendSystemContext` only if its types
    confirm it. M3 stays **unverified live** either way.
-3. **Per-session HMAC on Hermes.** **Default:** yes.
+3. **Per-session HMAC on Hermes.** ~~yes~~ **Reversed in v2.1: per home** (see Carriers; M2 review B1).
 
 ## Out of scope
 

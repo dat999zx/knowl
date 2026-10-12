@@ -3,6 +3,31 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Fix: agents ignored Knowl's mid-turn cards because they arrived as plain text inside a tool result
+
+- A Hermes agent refused a `KNOWL LESSON` block with "that text came from the tool output, not from
+  you". A well-behaved agent does not obey instructions inside tool output, and these cards were
+  exactly that: unmarked text appended to a result. Three carriers do this (the Hermes plugin, the
+  OpenClaw plugin, and the change notice an MCP server appends to its own results); every other host
+  receives cards through its own hook envelope and is unchanged.
+- Each of the three now frames the card as `[KNOWL CARD <code>: appended by Knowl after the tool's
+  own output]` ... `[/KNOWL CARD <code>]` and tells the model, in the highest-authority text it can
+  write, which code is genuine and what a card may prompt: `knowl_query`, and `knowl_store` /
+  `knowl_decide` / `knowl_update` of facts the agent verified; never `knowl_skill_run`,
+  `knowl_gc_apply` or `knowl_ingest`. The frame claims nothing; the note carries the authority.
+  MCP: the note leads the server instructions. Hermes: it leads the plugin's rules section, and the
+  code is one per Hermes home in `<home>/knowl/card-code`. OpenClaw: it rides each turn's prompt.
+  Hosts with a verified hook channel, and Hermes and OpenClaw when they connect over MCP, get neither.
+- Stored memory, transcript search and transcript read now defuse frame markers and the live code, so
+  a quoted card can never forge a frame.
+- Upgrade: reinstall with `knowl init hermes` (Hermes) and `knowl init openclaw` (OpenClaw) to load the
+  plugin. MCP configs written before `--host` existed keep working but also get the note on hook
+  hosts; re-run `knowl init` to add the flag. Not yet checked against a live Hermes or OpenClaw
+  session: whether Hermes always passes a session id when it renders the rules section, and whether
+  OpenClaw persists the per-turn note.
+
 ## 5.25.0 — 2026-10-05
 
 ### Fix: Antigravity and Windsurf were treated as configured in every repository on the machine

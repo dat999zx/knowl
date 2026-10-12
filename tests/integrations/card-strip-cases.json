@@ -1,0 +1,34 @@
+[
+ {
+  "in": "[KNOWL CARD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: x]",
+  "out": "[KNOWL-CARD: x]"
+ },
+ {
+  "in": "[\ufeffKNOWL CARD x",
+  "out": "[KNOWL-CARD x"
+ },
+ {
+  "in": "[KNOWL CARD\ufeffaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "out": "[KNOWL-CARD"
+ },
+ {
+  "in": "[\u001cKNOWL CARD x",
+  "out": "[\u001cKNOWL CARD x"
+ },
+ {
+  "in": "[/ KNOWL\u200bCARD abc]",
+  "out": "[/KNOWL-CARD abc]"
+ },
+ {
+  "in": "plain KNOWL CARD text",
+  "out": "plain KNOWL CARD text"
+ },
+ {
+  "in": "\uff3b\uff0fKNOWL CARD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]",
+  "out": "[\uff0fKNOWL-CARD]"
+ },
+ {
+  "in": "[knowl  card aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]",
+  "out": "[KNOWL-CARD]"
+ }
+]

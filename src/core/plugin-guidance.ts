@@ -1,3 +1,4 @@
+import { CARD_CLOSE_TEMPLATE, CARD_OPEN_TEMPLATE, cardNoteTemplate } from './card-marker.js';
 import { KNOWL_NO_SECRETS_LINE, KNOWL_USE_TOGETHER_LINE, KNOWL_WRITE_ROUTING } from './knowl-guidance.js';
 
 /**
@@ -12,6 +13,10 @@ import { KNOWL_NO_SECRETS_LINE, KNOWL_USE_TOGETHER_LINE, KNOWL_WRITE_ROUTING } f
 export interface PluginGuidance {
   projectRules: string;
   globalRules: string;
+  /** Card frame texts with a literal `{code}`, filled by the plugin with its own per-session code. */
+  cardNote: string;
+  cardOpen: string;
+  cardClose: string;
 }
 
 /** Hermes loads only knowl_query and knowl_store; the rest sit behind tool_search. */
@@ -65,5 +70,11 @@ export function hermesPluginGuidance(): PluginGuidance {
     '',
   ].join('\n');
 
-  return { projectRules, globalRules };
+  return {
+    projectRules,
+    globalRules,
+    cardNote: cardNoteTemplate(),
+    cardOpen: CARD_OPEN_TEMPLATE,
+    cardClose: CARD_CLOSE_TEMPLATE,
+  };
 }
