@@ -343,6 +343,9 @@ def _install_card_code() -> Optional[str]:
                         os.unlink(tmp)
                     except OSError:
                         pass
+            if not code:
+                # Also reached by a loser that read the file just before the winner linked it and
+                # then found it present: it must read again, not cache "no code".
                 code = _read_card_code(path) or ""
         except Exception as exc:
             logger.debug("knowl: no card code (%s)", exc)

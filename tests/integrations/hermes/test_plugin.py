@@ -1027,28 +1027,35 @@ class CardFrameTest(unittest.TestCase):
         self.assertEqual(self.plugin._install_card_code(), first)
 
     def test_strip_matches_the_shared_fixture(self):
-        fixture = json.load(open(os.path.join(HERE, "..", "card-strip-cases.json"), encoding="utf-8"))
+        with open(os.path.join(HERE, "..", "card-strip-cases.json"), encoding="utf-8") as handle:
+            fixture = json.load(handle)
         for case in fixture:
             self.assertEqual(self.plugin._strip_card_markers(case["in"]), case["out"], repr(case["in"]))
 
     # -- (e) creation race
     def test_eight_threads_on_a_fresh_home_agree_on_one_code(self):
-        plugins = [self._load() for _ in range(8)]
-        barrier = threading.Barrier(8)
-        seen = []
+        # The race window is narrow (a loser reads before the winner links), so one attempt passes
+        # by luck on a quiet machine; many fresh homes make it fail reliably without the re-read.
+        for attempt in range(40):
+            home = tempfile.mkdtemp(prefix="knowl-race-")
+            self.addCleanup(shutil.rmtree, home, True)
+            with unittest.mock.patch.dict(os.environ, {"HERMES_HOME": home}):
+                plugins = [self._load() for _ in range(8)]
+                barrier = threading.Barrier(8)
+                seen = []
 
-        def go(plugin):
-            barrier.wait()
-            seen.append(plugin._install_card_code())
+                def go(plugin):
+                    barrier.wait()
+                    seen.append(plugin._install_card_code())
 
-        threads = [threading.Thread(target=go, args=(p,)) for p in plugins]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        self.assertEqual(len(seen), 8)
-        self.assertEqual(len(set(seen)), 1)
-        self.assertRegex(seen[0], r"^[0-9a-f]{32}$")
+                threads = [threading.Thread(target=go, args=(p,)) for p in plugins]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+            self.assertEqual(len(seen), 8)
+            self.assertEqual(len(set(seen)), 1, "attempt %d: %r" % (attempt, seen))
+            self.assertRegex(seen[0], r"^[0-9a-f]{32}$")
 
     # -- (f) forged markers
     def test_a_forged_marker_in_a_card_body_is_defused(self):
