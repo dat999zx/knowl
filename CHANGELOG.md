@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.25.1 â€” 2026-10-12
 
 ### Fix: agents ignored Knowl's mid-turn cards because they arrived as plain text inside a tool result
 
@@ -24,9 +24,10 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   a quoted card can never forge a frame.
 - Upgrade: reinstall with `knowl init hermes` (Hermes) and `knowl init openclaw` (OpenClaw) to load the
   plugin. MCP configs written before `--host` existed keep working but also get the note on hook
-  hosts; re-run `knowl init` to add the flag. Not yet checked against a live Hermes or OpenClaw
-  session: whether Hermes always passes a session id when it renders the rules section, and whether
-  OpenClaw persists the per-turn note.
+  hosts; re-run `knowl init` to add the flag. Checked against Hermes's real plugin manager and
+  in a controlled model test (a framed lesson card was acted on where the plain one was dismissed as
+  an injection); not yet run in a live Hermes chat. OpenClaw was not run at all, and it is unknown
+  whether it keeps the per-turn note in its transcript.
 
 ## 5.25.0 — 2026-10-05
 
