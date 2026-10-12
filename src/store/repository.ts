@@ -29,6 +29,7 @@ import {
 import { DatabaseError, KnowledgeConflictError } from '../core/errors.js';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, hashKnowledgeLifecycle, normalizeAffectedPaths } from './freshness.js';
 import { currentAuthorRepo, resolveWriteDefaults } from './write-ownership.js';
+import { stripCardFields } from '../core/card-marker.js';
 import { assertConfidenceInRange, KnowledgeValidationError, scannableFields, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
 export const LOCAL_PROJECT_ID = 'local';
@@ -115,9 +116,24 @@ export async function getProjectByRootPath(rootPath: string, _dbConnection?: DbC
   return localProject(rootPath);
 }
 
+/**
+ * Defuses Knowl card frames in the three free-text fields a card can be quoted into, so stored
+ * memory can never carry a live card code or a forged frame. Every write except raw import lands
+ * in `createKnowledgeItem` or `updateKnowledgeItem`, so this is stated once, here.
+ */
+function withoutCardMarkers<T extends { title?: string; content?: string; reasoning?: string | null; contentHash?: string | null }>(fields: T): T {
+  const out = stripCardFields(fields);
+  // A caller-supplied hash describes the text it was given; if stripping changed that text it no
+  // longer matches what is stored, so drop it and let the writer hash the stored text.
+  if (out.contentHash && (out.title !== fields.title || out.content !== fields.content || out.reasoning !== fields.reasoning)) {
+    out.contentHash = undefined;
+  }
+  return out;
+}
+
 export async function createKnowledgeItem(
   projectId: string,
-  item: {
+  rawItem: {
     category: KnowledgeCategory;
     title: string;
     content: string;
@@ -142,6 +158,7 @@ export async function createKnowledgeItem(
   // column: it only exempts that one holder from the exclusive-key check below.
   supersedes?: string,
 ): Promise<KnowledgeItem> {
+  const item = withoutCardMarkers(rawItem);
   // `steps` travels as its own parameter, so it has to be joined back on or it is never scanned.
   validateKnowledgeWrite({ ...item, ...(steps !== undefined ? { steps } : {}) }, validationOptions);
   // The last door before the row, so the invariant is stated here rather than at each caller.
@@ -319,11 +336,12 @@ export async function getKnowledgeItem(id: string, dbConnection?: DbConnection):
 
 export async function updateKnowledgeItem(
   id: string,
-  updates: Partial<Omit<KnowledgeItem, 'id' | 'createdAt' | 'updatedAt'>>,
+  rawUpdates: Partial<Omit<KnowledgeItem, 'id' | 'createdAt' | 'updatedAt'>>,
   steps?: string[],
   dbConnection?: DbConnection,
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<KnowledgeItem> {
+  const updates = withoutCardMarkers(rawUpdates);
   // An update does not rewrite `knowledge_items.confidence`, but it does record a fresh
   // `knowledge_assertions` row carrying `updates.confidence` -- the same column, one table
   // over, and the one temporal queries read.

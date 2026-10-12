@@ -9,6 +9,7 @@ import { getProjectByRootPath } from '../store/repository.js';
 import { adoptProject, scaffoldProject, scaffoldTarget, serveAutoInitAllowed } from './auto-init.js';
 import { registerTools, registerPrompts } from './tools.js';
 import { registerResources } from './resources.js';
+import { cardFrameActive, frameNote } from './card-frame.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
 import { checkForUpdate, isUpdateCheckEnabled } from '../core/version-check.js';
 import {
@@ -109,7 +110,13 @@ export function createMcpServer(
       // is invisible, while this card is captured at construction and replayed to the model.
       // One line naming the directory serve created state in is the difference between a
       // silent store and an invisible one.
-      instructions: mcpServerInstructions(getConfig(), deferred.modeLine) + (deferred.instructionsSuffix ?? ''),
+      //
+      // The trust note leads the card, so a host that truncates at its cap cuts something else.
+      // It cannot live in `mcpServerInstructions`: it carries this process's code, and that
+      // function's output is pinned verbatim.
+      instructions: (cardFrameActive(deferred.host, projectRoot ?? deferred.getProjectRoot?.() ?? null)
+        ? frameNote() + '\n'
+        : '') + mcpServerInstructions(getConfig(), deferred.modeLine) + (deferred.instructionsSuffix ?? ''),
     }
   );
 

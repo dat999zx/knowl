@@ -4,6 +4,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ErrorCode, GetPromptRequestSchema, ListPromptsRequestSchema, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { captureChangeWatermark, consumeCaptureNudge, consumeChangeNotice } from './change-notice.js';
+import { cardFrameActive, frameCard } from './card-frame.js';
 import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem, findForeignItem } from '../workspace/ownership.js';
@@ -2467,7 +2468,10 @@ export function registerTools(
     // Two independent appends, both best-effort. The nudge is the MCP twin of the stop-hook
     // one, for clients that have no stop hook to carry it -- see `consumeCaptureNudge`.
     const nudge = await consumeCaptureNudge(projectRoot, request.params.name, getConfig(), getHost());
-    const extra = [notice, nudge].filter((text): text is string => Boolean(text));
+    const framed = cardFrameActive(getHost(), projectRoot);
+    const extra = [notice, nudge]
+      .filter((text): text is string => Boolean(text))
+      .map(text => (framed ? frameCard(text) : text));
     if (extra.length === 0) return result;
     return {
       ...result,

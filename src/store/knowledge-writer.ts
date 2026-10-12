@@ -1,5 +1,6 @@
 import { CommitChange, EvidenceInput, EvidenceType, KnowledgeCategory, KnowledgeItem, KnowledgeProvenance, KnowledgeWriteValidationOptions } from '../core/types.js';
 import { assertConfidenceInRange } from '../core/knowledge-validation.js';
+import { stripCardFields } from '../core/card-marker.js';
 import { searchKnowledgeItems } from './search.js';
 import * as repo from './repository.js';
 import { checkKnowledgeConflict, normalizeConflictScope } from './conflicts.js';
@@ -927,6 +928,8 @@ export async function storeKnowledgeItemDeduped(
   validationOptions?: KnowledgeWriteValidationOptions,
   channel: WriteChannel = 'direct',
 ): Promise<StoreKnowledgeResult> {
+  // Before duplicate detection, so a restated title that quotes a card frame still matches the stored one.
+  input = stripCardFields(input);
   assertConfidenceInRange(input.confidence, input.title);
   validationOptions ??= await securityForWrite();
   const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, input);
@@ -1032,6 +1035,7 @@ export async function storeKnowledgeAtomsDeduped(
   validationOptions?: KnowledgeWriteValidationOptions,
   channel: WriteChannel = 'direct',
 ): Promise<StoreKnowledgeBatchResult> {
+  atoms = atoms.map(stripCardFields);
   // Every atom's confidence, before the first one is written -- the same reason the ownership
   // guard is hoisted out of the loop. A batch is all-or-nothing, so a per-atom check would
   // refuse the batch after opening a transaction the caller was told nothing about.

@@ -1,6 +1,7 @@
 import type { ProjectConfig } from '../core/types.js';
 import { loadConfig } from '../core/config.js';
 import { fenceUntrusted } from '../core/untrusted.js';
+import { stripCardMarkers } from '../core/card-marker.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { resolveStorage } from '../store/storage-roles.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
@@ -261,7 +262,9 @@ export async function handleTranscriptSearch(input: {
     }
   }
 
-  return truncate(lines.join('\n'), MAX_RESPONSE_CHARS);
+  // After the join, so a hit that replays an earlier session's wrapped card carries no live code
+  // and no opening marker that could swallow the lines after it.
+  return stripCardMarkers(truncate(lines.join('\n'), MAX_RESPONSE_CHARS));
 }
 
 /** Default and ceiling for how many sessions one listing renders. */
@@ -318,7 +321,7 @@ export async function handleSessionList(input: {
   }
   lines.push('Read into a session with knowl_transcript_search using its sessionId.');
 
-  return truncate(lines.join('\n\n'), MAX_RESPONSE_CHARS);
+  return stripCardMarkers(truncate(lines.join('\n\n'), MAX_RESPONSE_CHARS));
 }
 
 export async function handleTranscriptRead(input: {
@@ -404,10 +407,10 @@ export async function handleTranscriptRead(input: {
   // accident in the old shape: the focused excerpt was prefixed `> `, which is a live blockquote
   // marker, so the text an agent was told to read most carefully was the one wrapped in markdown
   // structure knowl did not intend.
-  return truncate(
+  return stripCardMarkers(truncate(
     excerpts
       .map(excerpt => `${excerpt.line === parsed.line ? '>' : ' '} [${excerpt.role}]\n${fenceUntrusted(excerpt.text)}`)
       .join('\n\n'),
     MAX_RESPONSE_CHARS,
-  );
+  ));
 }

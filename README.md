@@ -397,7 +397,7 @@ entry is the same everywhere:
 ```json
 {
   "mcpServers": {
-    "knowl": { "command": "knowl", "args": ["serve"] }
+    "knowl": { "command": "knowl", "args": ["serve", "--host", "<host>"] }
   }
 }
 ```

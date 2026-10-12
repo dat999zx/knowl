@@ -24,6 +24,16 @@ describe('host profile registry', () => {
     }
   });
 
+  // The plugin or MCP layer frames a card, never the engine: a process spawned per hook call
+  // cannot know the plugin's code, and an engine-wrapped card would be framed twice or arrive
+  // with no note. Nothing here may carry the marker.
+  it('never frames a card in midTurnContext', () => {
+    for (const host of ALL_HOSTS) {
+      const output = hostProfile(host).midTurnContext('x');
+      expect(JSON.stringify(output ?? null), host).not.toContain('KNOWL CARD');
+    }
+  });
+
   it('accepts every one of its writeTools as a write, and nothing outside the list', () => {
     for (const host of ALL_HOSTS) {
       const profile = hostProfile(host);
