@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## 5.25.1 â€” 2026-10-12
+## 5.25.1 — 2026-10-12
 
 ### Fix: agents ignored Knowl's mid-turn cards because they arrived as plain text inside a tool result
 
