@@ -947,7 +947,9 @@ class CardFrameTest(unittest.TestCase):
         )
 
     def _rules_code(self, session_id="s1"):
-        text = self.ctx.sections["knowl.project-memory"][0]({"session_id": session_id})
+        # Hermes hands the callback a read-only MappingProxyType, never a dict: a dict here hid a bug
+        # where the note was silently dropped (found by driving the real plugin manager).
+        text = self.ctx.sections["knowl.project-memory"][0](types.MappingProxyType({"session_id": session_id}))
         found = re.search(r'framed "\[KNOWL CARD ([0-9a-f]{32}):', text)
         return found.group(1) if found else None
 

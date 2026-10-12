@@ -59,6 +59,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("hermes.plugins.knowl")
@@ -1339,7 +1340,7 @@ def register(ctx: Any) -> None:
             """
             try:
                 cwd = ""
-                if isinstance(session_info, dict):
+                if isinstance(session_info, Mapping):
                     cwd = str(session_info.get("cwd") or "")
                 cwd = cwd or _resolve_cwd()
                 if _is_hermes_source_clone(cwd):
@@ -1347,7 +1348,7 @@ def register(ctx: Any) -> None:
                 if _has_knowl_project(cwd):
                     # The note goes FIRST: `max_chars` cuts the tail, and mid-turn cards are
                     # project-only, so the global rules need no note.
-                    code = _session_code(session_info.get("session_id") if isinstance(session_info, dict) else None)
+                    code = _session_code(session_info.get("session_id") if isinstance(session_info, Mapping) else None)
                     if code:
                         return _GUIDANCE["cardNote"].replace("{code}", code) + "\n" + RULES_SECTION
                     return RULES_SECTION
