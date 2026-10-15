@@ -24,6 +24,7 @@ export type ConfigKey =
   | 'ai.temperature'
   | 'ai.baseUrl'
   | 'ai.apiKey'
+  | 'ai.profile'
   | 'memory.organization.enabled'
   | 'memory.organization.path'
   | 'memory.global.enabled'
@@ -87,6 +88,11 @@ const booleanValue = (raw: string) => {
 const enumValue = <T extends string>(values: readonly T[]) => (raw: string): T => {
   if (values.includes(raw as T)) return raw as T;
   throw new Error(`Expected one of: ${values.join(', ')}`);
+};
+
+const profileId = (raw: string) => {
+  if (/^[a-z][a-z0-9-]*$/.test(raw)) return raw;
+  throw new Error('Expected a lowercase profile id, such as code or general');
 };
 
 const optionalNumber = (raw: string) => {
@@ -229,6 +235,11 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'ai.apiKey', category: 'AI provider', type: 'string', parse: String, secret: true,
     label: 'API key',
     description: 'Stored redacted. An environment-variable placeholder is preserved as written.',
+  },
+  {
+    key: 'ai.profile', category: 'AI provider', type: 'string', parse: profileId,
+    label: 'Knowledge domain',
+    description: 'Which domain profile AI ingestion uses: code, general, academic, or your own in ~/.knowl/profiles. Unset means code in a project and general in the global store.',
   },
   {
     key: 'memory.organization.enabled', category: 'Memory namespaces', type: 'boolean',

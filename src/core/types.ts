@@ -315,6 +315,8 @@ export interface ProjectConfig {
     temperature?: number;
     baseUrl?: string;
     apiKey?: string;
+    /** Domain profile id for AI ingestion. Absent: `code` for a project store, `general` for the global store. */
+    profile?: string;
   };
   search?: {
     vector?: {
