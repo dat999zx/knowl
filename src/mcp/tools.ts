@@ -19,7 +19,7 @@ import { flattenGroups, queryFederated, type FederatedResult } from '../workspac
 import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
-import { resolveDomainProfile } from '../ai/profiles/index.js';
+import { domainProfile, resolveDomainProfile } from '../ai/profiles/index.js';
 import { runPipeline } from '../pipeline/pipeline.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { formatHierarchyToMarkdown, formatRecentContextToMarkdown, pathsChangedNote } from '../core/format.js';
@@ -572,7 +572,7 @@ export function registerTools(
       validateToolArguments(name, SCHEMA_BY_TOOL.get(name), args);
 
       if (name === 'knowl_ingest') {
-        const { text, commitMessage, autoResolve, namespace = 'project' } = args as any;
+        const { text, commitMessage, autoResolve, namespace = 'project', profile: requested } = args as any;
         if (!config || !hasAiConfigured(config)) {
           return {
             isError: true,
@@ -589,7 +589,7 @@ export function registerTools(
         const toGlobal = !projectRoot || namespace === 'global';
         let profile;
         try {
-          profile = toGlobal
+          profile = requested ? domainProfile(requested) : toGlobal
             ? resolveDomainProfile(projectRoot ? await loadConfig(knowlHome()) : config!, 'global')
             : resolveDomainProfile(config!);
         } catch (error) {

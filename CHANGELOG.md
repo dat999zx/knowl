@@ -11,6 +11,9 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   the previous text, unchanged byte for byte, and stays the default for every project. `general`
   (people, preferences, plans, dates, how-tos) and `academic` (sources, claims, definitions,
   methods, results, people in the work) ship alongside it.
+- The agent picks the profile per call: `knowl_ingest` takes an optional `profile`, so a store that
+  mixes code, research and personal notes filters each text correctly. Or set a store default with
+  `knowl config set ai.profile general`.
 - Choose one per store with `knowl config set ai.profile general`. The global store defaults to
   `general`, set in `~/.knowl/config.json`.
 - Add your own as one file, `~/.knowl/profiles/<id>.yaml`. See `docs/domain-profiles.md`.

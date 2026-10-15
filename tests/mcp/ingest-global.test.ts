@@ -163,6 +163,31 @@ describe('knowl_ingest into the global store', () => {
     expect(await titlesIn(globalStorePath())).not.toContain('Advisor five');
   });
 
+  it('an agent-chosen profile wins over the store default and the config', async () => {
+    await openProject();
+    queueAtom('Advisor six');
+    const result = await callTool(root, projectConfig, 'knowl_ingest', {
+      text: 'Thesis advisor is Dr. Lan Nguyen.',
+      profile: 'academic',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(filterSystem()).toBe(academicProfile.filter);
+    expect(await titlesIn(resolveStorage(root).knowledge)).toContain('Advisor six');
+  });
+
+  it('refuses an unknown agent-chosen profile before any model call', async () => {
+    await openProject();
+    const result = await callTool(root, projectConfig, 'knowl_ingest', {
+      text: 'Thesis advisor is Dr. Lan Nguyen.',
+      profile: '../evil',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(String(result.content[0].text)).toContain('Unknown domain profile');
+    expect(generateObject).not.toHaveBeenCalled();
+  });
+
   it('refuses an unknown home profile before any model call', async () => {
     await saveHome('../evil');
     await openProject();

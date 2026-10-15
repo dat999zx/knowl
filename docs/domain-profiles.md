@@ -33,8 +33,11 @@ One config key, read from the config that governs the store being written:
 knowl config set ai.profile academic
 ```
 
-There is no per-call override: no `--profile` flag and no MCP `profile` argument, so an agent cannot
-pick a looser filter. `knowl_ingest` takes `namespace: "global"` to write to the machine-wide store.
+An agent can choose per call. `knowl_ingest` takes an optional `profile` (`code`, `general`,
+`academic`, or one of yours), so one store can hold code notes, research and personal facts and
+each text gets the matching filter. The agent picks by content and splits mixed text into separate
+calls. Precedence: the `profile` argument, then `ai.profile`, then the store default. An unknown
+profile fails before any model call. There is no CLI `--profile` flag. `knowl_ingest` also takes `namespace: "global"` to write to the machine-wide store.
 It then uses the profile from `~/.knowl/config.json`, never the project's. With no project open it
 writes to the global store automatically. An unknown or invalid profile fails before any model call.
 

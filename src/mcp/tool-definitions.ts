@@ -424,6 +424,10 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
                 enum: ['project', 'global'],
                 description: 'Store to write to. Defaults to project; global is the machine-wide personal store, used automatically when no project is open.',
               },
+              profile: {
+                type: 'string',
+                description: 'What kind of knowledge this text is, so the right filter applies: code (software work), general (personal and everyday), academic (sources, claims, research), or a profile the user added. Choose by content; for mixed text, call once per kind with the matching part. Omit to use the store default.',
+              },
             },
             required: ['text'],
           },
