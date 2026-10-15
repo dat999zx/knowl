@@ -2874,7 +2874,7 @@ unless fleet awareness is switched off.
 | `knowl_skill_read` | Inspect one learned skill before running it |
 | `knowl_skill_run` | Run a trusted learned-skill entrypoint |
 | `knowl_skill_create` | Create a learned skill when explicitly requested |
-| `knowl_ingest` | Process explicitly supplied raw source through configured AI |
+| `knowl_ingest` | Process explicitly supplied raw source through configured AI; `namespace: "global"` writes to the machine-wide store |
 | `knowl_synthesize` | Create or refresh one explicitly tag-scoped understanding |
 | `knowl_session_finish` | Finish an explicitly owned manual memory session |
 | `knowl_gc_preview` | Preview duplicate, stale, or cold-memory maintenance |
@@ -2957,6 +2957,14 @@ knowl config set ai.apiKey '${CUSTOM_API_KEY}'
 
 Environment-variable placeholders are resolved at runtime. Ollama can run without an API key.
 Deterministic `knowl synthesize` does not use this configuration.
+
+`ai.profile` chooses the domain profile that decides what AI ingestion keeps: `code` (the default
+for a project), `general`, `academic`, or your own file in `~/.knowl/profiles/`. The global store
+defaults to `general`. Profiles change the prompts only; the seven categories are fixed.
+
+`knowl_ingest` accepts `namespace: "global"` to write to the machine-wide store, using the profile
+from `~/.knowl/config.json`. With no project open it does so automatically. See
+[Domain profiles and providers](domain-profiles.md).
 
 `ai.apiKey` may be set literally, and `.knowl/config.json` is written owner-readable (`0600`) on
 POSIX systems and replaced atomically, so an interrupted write cannot leave a half file that

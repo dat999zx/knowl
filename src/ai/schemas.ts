@@ -5,6 +5,8 @@ export const FilterResultSchema = z.object({
   reason: z.string().optional().describe('Short explanation of why the input was accepted or rejected.'),
 });
 
+export const filterSchemaWith = (passDescription: string) => FilterResultSchema.extend({ pass: z.boolean().describe(passDescription) });
+
 export const KnowledgeAtomSchema = z.object({
   category: z.enum(['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill']).describe('The category of the knowledge.'),
   title: z.string().describe('A concise, descriptive, and search-friendly title for this knowledge atom.'),

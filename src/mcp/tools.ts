@@ -19,6 +19,7 @@ import { flattenGroups, queryFederated, type FederatedResult } from '../workspac
 import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
+import { domainProfile, resolveDomainProfile } from '../ai/profiles/index.js';
 import { runPipeline } from '../pipeline/pipeline.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { formatHierarchyToMarkdown, formatRecentContextToMarkdown, pathsChangedNote } from '../core/format.js';
@@ -571,7 +572,7 @@ export function registerTools(
       validateToolArguments(name, SCHEMA_BY_TOOL.get(name), args);
 
       if (name === 'knowl_ingest') {
-        const { text, commitMessage, autoResolve } = args as any;
+        const { text, commitMessage, autoResolve, namespace = 'project', profile: requested } = args as any;
         if (!config || !hasAiConfigured(config)) {
           return {
             isError: true,
@@ -584,11 +585,31 @@ export function registerTools(
           };
         }
 
+        // The global store has its own profile, read from the home config; the project's never applies to it.
+        const toGlobal = !projectRoot || namespace === 'global';
+        let profile;
+        try {
+          profile = requested ? domainProfile(requested) : toGlobal
+            ? resolveDomainProfile(projectRoot ? await loadConfig(knowlHome()) : config!, 'global')
+            : resolveDomainProfile(config!);
+        } catch (error) {
+          return { isError: true, content: [{ type: 'text', text: (error as Error).message }] };
+        }
+
         initAI(config.ai!);
-        const result = await runPipeline(projectId!, text, config!, {
+        const ingest = () => runPipeline(projectId!, text, config!, {
           autoResolveContradictions: autoResolve ?? false,
           commitMessage: commitMessage || 'Ingest via MCP tool',
-        });
+        }, profile);
+
+        let result;
+        if (toGlobal) {
+          const { ensureGlobalStore } = await import('../store/global-store.js');
+          await ensureGlobalStore();
+          result = await withDbPath(globalStorePath(), ingest);
+        } else {
+          result = await ingest();
+        }
 
         // Counts live on mergeResult; reading them off the top level always reported zero.
         const merge = result.mergeResult;

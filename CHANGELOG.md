@@ -3,6 +3,31 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Feature: domain profiles, so AI ingestion keeps everyday and academic knowledge
+
+- The AI ingestion prompts (filter, extract, ask, derive) now come from a domain profile. `code` is
+  the previous text, unchanged byte for byte, and stays the default for every project. `general`
+  (people, preferences, plans, dates, how-tos) and `academic` (sources, claims, definitions,
+  methods, results, people in the work) ship alongside it.
+- The agent picks the profile per call: `knowl_ingest` takes an optional `profile`, so a store that
+  mixes code, research and personal notes filters each text correctly. Or set a store default with
+  `knowl config set ai.profile general`.
+- Choose one per store with `knowl config set ai.profile general`. The global store defaults to
+  `general`, set in `~/.knowl/config.json`.
+- Add your own as one file, `~/.knowl/profiles/<id>.yaml`. See `docs/domain-profiles.md`.
+- `knowl_ingest` takes `namespace: "global"`, and works in a session with no project open. It
+  previously could not write to the global store.
+- Knowl still stores distilled atoms only. Nothing new is captured; ingestion reads only text you
+  hand it.
+
+### Change: AI providers are a registry
+
+- `openai`, `anthropic`, `ollama` and `custom` are now one descriptor file each under
+  `src/core/ai-providers/`, built with the same settings as before. An unknown `ai.provider` now
+  fails with the list of registered providers.
+
 ## 5.25.1 — 2026-10-12
 
 ### Fix: agents ignored Knowl's mid-turn cards because they arrived as plain text inside a tool result

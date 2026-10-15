@@ -2935,13 +2935,15 @@ program
 
       // Deferred: the AI SDK tree is hundreds of modules and only AI-backed commands need it.
       const { initAI, askQuestion } = await import('../ai/provider.js');
+      const { resolveDomainProfile } = await import('../ai/profiles/index.js');
       initAI(config.ai!);
+      const profile = resolveDomainProfile(config);
 
       const hierarchy = await getHierarchicalKnowledge(project.id);
       const contextMarkdown = formatHierarchyToMarkdown(hierarchy);
 
       console.log(`🤔 Thinking...`);
-      const answer = await askQuestion(question, contextMarkdown);
+      const answer = await askQuestion(question, contextMarkdown, profile);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       console.log(answer);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
