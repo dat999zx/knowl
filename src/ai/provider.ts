@@ -6,17 +6,14 @@ import { AIProviderError } from '../core/errors.js';
 import { aiProvider } from '../core/ai-providers/index.js';
 import {
   FilterResultSchema,
+  filterSchemaWith,
   ExtractionResultSchema,
   CompareResultSchema,
   DerivedTruthSchema
 } from './schemas.js';
-import {
-  FILTER_SYSTEM_PROMPT,
-  EXTRACT_SYSTEM_PROMPT,
-  COMPARE_SYSTEM_PROMPT,
-  ASK_SYSTEM_PROMPT,
-  DERIVE_TRUTH_PROMPT
-} from './prompts.js';
+import { COMPARE_SYSTEM_PROMPT } from './prompts.js';
+import { codeProfile } from './profiles/code.js';
+import type { DomainProfile } from './profiles/types.js';
 
 let currentModel: LanguageModel | null = null;
 type AIConfig = NonNullable<ProjectConfig['ai']>;
@@ -59,7 +56,11 @@ function getModel(): LanguageModel {
 /**
  * Stages the raw input against a filter to detect noise, sensitive secrets, or valid knowledge.
  */
-export async function filterInput(input: string, config: ProjectConfig): Promise<FilterResult> {
+export async function filterInput(
+  input: string,
+  config: ProjectConfig,
+  profile: DomainProfile = codeProfile
+): Promise<FilterResult> {
   const model = getModel();
 
   // Pre-filter for basic secrets if rejectSecrets is enabled
@@ -83,8 +84,8 @@ export async function filterInput(input: string, config: ProjectConfig): Promise
   try {
     const { object } = await generateObject({
       model,
-      schema: FilterResultSchema,
-      system: FILTER_SYSTEM_PROMPT,
+      schema: profile.passDescription ? filterSchemaWith(profile.passDescription) : FilterResultSchema,
+      system: profile.filter,
       prompt: `Analyze the following input:\n\n${input}`,
       temperature: 0.1,
     });
@@ -98,13 +99,13 @@ export async function filterInput(input: string, config: ProjectConfig): Promise
 /**
  * Extracts structured knowledge atoms from unstructured text.
  */
-export async function extractKnowledge(input: string): Promise<KnowledgeAtom[]> {
+export async function extractKnowledge(input: string, profile: DomainProfile = codeProfile): Promise<KnowledgeAtom[]> {
   const model = getModel();
   try {
     const { object } = await generateObject({
       model,
       schema: ExtractionResultSchema,
-      system: EXTRACT_SYSTEM_PROMPT,
+      system: profile.extract,
       prompt: `Extract knowledge atoms from the following input:\n\n${input}`,
       temperature: 0.1,
     });
@@ -169,12 +170,16 @@ Tags: ${JSON.stringify(existingItem.tags || [])}
 /**
  * Answers a user's question using hierarchical active project context.
  */
-export async function askQuestion(question: string, contextMarkdown: string): Promise<string> {
+export async function askQuestion(
+  question: string,
+  contextMarkdown: string,
+  profile: DomainProfile = codeProfile
+): Promise<string> {
   const model = getModel();
   try {
     const { text } = await generateText({
       model,
-      system: ASK_SYSTEM_PROMPT,
+      system: profile.ask,
       prompt: `
 CONTEXT:
 ${contextMarkdown}
@@ -194,13 +199,17 @@ ${question}
 /**
  * Derives key=value active state truths from a given KnowledgeItem.
  */
-export async function deriveTruth(item: KnowledgeItem): Promise<{ key: string; value: string }[]> {
+export async function deriveTruth(
+  item: KnowledgeItem,
+  profile: DomainProfile = codeProfile
+): Promise<{ key: string; value: string }[]> {
+  if (profile.deriveTruth === null) return [];
   const model = getModel();
   try {
     const { object } = await generateObject({
       model,
       schema: DerivedTruthSchema,
-      system: DERIVE_TRUTH_PROMPT,
+      system: profile.deriveTruth,
       prompt: `
 Analyze this knowledge item and extract any derived truths:
 Category: ${item.category}
