@@ -5,6 +5,7 @@ import * as repo from '../store/repository.js';
 import { deriveTruth } from '../ai/provider.js';
 import { KnowledgeItem, CommitChange } from '../core/types.js';
 import { isVerifiedProvenance } from '../store/knowledge-writer.js';
+import type { DomainProfile } from '../ai/profiles/types.js';
 
 export interface DeriveResult {
   derivedTruthsCount: number;
@@ -19,7 +20,8 @@ export interface DeriveResult {
 export async function runDeriveTruth(
   projectId: string,
   items: KnowledgeItem[],
-  dbConnection?: DbConnection
+  dbConnection?: DbConnection,
+  profile?: DomainProfile
 ): Promise<DeriveResult> {
   // Only extract truths from decisions, facts, and architecture specifications
   const relevantItems = items.filter(
@@ -36,7 +38,7 @@ export async function runDeriveTruth(
   const allDerivedTruths: { key: string; value: string }[] = [];
   for (const item of relevantItems) {
     try {
-      const truths = await deriveTruth(item);
+      const truths = await deriveTruth(item, profile);
       if (Array.isArray(truths)) {
         allDerivedTruths.push(...truths);
       }

@@ -116,12 +116,13 @@ export async function recordDecisionDirect(
       // the one edge that made `store` depend on `ai` while `ai` depends on `store`. Loading
       // it here instead costs nothing — this branch only runs when AI is configured, and it
       // is already inside a best-effort try.
-      const [{ initAI }, { runDeriveTruth }] = await Promise.all([
+      const [{ initAI }, { runDeriveTruth }, { resolveDomainProfile }] = await Promise.all([
         import('../ai/provider.js'),
         import('../pipeline/derive.js'),
+        import('../ai/profiles/index.js'),
       ]);
       initAI(config.ai!);
-      await runDeriveTruth(projectId, [item]);
+      await runDeriveTruth(projectId, [item], undefined, resolveDomainProfile(config));
     } catch {
       // Best-effort
     }

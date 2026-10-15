@@ -419,6 +419,11 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
                 type: 'boolean',
                 description: 'Whether to auto-resolve contradictions by superseding old knowledge (defaults to false).',
               },
+              namespace: {
+                type: 'string',
+                enum: ['project', 'global'],
+                description: 'Store to write to. Defaults to project; global is the machine-wide personal store, used automatically when no project is open.',
+              },
             },
             required: ['text'],
           },

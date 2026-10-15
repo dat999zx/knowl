@@ -8,6 +8,7 @@ import { hasAiConfigured } from '../core/config.js';
 // extract-verify-merge as one unit, and what this needs is the extract step alone -- staging
 // exists precisely so verify and merge happen later, under a human decision.
 import { extractKnowledge, initAI } from '../ai/provider.js';
+import { resolveDomainProfile } from '../ai/profiles/index.js';
 import { readProseFrom } from './parse.js';
 
 /**
@@ -173,6 +174,7 @@ export async function extractCandidates(
     );
   }
   initAI(config.ai!);
+  const profile = resolveDomainProfile(config);
 
   const plan = await planExtraction(db, options);
   let sessionsExtracted = 0;
@@ -204,7 +206,7 @@ export async function extractCandidates(
         empty += 1;
         continue;
       }
-      atoms = await extractKnowledge(text);
+      atoms = await extractKnowledge(text, profile);
     } catch {
       // Unwatermarked on purpose: a provider hiccup is not a verdict about this session, and
       // neither is a file that could not be read this once.
