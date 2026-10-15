@@ -62,7 +62,7 @@ export const KNOWL_MCP_TOOL_GROUPS = [
   {
     label: 'Special and maintenance',
     tools: ['knowl_ingest', 'knowl_synthesize', 'knowl_session_finish', 'knowl_gc_preview', 'knowl_gc_apply'],
-    routing: 'Raw-source ingest requires an explicit request and configured AI; never send the current conversation silently. Synthesis is explicitly scoped and never automatic. Session finish is only for an explicitly owned manual memory-session ID, never a hook session. Preview GC first; apply only after explicit approval.',
+    routing: 'Raw-source ingest requires an explicit request and configured AI; never send the current conversation silently. Pass profile to knowl_ingest by what the text is (code, general for personal and everyday, academic for sources and research); for mixed text, one call per kind. Synthesis is explicitly scoped and never automatic. Session finish is only for an explicitly owned manual memory-session ID, never a hook session. Preview GC first; apply only after explicit approval.',
   },
   {
     label: 'Session handoff',
