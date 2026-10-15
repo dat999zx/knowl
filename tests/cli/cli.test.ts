@@ -140,7 +140,7 @@ describe('CLI Integration', () => {
     const knowl = await fs.readFile(path.join(TEST_DIR, 'KNOWL.md'), 'utf-8');
     const agents = await fs.readFile(path.join(TEST_DIR, 'AGENTS.md'), 'utf-8');
     expect(managedSection(knowl)).toBe(managedSection(agents));
-    expect(knowl).toContain('For every project-specific request');
+    expect(knowl).toContain('For every project-specific, personal or research request');
     expect(knowl).toContain('### Complete MCP tool routing');
     expect(knowl).toContain('knowl_task_checkpoint');
   });
@@ -279,7 +279,7 @@ describe('CLI Integration', () => {
     const content = await fs.readFile(agentsPath, 'utf-8');
     const knowlContent = await fs.readFile(path.join(AGENTS_REFRESH_TEST_DIR, 'KNOWL.md'), 'utf-8');
     expect(managedSection(content)).toBe(managedSection(knowlContent));
-    expect(content).toContain('For every project-specific request');
+    expect(content).toContain('For every project-specific, personal or research request');
     expect(content).toContain('call `knowl_query` before repository files or commands');
     expect(content).toContain('### Lifecycle modes');
     expect(content).toContain('### Complete MCP tool routing');

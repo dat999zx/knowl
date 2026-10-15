@@ -32,7 +32,7 @@ const EXPECTED_TOOLS = [
 ] as const;
 
 const EXPECTED_CLAUDE_CARD = [
-  'KNOWL WORKFLOW - for project work.',
+  'KNOWL WORKFLOW - for any work.',
   'Start: use a relevant active lifecycle hit; else call knowl_query with the words that name the subject before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are absent, stop and tell the user.',
   'Mode: Claude hooks own lifecycle. Never call knowl_task_start, knowl_task_checkpoint, knowl_task_finish, or knowl_session_finish while active.',
   'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
@@ -131,8 +131,8 @@ describe('canonical Knowl agent guidance', () => {
     // (see 'does not grow when a tool is added'), so a new tool inside an existing group should
     // leave both numbers untouched. If adding a tool changes them, something re-introduced the
     // inventory the card stopped carrying.
-    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_828);
-    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_879);
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_824);
+    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_875);
     for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
       expect(card.length).toBeLessThan(2_000);
       expect(card.slice(0, 512)).toContain('knowl_query');
