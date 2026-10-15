@@ -65,16 +65,12 @@ function readUserProfile(id: string, entry: string): DomainProfile {
   const extract = optionalString(raw, 'extract', entry);
   if (filter === undefined) throw new Error(`Domain profile ${entry}: "filter" is required.`);
   if (extract === undefined) throw new Error(`Domain profile ${entry}: "extract" is required.`);
-  let deriveTruth: string | null = null;
-  if (raw.deriveTruth !== null && raw.deriveTruth !== undefined) {
-    deriveTruth = optionalString(raw, 'deriveTruth', entry) as string;
-  }
   return {
     id,
     filter,
     extract,
     ask: optionalString(raw, 'ask', entry) ?? generalProfile.ask,
-    deriveTruth,
+    deriveTruth: null,
     passDescription: optionalString(raw, 'passDescription', entry),
   };
 }
@@ -84,7 +80,7 @@ function readUserProfile(id: string, entry: string): DomainProfile {
  * then `<KNOWL_HOME>/profiles/<id>.yaml`. Throws for anything unknown.
  */
 export function domainProfile(id: string): DomainProfile {
-  const valid = PROFILE_ID.test(id);
+  const valid = typeof id === 'string' && PROFILE_ID.test(id);
   if (valid && Object.prototype.hasOwnProperty.call(BUILT_IN_PROFILES, id)) {
     return BUILT_IN_PROFILES[id];
   }

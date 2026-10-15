@@ -77,6 +77,8 @@ export async function runDecisionPipeline(
   options: MergeOptions = {},
   config?: ProjectConfig
 ): Promise<MergeResult> {
+  // Resolved first: an invalid ai.profile must fail before the model call and the write, not after.
+  const profile = hasAiConfigured(config) ? resolveDomainProfile(config) : undefined;
   const verifiedActions = await runVerify(projectId, [atom]);
   const mergeResult = await runMerge(projectId, verifiedActions, options);
 
@@ -88,7 +90,7 @@ export async function runDecisionPipeline(
       const item = await getKnowledgeItem(id);
       if (item) items.push(item);
     }
-    await runDeriveTruth(projectId, items, undefined, resolveDomainProfile(config));
+    await runDeriveTruth(projectId, items, undefined, profile);
   }
 
   return mergeResult;

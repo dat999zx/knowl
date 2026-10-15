@@ -52,7 +52,9 @@ extract: |
   You are the core extraction engine for KNOWL ...
 ```
 
-`filter` and `extract` are required. `ask` defaults to the `general` text. Truth derivation is off
+`filter` and `extract` are required. `ask` defaults to the `general` text. `passDescription` is
+optional: it describes the filter's pass/fail field to the model, and without it the code wording
+("valid project knowledge") is used, so set it for a non-code domain. Truth derivation is always off
 for user profiles. Then `knowl config set ai.profile cooking`.
 
 ## Adding a built-in profile

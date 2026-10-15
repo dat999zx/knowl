@@ -5,7 +5,7 @@ import path from 'node:path';
 import { sql } from 'drizzle-orm';
 import { initDb, closeDb, getDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
-import { runPipeline } from '../../src/pipeline/pipeline.js';
+import { runPipeline, runDecisionPipeline } from '../../src/pipeline/pipeline.js';
 import { ProjectConfig } from '../../src/core/types.js';
 
 vi.mock('ai', async importOriginal => {
@@ -107,5 +107,13 @@ describe('runPipeline selects the domain profile', () => {
     await runPipeline(projectId, TEXT, base(), {}, domainProfile('academic'));
 
     expect(call(0).system).toBe(academicProfile.filter);
+  });
+
+  it('rejects an invalid ai.profile in a decision before any model call or write', async () => {
+    const atom = { category: 'decision', title: 'T', content: 'C', confidence: 1 } as any;
+    await expect(runDecisionPipeline(projectId, atom, {}, base('../x'))).rejects.toThrow('Unknown domain profile');
+
+    expect(generateObject).not.toHaveBeenCalled();
+    expect(await repo.listKnowledgeItems()).toHaveLength(0);
   });
 });
