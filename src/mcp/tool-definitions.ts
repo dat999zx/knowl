@@ -422,7 +422,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
               namespace: {
                 type: 'string',
                 enum: ['project', 'global'],
-                description: 'Store to write to. Defaults to project; global is the machine-wide personal store, used automatically when no project is open.',
+                description: 'Store to write to. Use project (the default) unless the user asks for global; global is the machine-wide personal store, used automatically when no project is open.',
               },
               profile: {
                 type: 'string',
@@ -537,7 +537,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
                 items: { type: 'string' },
                 description: 'Ordered steps when category is skill.',
               },
-              namespace: { type: 'string', enum: ['session', 'project', 'organization', 'global'], description: 'Write target; project is default. Non-project namespaces must be configured.' },
+              namespace: { type: 'string', enum: ['session', 'project', 'organization', 'global'], description: 'Write target. Use project (the default) unless the user asks for global or no project is open. Non-project namespaces must be configured.' },
               local: {
                 type: 'boolean',
                 description: 'Never publish this atom to a cloud workspace. Pass true for knowledge that is only true of THIS machine -- an absolute path, an environment quirk, a fix that depends on local tooling. In a connected repo new knowledge is staged for the team automatically, so an atom that should not travel has to say so at write time; there is no other moment when you know. Reversed by naming its id to `knowl cloud stage`.',

@@ -47,7 +47,7 @@ export const KNOWL_MCP_TOOL_GROUPS = [
   {
     label: 'Durable writes',
     tools: ['knowl_store', 'knowl_ingest_atoms', 'knowl_decide', 'knowl_update'],
-    routing: 'Store one verified atom, batch verified atoms, record a confirmed decision, or correct/supersede stale memory.',
+    routing: 'Store one verified atom, batch verified atoms, record a confirmed decision, or correct/supersede stale memory. Write to the project store; use namespace global only when the user asks or no project is open.',
   },
   {
     label: 'History and quality',
@@ -195,7 +195,7 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     'KNOWL WORKFLOW - for any work.',
     'Start: use a relevant active lifecycle hit; else call knowl_query with the words that name the subject before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are absent, stop and tell the user.',
     modeLine,
-    'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
+    'Manual fallback: knowl task run for one bounded command; resumable work: knowl_task_start once, knowl_task_checkpoint at milestones with its taskId, knowl_task_finish once after verifying.',
     'Route by what you need; the tool list names them:',
     '- retrieval: knowl_query first. Recent context only without bootstrap or for a refresh, broad state for status, a packed context only when a token budget is given.',
     '- durable memory: store one verified atom, batch several, record a confirmed decision, a stated goal, or a recurring diagnosis, or correct a stale one. Correct rather than duplicate.',
@@ -216,7 +216,7 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     // session re-diagnosed it from scratch. The adjective is the rule, not decoration: rule 5
     // excludes the typo, and a typo is a resolved diagnosis too, so a cue saying only "resolved"
     // would summarise the rule as its own counterexample.
-    'During work, store durable findings, stated intent, and recurring diagnoses — a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
+    'During work, store durable findings, decisions, stated intent, recurring diagnoses, and user-stated facts, unasked; a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
   ].join('\n');
 }
 
