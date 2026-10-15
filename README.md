@@ -408,10 +408,11 @@ Use `knowl.cmd` as the command on Windows. Codex reads the same entry under `mcp
 
 ## What Knowl is for
 
-Knowl does one job: keep a project's settled knowledge accurate for the agents working on it.
-Not user preferences, not chat history — the decisions, constraints, and architecture a project
-runs on, and which of them are still true today. Most stores sit in a codebase, and the drift and
-evidence tooling is aimed there, but nothing in the knowledge model requires one.
+Knowl keeps settled knowledge accurate for the agents that use it: the decisions, constraints,
+facts and goals something runs on, and which of them are still true today. Most stores sit in a
+codebase, and the drift and evidence tooling is aimed there, but the knowledge model is not
+code-specific: a project store can hold a thesis, and the machine-wide global store holds what is
+true of you across projects. Knowl stores distilled atoms, never chat history.
 
 <div align="center">
 <img src="docs/assets/demo-drift.svg" alt="One question answered four times over two years: append-only keeps every answer true forever so a query today matches four contradicting ones, while a governed store ends each replaced answer and matches one" width="92%" />
@@ -428,8 +429,9 @@ Three choices follow from that:
 - **Repository-local, not a service.** The database sits beside the project it describes. No account,
   no egress, no vendor between you and your own project history.
 
-Knowl is deliberately not a personalization layer. It has no opinion about your users, and it keeps
-no transcripts of its own.
+Knowl keeps no transcripts and never captures prompts. Optional AI ingestion reads only text you
+hand it, through a domain profile (`code`, `general` or `academic`, or your own) that decides what
+is worth keeping. [Domain profiles and providers](docs/domain-profiles.md)
 
 ## Features
 
@@ -820,6 +822,8 @@ global entries sit behind the project's own, and can never crowd them out. And a
 repository at all, such as a Hermes Desktop window with no folder open, reads the global store
 alone rather than having no memory. A project that exists but fails to open stays an error: global
 is personal defaults, never a fallback for a broken store.
+
+AI ingestion into the global store uses the `general` profile unless `ai.profile` in `~/.knowl/config.json` says otherwise.
 
 **It follows you to another machine.** The machine store syncs to a cloud workspace the same way a
 project does — it is not a project, but it is addressed like one:
