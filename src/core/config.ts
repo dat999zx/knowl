@@ -7,6 +7,7 @@ import { ConfigError, ProjectNotFoundError } from './errors.js';
 import { DEFAULT_PRESET_ID } from './vector-profile.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { knowlHome } from './paths.js';
+import { AI_PROVIDERS } from './ai-providers/index.js';
 
 export const DEFAULT_CONFIG: ProjectConfig = {
   version: 1,
@@ -382,8 +383,8 @@ export async function upgradeConfigDefaults(projectRoot: string): Promise<'updat
  */
 export function hasAiConfigured(config?: ProjectConfig): boolean {
   if (!config?.ai?.provider || !config.ai.model) return false;
-  // Ollama is local and keyless; naming it is the whole opt-in.
-  if (config.ai.provider === 'ollama') return true;
+  // A keyless provider (local, such as Ollama) needs no key; naming it is the whole opt-in.
+  if (Object.prototype.hasOwnProperty.call(AI_PROVIDERS, config.ai.provider) && AI_PROVIDERS[config.ai.provider].keyless) return true;
   return Boolean(config.ai.apiKey);
 }
 

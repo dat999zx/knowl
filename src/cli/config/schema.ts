@@ -1,6 +1,7 @@
 import { DEFAULT_CONFIG, DEFAULT_DRIFT_REMINDER_EVERY } from '../../core/config.js';
 import { DEFAULT_PRESET_ID, PRESET_IDS } from '../../core/vector-profile.js';
 import { HOOK_TRANSPORTS } from '../../core/hooks-transport.js';
+import { AI_PROVIDER_IDS } from '../../core/ai-providers/index.js';
 
 export type ConfigKey =
   | 'security.rejectSecrets'
@@ -105,7 +106,7 @@ const stringList = (raw: string) => raw.split(',').map(value => value.trim()).fi
 
 const VECTOR_DTYPES = ['q4', 'q8', 'fp16', 'fp32'] as const;
 const VECTOR_POOLINGS = ['mean', 'cls'] as const;
-const AI_PROVIDERS = ['openai', 'anthropic', 'ollama', 'custom'] as const;
+const AI_PROVIDERS = AI_PROVIDER_IDS;
 // Ordered by how much they can cost the person running them, which is also the order they are
 // meant to be adopted in: nothing, then measurement, then refusal.
 const IMPACT_GATE_MODES = ['off', 'shadow', 'enforce'] as const;

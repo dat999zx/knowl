@@ -3,6 +3,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { generateObject, generateText, LanguageModel } from 'ai';
 import { ProjectConfig, FilterResult, KnowledgeAtom, KnowledgeItem } from '../core/types.js';
 import { AIProviderError } from '../core/errors.js';
+import { aiProvider } from '../core/ai-providers/index.js';
 import {
   FilterResultSchema,
   ExtractionResultSchema,
@@ -34,34 +35,9 @@ export function initAI(config: AIConfig): LanguageModel {
   const { provider, model, apiKey, baseUrl } = config;
 
   try {
-    if (provider === 'openai') {
-      const openai = createOpenAI({
-        apiKey: apiKey || process.env.OPENAI_API_KEY,
-        baseURL: baseUrl || undefined,
-      });
-      currentModel = openai(model);
-    } else if (provider === 'anthropic') {
-      const anthropic = createAnthropic({
-        apiKey: apiKey || process.env.ANTHROPIC_API_KEY,
-        baseURL: baseUrl || undefined,
-      });
-      currentModel = anthropic(model);
-    } else if (provider === 'ollama') {
-      // Ollama's local API has a standard OpenAI compatibility endpoint
-      const openaiOllama = createOpenAI({
-        apiKey: 'ollama',
-        baseURL: baseUrl || 'http://localhost:11434/v1',
-      });
-      currentModel = openaiOllama(model);
-    } else if (provider === 'custom') {
-      const customOpenAI = createOpenAI({
-        apiKey: apiKey || '',
-        baseURL: baseUrl,
-      });
-      currentModel = customOpenAI(model);
-    } else {
-      throw new Error(`Unsupported AI provider: ${provider}`);
-    }
+    const descriptor = aiProvider(provider);
+    const settings = descriptor.settings({ apiKey, baseUrl });
+    currentModel = descriptor.sdk === 'anthropic' ? createAnthropic(settings)(model) : createOpenAI(settings)(model);
 
     currentConfig = config;
     return currentModel;
