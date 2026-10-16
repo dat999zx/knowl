@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## 5.26.0 — 2026-10-16
+## 5.26.0 - 2026-10-16
 
 ### Feature: domain profiles, so AI ingestion keeps everyday and academic knowledge
 
