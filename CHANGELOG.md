@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.26.1 - 2026-10-16
 
 ### Fix: the Hermes rules card and the global instruction block match the rest of the host text
 
