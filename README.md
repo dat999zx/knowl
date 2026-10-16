@@ -90,8 +90,10 @@ registers Knowl with whichever agents it detects. It also warms a local embeddin
 in the background — `init` succeeds either way, and without it you still get keyword search.
 
 To refresh every repository and every machine-wide host after an update, run `knowl init --all`
-once. That includes the global instruction file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) of every
-host your repositories already use. A host none of them uses is left alone. It replaces `knowl upgrade --all`, which still works for one release.
+once. It only upgrades what is already set up: your repositories, the global store if you have one, and
+a global instruction block (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) only where one is already
+there. It never creates any of them; `knowl init` and `knowl init --global <host>` do that. It replaces
+`knowl upgrade --all`, which still works for one release.
 
 That is the whole setup. You do not record memory by hand: your agent reads and writes it as it
 works.

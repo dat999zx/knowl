@@ -118,21 +118,6 @@ describe('knowl init --global <host>', () => {
       expect(await refreshInstalledGlobalInstructions(home)).toEqual([]);
     });
 
-    it('writes the block for a host the swept repositories use, and for no other', async () => {
-      await fs.mkdir(path.dirname(file('codex')), { recursive: true });
-      await fs.writeFile(file('codex'), '# hand written, no Knowl block\n', 'utf8');
-
-      const done = await refreshInstalledGlobalInstructions(home, false, new Set(['codex', 'claude']));
-
-      expect(done.map(r => r.host).sort()).toEqual(['claude', 'codex']);
-      const text = await fs.readFile(file('codex'), 'utf8');
-      expect(text.startsWith('# hand written, no Knowl block\n')).toBe(true);
-      expect(text).toContain('## Knowl personal defaults');
-      expect(await fs.readFile(`${file('codex')}.backup`, 'utf8')).toBe('# hand written, no Knowl block\n');
-      await expect(fs.access(file('antigravity'))).rejects.toThrow();
-      expect(await refreshInstalledGlobalInstructions(home, false, new Set(['codex', 'claude']))).toEqual([]);
-    });
-
     it('changes nothing on a dry run but still reports what it would refresh', async () => {
       await fs.mkdir(path.dirname(file('antigravity')), { recursive: true });
       await fs.writeFile(file('antigravity'), stale(), 'utf8');
@@ -140,7 +125,6 @@ describe('knowl init --global <host>', () => {
       const would = await refreshInstalledGlobalInstructions(home, true);
 
       expect(would.map(r => r.host)).toEqual(['antigravity']);
-      expect((await refreshInstalledGlobalInstructions(home, true, new Set(['windsurf']))).map(r => r.host).sort()).toEqual(['antigravity', 'windsurf']);
       await expect(fs.access(file('windsurf'))).rejects.toThrow();
       expect(await fs.readFile(file('antigravity'), 'utf8')).toBe(stale());
     });

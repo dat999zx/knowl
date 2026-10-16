@@ -3734,6 +3734,17 @@ async function runRepoSweep(options: SweepFlags) {
   }
   if (forgotten.length > 0) console.log('');
 
+  // The machine-wide pieces, once per machine and not per repository. Upgrade only: the global store
+  // if it already exists, and a global instruction block only where one is already present. A sweep
+  // never creates either; `knowl init --global` is the command that does.
+  const { upgradeExistingGlobalStore } = await import('../store/global-store.js');
+  const { refreshInstalledGlobalInstructions } = await import('./agents/global-instructions.js');
+  if (!options.dryRun && await upgradeExistingGlobalStore()) console.log('Global store is up to date.');
+  for (const file of await refreshInstalledGlobalInstructions(undefined, Boolean(options.dryRun))) {
+    console.log(`${options.dryRun ? 'Would refresh' : 'Refreshed'} the Knowl block in ${file.configPath} (${file.host}).`);
+  }
+  console.log('');
+
   const discovered = await discoverRepos({ roots: options.root, record: !options.dryRun });
   if (discovered.length === 0) {
     console.log('No Knowl repositories found. Run `knowl init` in a repository, or pass --root <dir> to scan for existing ones.');
@@ -3743,23 +3754,6 @@ async function runRepoSweep(options: SweepFlags) {
   const verb = options.dryRun ? 'Would sweep' : 'Sweeping';
   console.log(`${verb} ${discovered.length} repositor${discovered.length === 1 ? 'y' : 'ies'}:`);
   for (const repository of discovered) console.log(`  ${repository.root}  (found via ${repository.source})`);
-  console.log('');
-
-  // Machine-wide instruction files, once per machine and not per repository: any that already carry
-  // Knowl's block, and one for every host a swept repository already uses. A host no repository uses
-  // gets nothing, so a sweep still opts no one in.
-  const { refreshInstalledGlobalInstructions } = await import('./agents/global-instructions.js');
-  const { createAgentRegistry, detectAgents } = await import('./agents/registry.js');
-  const registry = createAgentRegistry();
-  const usedHosts = new Set<AgentName>();
-  for (const repository of discovered) {
-    for (const { adapter, detection } of await detectAgents(repository.root, registry)) {
-      if (detection.present ?? detection.configured) usedHosts.add(adapter.name);
-    }
-  }
-  for (const file of await refreshInstalledGlobalInstructions(undefined, Boolean(options.dryRun), usedHosts)) {
-    console.log(`${options.dryRun ? 'Would write' : 'Wrote'} the Knowl block in ${file.configPath} (${file.host}).`);
-  }
   console.log('');
 
   if (options.dryRun) {

@@ -35,6 +35,18 @@ export async function ensureGlobalStore(): Promise<{ path: string; created: bool
 }
 
 /**
+ * Upgrade the global store if there is one, and report whether there was. `ensureGlobalStore` makes
+ * the file when it is missing, which is right for `init` and wrong for a sweep: `init --all` upgrades
+ * what a person already set up and must not start a store for someone who never wanted one.
+ */
+export async function upgradeExistingGlobalStore(): Promise<boolean> {
+  const exists = await fs.access(globalStorePath()).then(() => true, () => false);
+  if (!exists) return false;
+  await ensureGlobalStore();
+  return true;
+}
+
+/**
  * Check the paths on a global write, and return the note the caller prints.
  *
  * Two rules, both about honesty. A relative path in a store that spans repositories names
