@@ -70,19 +70,19 @@ export async function installGlobalInstructions(host: AgentName, home = os.homed
 }
 
 /**
- * Keep the personal-defaults block current in every global instruction file `init --all` should
- * cover: one that already carries the block, and one for a host the swept repositories already use.
- * A host nothing on the machine uses gets nothing, so a sweep still opts no one in.
+ * Bring the personal-defaults block up to date in every global instruction file that ALREADY carries
+ * one. `init --all` calls this. It upgrades and never installs: a file with no block, a missing file
+ * or a host nothing set up is left alone, because the block tells the agent to query Knowl on every
+ * task and only `knowl init --global <host>` is a person asking for that.
  */
-export async function refreshInstalledGlobalInstructions(home = os.homedir(), dryRun = false, usedHosts: ReadonlySet<AgentName> = new Set()): Promise<Array<{ host: AgentName; configPath: string; status: MergeStatus }>> {
+export async function refreshInstalledGlobalInstructions(home = os.homedir(), dryRun = false): Promise<Array<{ host: AgentName; configPath: string; status: MergeStatus }>> {
   const refreshed: Array<{ host: AgentName; configPath: string; status: MergeStatus }> = [];
   for (const host of globalInstructionHosts()) {
     const configPath = globalInstructionPath(host, home)!;
     const existing = await readTextIfExists(configPath);
-    const hasBlock = existing !== undefined && existing.includes(GLOBAL_BLOCK_START);
-    if (!hasBlock && !usedHosts.has(host)) continue;
+    if (existing === undefined || !existing.includes(GLOBAL_BLOCK_START)) continue;
     if (dryRun) {
-      if (replaceBlock(existing ?? '') !== existing) refreshed.push({ host, configPath, status: existing === undefined ? 'configured' : 'updated' });
+      if (replaceBlock(existing) !== existing) refreshed.push({ host, configPath, status: 'updated' });
       continue;
     }
     const result = await installGlobalInstructions(host, home);

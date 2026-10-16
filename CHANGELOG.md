@@ -3,6 +3,20 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Fix: `knowl init --all` upgrades what exists and creates nothing
+
+- 5.26.1 made `knowl init --all` write Knowl's block into the global instruction file of every host a
+  swept repository used (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and the Antigravity and
+  Windsurf equivalents). That block tells the agent to query Knowl on every task, so it also fired in
+  folders with no Knowl. The sweep no longer writes a block that is not there; it refreshes one that
+  is, and `knowl init --global <host>` is still the command that adds it.
+- `knowl init --all` now also opens an existing global store, so its schema is upgraded with the
+  repositories. It never creates one.
+- If 5.26.1 added the block and you do not want it, delete the text between
+  `<!-- KNOWL_GLOBAL_MEMORY -->` and `<!-- /KNOWL_GLOBAL_MEMORY -->` in those files.
+
 ## 5.26.1 - 2026-10-16
 
 ### Fix: the Hermes rules card and the global instruction block match the rest of the host text
