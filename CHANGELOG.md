@@ -12,15 +12,22 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   (people, preferences, plans, dates, how-tos) and `academic` (sources, claims, definitions,
   methods, results, people in the work) ship alongside it.
 - The agent picks the profile per call: `knowl_ingest` takes an optional `profile`, so a store that
-  mixes code, research and personal notes filters each text correctly. Or set a store default with
-  `knowl config set ai.profile general`.
-- Choose one per store with `knowl config set ai.profile general`. The global store defaults to
+  mixes code, research and personal notes filters each text correctly. An unknown profile fails
+  before any model call.
+- Or set a store default with `knowl config set ai.profile general`. The global store defaults to
   `general`, set in `~/.knowl/config.json`.
 - Add your own as one file, `~/.knowl/profiles/<id>.yaml`. See `docs/domain-profiles.md`.
 - `knowl_ingest` takes `namespace: "global"`, and works in a session with no project open. It
   previously could not write to the global store.
 - Knowl still stores distilled atoms only. Nothing new is captured; ingestion reads only text you
   hand it.
+
+### Change: host instructions are no longer code-only
+
+- The instruction text every host receives (`KNOWL.md`, the managed blocks, the Hermes guidance)
+  now says "memory" and "any work" instead of "project memory" and "project work". The agent is
+  asked to store facts you state without being asked, to write to the project unless you ask for
+  global (or no project is open), and to pick the profile for each `knowl_ingest`.
 
 ### Change: AI providers are a registry
 

@@ -751,7 +751,8 @@ is refused as before. Either way a repo's private knowledge stays private until 
 - **Garbage collection** that previews by default and protects anything recently used. `knowl gc`
 - **`knowl doctor`** — one command that checks setup, config, integrity, schema, retrieval, vector
   coverage, agent registration, and workspace health.
-- **Optional AI** — configure a provider for `knowl ask` and raw-text ingest. Every feature above
+- **Optional AI** — configure a provider for `knowl ask` and raw-text ingest, and pick a domain
+  profile (`code`, `general`, `academic` or your own) for what ingest keeps. Every feature above
   works without one.
 
 → [Portability and maintenance](docs/reference.md#portability-and-maintenance) ·

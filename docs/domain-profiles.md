@@ -29,6 +29,10 @@ One config key, read from the config that governs the store being written:
 | Project | `<project>/.knowl/config.json` | `code` |
 | Global | `~/.knowl/config.json` | `general` |
 
+Only the profile comes from the home config. A `knowl_ingest` into the global store from inside a
+project still uses that project's `security` settings, so `security.rejectSecrets: false` there
+also turns off the secret check for a global ingest. `knowl_store` behaves the same way.
+
 ```bash
 knowl config set ai.profile academic
 ```

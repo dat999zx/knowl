@@ -243,12 +243,15 @@ anywhere.
 Creating the store does not make any project read it. Linking does, and it is per project so that
 one careless write cannot become visible everywhere at once.
 
-**What belongs in it.** Global is a personal-defaults layer, not a second place to put project
-truth. Knowledge that is true of *you* or of *this machine*:
+**What belongs in it.** Global is for what is true of *you* or of *this machine*, not a second
+place to put project truth. That covers personal defaults and everyday knowledge alike: a
+preference, a person, a date, a research note that belongs to no repository. Agents write to the
+project by default and to global only when you ask, or when no project is open. Examples:
 
 - "I prefer pnpm over npm"
 - "this machine's driver breaks on CUDA 12"
 - "every repository here uses conventional commits"
+- "my advisor is Dr. Nguyen; the draft is due 15 December"
 
 Knowledge that is true of one repository stays in it. "The auth rewrite chose JWT over sessions
 because of X" belongs to that repo: stored globally it is wrong everywhere else, and it dilutes
@@ -2874,7 +2877,7 @@ unless fleet awareness is switched off.
 | `knowl_skill_read` | Inspect one learned skill before running it |
 | `knowl_skill_run` | Run a trusted learned-skill entrypoint |
 | `knowl_skill_create` | Create a learned skill when explicitly requested |
-| `knowl_ingest` | Process explicitly supplied raw source through configured AI; `namespace: "global"` writes to the machine-wide store |
+| `knowl_ingest` | Process explicitly supplied raw source through configured AI. `profile` (`code`, `general`, `academic` or your own) picks what is worth keeping for this text; `namespace: "global"` writes to the machine-wide store |
 | `knowl_synthesize` | Create or refresh one explicitly tag-scoped understanding |
 | `knowl_session_finish` | Finish an explicitly owned manual memory session |
 | `knowl_gc_preview` | Preview duplicate, stale, or cold-memory maintenance |
