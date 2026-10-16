@@ -37,7 +37,7 @@
 Your agent starts every session blank, so you keep a `CLAUDE.md`. It only grows. Six months in it
 still names the database you migrated off last spring, and now the agent gets both answers.
 
-Knowl is persistent memory for Claude Code, Cursor and Codex, over
+Knowl is persistent memory for AI agents, for code, research and everyday life, over
 [MCP](https://modelcontextprotocol.io) or the CLI. When a fact is replaced, the old one is retired
 instead of competing with the new one. No API key needed. When Knowl isn't sure the new fact
 replaces the old, it leaves both active and hands you the `knowl supersede` command to say so.
