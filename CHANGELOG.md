@@ -29,6 +29,11 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   asked to store facts you state without being asked, to write to the project unless you ask for
   global (or no project is open), and to pick the profile for each `knowl_ingest`.
 
+### Change: the one-line description is no longer Claude Code, Cursor and Codex only
+
+- `package.json`, `server.json` and the README intro now say "persistent memory for AI agents, for
+  code, research and everyday life". Supported hosts are still listed in `docs/hosts.md`.
+
 ### Change: AI providers are a registry
 
 - `openai`, `anthropic`, `ollama` and `custom` are now one descriptor file each under
