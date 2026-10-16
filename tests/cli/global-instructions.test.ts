@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   GLOBAL_BLOCK, GLOBAL_BLOCK_END, GLOBAL_BLOCK_START, globalInstructionHosts, globalInstructionPath,
-  globalInstructionsCurrent, installGlobalInstructions,
+  globalInstructionsCurrent, installGlobalInstructions, refreshInstalledGlobalInstructions,
 } from '../../src/cli/agents/global-instructions.js';
 
 describe('global instruction files', () => {
@@ -17,7 +17,7 @@ describe('global instruction files', () => {
   it('tells the model to use Knowl together with the host memory on every task, not just questions about the person', () => {
     expect(GLOBAL_BLOCK).toContain('together with any built-in memory');
     expect(GLOBAL_BLOCK).toContain('every task or question');
-    expect(GLOBAL_BLOCK.length).toBeLessThan(900);
+    expect(GLOBAL_BLOCK.length).toBeLessThan(1000);
   });
 
   it('creates the file, with its folders, when the host has none', async () => {
@@ -94,5 +94,55 @@ describe('knowl init --global <host>', () => {
     expect(await fs.readFile(target, 'utf8')).toContain(GLOBAL_BLOCK_START);
 
     expect(run(['init', '--global', 'cursor', '-y']).stdout).toMatch(/cursor: no documented global instruction file/);
+  });
+
+  describe('refreshInstalledGlobalInstructions (what init --all runs)', () => {
+    let home = '';
+    beforeEach(async () => { home = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-ginstr-')); });
+    afterEach(async () => { await fs.rm(home, { recursive: true, force: true }); });
+    const file = (host: Parameters<typeof globalInstructionPath>[0]) => globalInstructionPath(host, home)!;
+    const stale = (extra = '') => `before\n\n${GLOBAL_BLOCK_START}\nold wording\n${GLOBAL_BLOCK_END}\n${extra}`;
+
+    it('refreshes a stale block, leaves a file with no block alone, and never opts a host in', async () => {
+      await fs.mkdir(path.dirname(file('claude')), { recursive: true });
+      await fs.writeFile(file('claude'), stale('after\n'), 'utf8');
+      await fs.mkdir(path.dirname(file('codex')), { recursive: true });
+      await fs.writeFile(file('codex'), '# hand written, no Knowl block\n', 'utf8');
+
+      const done = await refreshInstalledGlobalInstructions(home);
+
+      expect(done.map(r => r.host)).toEqual(['claude']);
+      expect(await fs.readFile(file('claude'), 'utf8')).toContain('## Knowl personal defaults');
+      expect(await fs.readFile(file('codex'), 'utf8')).toBe('# hand written, no Knowl block\n');
+      await expect(fs.access(file('windsurf'))).rejects.toThrow();
+      expect(await refreshInstalledGlobalInstructions(home)).toEqual([]);
+    });
+
+    it('writes the block for a host the swept repositories use, and for no other', async () => {
+      await fs.mkdir(path.dirname(file('codex')), { recursive: true });
+      await fs.writeFile(file('codex'), '# hand written, no Knowl block\n', 'utf8');
+
+      const done = await refreshInstalledGlobalInstructions(home, false, new Set(['codex', 'claude']));
+
+      expect(done.map(r => r.host).sort()).toEqual(['claude', 'codex']);
+      const text = await fs.readFile(file('codex'), 'utf8');
+      expect(text.startsWith('# hand written, no Knowl block\n')).toBe(true);
+      expect(text).toContain('## Knowl personal defaults');
+      expect(await fs.readFile(`${file('codex')}.backup`, 'utf8')).toBe('# hand written, no Knowl block\n');
+      await expect(fs.access(file('antigravity'))).rejects.toThrow();
+      expect(await refreshInstalledGlobalInstructions(home, false, new Set(['codex', 'claude']))).toEqual([]);
+    });
+
+    it('changes nothing on a dry run but still reports what it would refresh', async () => {
+      await fs.mkdir(path.dirname(file('antigravity')), { recursive: true });
+      await fs.writeFile(file('antigravity'), stale(), 'utf8');
+
+      const would = await refreshInstalledGlobalInstructions(home, true);
+
+      expect(would.map(r => r.host)).toEqual(['antigravity']);
+      expect((await refreshInstalledGlobalInstructions(home, true, new Set(['windsurf']))).map(r => r.host).sort()).toEqual(['antigravity', 'windsurf']);
+      await expect(fs.access(file('windsurf'))).rejects.toThrow();
+      expect(await fs.readFile(file('antigravity'), 'utf8')).toBe(stale());
+    });
   });
 });

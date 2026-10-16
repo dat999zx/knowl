@@ -3,6 +3,21 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Fix: the Hermes rules card and the global instruction block match the rest of the host text
+
+- The Hermes plugin's rules card still described a code-only memory and said nothing about storing
+  what you state or about the project-first default. It now says both, and a session with no project
+  is told the global store holds people, dates and research notes as well as preferences.
+- The block in `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and the Antigravity and Windsurf
+  equivalents says the same.
+- `knowl init --all` now keeps the global instruction file (`~/.claude/CLAUDE.md`,
+  `~/.codex/AGENTS.md`, and the Antigravity and Windsurf equivalents) current, once per machine: it
+  writes Knowl's block for every host a swept repository already uses and refreshes any block that
+  is already there. Before, only `knowl init --global <host>` wrote it, so an upgrade left it on the
+  old wording. A host no repository uses is left alone, and `--dry-run` lists what it would write.
+
 ## 5.26.0 - 2026-10-16
 
 ### Feature: domain profiles, so AI ingestion keeps everyday and academic knowledge
