@@ -98,6 +98,10 @@ export const KNOWL_WRITE_ROUTING =
 export const KNOWL_LOAD_SCHEMA_LINE = 'If a tool is listed but not callable, load its schema first.';
 export const KNOWL_NO_SECRETS_LINE = 'Never store secrets or routine noise.';
 /** For a session with no project: the host's own memory and Knowl are two sources, not rivals. */
+/** The rule the Hermes card and the global instruction block share with the compact host card. */
+export const KNOWL_STATED_FACTS_LINE =
+  'Store facts the user states about themselves or their work, unasked; a goal counts before it settles.';
+
 export const KNOWL_USE_TOGETHER_LINE =
   'Use Knowl together with any built-in memory this host has, on every task or question, not only ones about the person: '
   + 'before you answer or start work, call knowl_query with the words that name the subject, then answer from both. '

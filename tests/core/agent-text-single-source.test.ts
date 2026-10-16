@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_LOAD_SCHEMA_LINE, KNOWL_NO_SECRETS_LINE,
+  KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_LOAD_SCHEMA_LINE, KNOWL_NO_SECRETS_LINE, KNOWL_STATED_FACTS_LINE,
   KNOWL_USE_TOGETHER_LINE, KNOWL_WRITE_ROUTING,
 } from '../../src/core/knowl-guidance.js';
 import { hermesPluginGuidance } from '../../src/core/plugin-guidance.js';
@@ -48,6 +48,8 @@ describe('agent-facing write guidance has one source', () => {
     expect(hermesPluginGuidance().globalRules).toContain(KNOWL_USE_TOGETHER_LINE);
     expect(KNOWL_CLAUDE_CONTINUATION_REMINDER).toContain(KNOWL_LOAD_SCHEMA_LINE);
     expect(hermesPluginGuidance().projectRules).toContain(KNOWL_NO_SECRETS_LINE);
+    expect(hermesPluginGuidance().projectRules).toContain(KNOWL_STATED_FACTS_LINE);
+    expect(hermesPluginGuidance().globalRules).toContain(KNOWL_STATED_FACTS_LINE);
   });
 
   /**

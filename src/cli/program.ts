@@ -3745,6 +3745,23 @@ async function runRepoSweep(options: SweepFlags) {
   for (const repository of discovered) console.log(`  ${repository.root}  (found via ${repository.source})`);
   console.log('');
 
+  // Machine-wide instruction files, once per machine and not per repository: any that already carry
+  // Knowl's block, and one for every host a swept repository already uses. A host no repository uses
+  // gets nothing, so a sweep still opts no one in.
+  const { refreshInstalledGlobalInstructions } = await import('./agents/global-instructions.js');
+  const { createAgentRegistry, detectAgents } = await import('./agents/registry.js');
+  const registry = createAgentRegistry();
+  const usedHosts = new Set<AgentName>();
+  for (const repository of discovered) {
+    for (const { adapter, detection } of await detectAgents(repository.root, registry)) {
+      if (detection.present ?? detection.configured) usedHosts.add(adapter.name);
+    }
+  }
+  for (const file of await refreshInstalledGlobalInstructions(undefined, Boolean(options.dryRun), usedHosts)) {
+    console.log(`${options.dryRun ? 'Would write' : 'Wrote'} the Knowl block in ${file.configPath} (${file.host}).`);
+  }
+  console.log('');
+
   if (options.dryRun) {
     console.log('Dry run: nothing was changed. Re-run without --dry-run to sweep.');
     return;
