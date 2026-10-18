@@ -747,11 +747,12 @@ Workspace peers may opt in with `share: true`, which lets linked repositories op
 read-only. Sharing is re-checked on every read, so revoking it revokes previously issued
 locators too.
 
-Both Claude Code and Codex archives are discovered. They are found by different mechanisms
-because they are laid out differently: Claude Code names a directory after the project
-(`~/.claude/projects/<encoded-root>/`), while Codex partitions by date
-(`~/.codex/sessions/YYYY/MM/DD/`) and records the project inside each file as
-`session_meta.payload.cwd`. Every Codex candidate is therefore opened, with a bounded header read.
+Claude Code, Codex and GitHub Copilot CLI archives are discovered. They are found by different
+mechanisms because they are laid out differently: Claude Code names a directory after the project
+(`~/.claude/projects/<encoded-root>/`), Codex partitions by date (`~/.codex/sessions/YYYY/MM/DD/`)
+and records the project inside each file as `session_meta.payload.cwd`, and Copilot stores one
+directory per session (`~/.copilot/session-state/<uuid>/`) with the project recorded in
+`workspace.yaml` and on the `session.start` line of `events.jsonl`.
 
 ### Seeing what exists and what is on — `knowl config list`
 
