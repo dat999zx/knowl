@@ -4,7 +4,13 @@ import type { Client } from '@libsql/client';
 import { openTranscriptDb, withWriteRetry } from './database.js';
 import { describesSameMessage, NAME_KIND, readOpeningAsk, streamProseFrom, type ProseChunk } from './parse.js';
 import { fillMissingByteOffsets } from './offset-backfill.js';
-import { defaultProjectsDir, scanTranscriptArchive, type TranscriptFile } from './paths.js';
+import {
+  defaultCodexSessionsDir,
+  defaultCopilotSessionsDir,
+  defaultProjectsDir,
+  scanTranscriptArchive,
+  type TranscriptFile,
+} from './paths.js';
 
 /** Whether the transcript archive can be listed at all, as opposed to being empty. */
 async function readableDir(target: string): Promise<boolean> {
@@ -510,6 +516,8 @@ export async function runIndexPass(input: {
   projectRoot: string;
   dbPath: string;
   projectsDir?: string;
+  codexSessionsDir?: string;
+  copilotSessionsDir?: string;
   /** `Date.now()` value after which the pass stops between files. */
   deadline?: number;
 }): Promise<IndexPassResult> {
@@ -521,7 +529,11 @@ export async function runIndexPass(input: {
   // connection when it hits SQLITE_BUSY_SNAPSHOT, so any handle captured up here would be a
   // closed one for the rest of the pass. Every operation re-acquires through the helper.
   await openTranscriptDb(input.dbPath);
-  const scan = await scanTranscriptArchive(input.projectRoot, { projectsDir: input.projectsDir });
+  const scan = await scanTranscriptArchive(input.projectRoot, {
+    projectsDir: input.projectsDir,
+    codexSessionsDir: input.codexSessionsDir,
+    copilotSessionsDir: input.copilotSessionsDir,
+  });
   const files = scan.files;
   const onDisk = new Set(files.map(file => file.path));
 
@@ -544,16 +556,33 @@ export async function runIndexPass(input: {
   // at which point every worktree's sessions look deleted and the sweep drops their rows *and
   // their vectors*. Re-indexing is cheap; re-embedding an archive is not, and nothing was
   // stale. A definitive "not a checkout" is not degraded: it misses no roots.
-  const archiveReadable = await readableDir(input.projectsDir ?? defaultProjectsDir());
-  if (archiveReadable && !scan.degraded) {
+  const anyRedirected = Boolean(
+    input.projectsDir || input.codexSessionsDir || input.copilotSessionsDir,
+  );
+  const probe = (override: string | undefined, fallback: () => string) =>
+    override || !anyRedirected ? readableDir(override ?? fallback()) : Promise.resolve(false);
+  const [claudeReadable, codexReadable, copilotReadable] = await Promise.all([
+    probe(input.projectsDir, defaultProjectsDir),
+    probe(input.codexSessionsDir, defaultCodexSessionsDir),
+    probe(input.copilotSessionsDir, defaultCopilotSessionsDir),
+  ]);
+  const readableByHarness: Record<string, boolean> = {
+    claude: claudeReadable,
+    codex: codexReadable,
+    copilot: copilotReadable,
+  };
+  if (!scan.degraded && Object.values(readableByHarness).some(Boolean)) {
     const known = await withWriteRetry(input.dbPath, async client =>
-      (await client.execute('SELECT path FROM transcript_files')).rows.map(row => String(row.path)));
+      (await client.execute('SELECT path, harness FROM transcript_files')).rows.map(row => ({
+        path: String(row.path),
+        harness: String(row.harness ?? 'claude'),
+      })));
 
-    for (const knownPath of known) {
-      if (onDisk.has(knownPath)) continue;
-      await dropFileRows(input.dbPath, knownPath);
+    for (const row of known) {
+      if (onDisk.has(row.path) || !readableByHarness[row.harness]) continue;
+      await dropFileRows(input.dbPath, row.path);
       await withWriteRetry(input.dbPath, client =>
-        client.execute({ sql: 'DELETE FROM transcript_files WHERE path = ?', args: [knownPath] }));
+        client.execute({ sql: 'DELETE FROM transcript_files WHERE path = ?', args: [row.path] }));
       result.removed++;
     }
   }
