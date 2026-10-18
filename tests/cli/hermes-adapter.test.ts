@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { parse } from 'yaml';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -186,5 +186,27 @@ describe('hermes adapter', () => {
 
   it('ships the plugin sources the installer copies', async () => {
     expect(await readFile(path.join(hermesPluginSourceDir(), 'plugin.yaml'), 'utf8')).toContain('name: knowl');
+  });
+
+  it('configures and detects named profiles under profiles/ alongside the base home', async () => {
+    const profileDir = path.join(home, 'profiles', 'engineer-ecc');
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(path.join(profileDir, 'config.yaml'), 'model:\n  default: claude-sonnet-5.5\nmemory:\n  provider: ""\n', 'utf8');
+
+    const adapter = createHermesAdapter(env(true));
+    await adapter.configure('/repo');
+    expect((await adapter.detect('/repo')).configured).toBe(true);
+
+    const profileCfg = parse(await readFile(path.join(profileDir, 'config.yaml'), 'utf8')) as Record<string, any>;
+    expect(profileCfg.memory.provider).toBe('knowl');
+    expect(profileCfg.plugins.enabled).toContain('knowl');
+    expect(profileCfg.mcp_servers.knowl).toEqual({ command: 'knowl', args: ['serve', '--host', 'hermes'] });
+    expect(await readFile(path.join(profileDir, 'plugins', 'knowl', '__init__.py'), 'utf8')).toContain('agent-hook');
+
+    // If a named profile loses its plugin, detect() reports not configured until repaired
+    await rm(path.join(profileDir, 'plugins', 'knowl'), { recursive: true, force: true });
+    expect((await adapter.detect('/repo')).configured).toBe(false);
+    await adapter.configure('/repo');
+    expect((await adapter.detect('/repo')).configured).toBe(true);
   });
 });
