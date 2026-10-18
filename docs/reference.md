@@ -747,12 +747,15 @@ Workspace peers may opt in with `share: true`, which lets linked repositories op
 read-only. Sharing is re-checked on every read, so revoking it revokes previously issued
 locators too.
 
-Claude Code, Codex and GitHub Copilot CLI archives are discovered. They are found by different
-mechanisms because they are laid out differently: Claude Code names a directory after the project
-(`~/.claude/projects/<encoded-root>/`), Codex partitions by date (`~/.codex/sessions/YYYY/MM/DD/`)
-and records the project inside each file as `session_meta.payload.cwd`, and Copilot stores one
-directory per session (`~/.copilot/session-state/<uuid>/`) with the project recorded in
-`workspace.yaml` and on the `session.start` line of `events.jsonl`.
+Claude Code, Codex, GitHub Copilot CLI and Hermes Agent archives are discovered. They are found by
+different mechanisms because they are laid out differently: Claude Code names a directory after the
+project (`~/.claude/projects/<encoded-root>/`), Codex partitions by date
+(`~/.codex/sessions/YYYY/MM/DD/`) and records the project inside each file as
+`session_meta.payload.cwd`, Copilot stores one directory per session
+(`~/.copilot/session-state/<uuid>/`) with the project recorded in `workspace.yaml` and on the
+`session.start` line of `events.jsonl`, and Hermes Agent stores sessions and messages in SQLite
+(`state.db` in the default Hermes home and `profiles/<name>/state.db`) with the project recorded in
+`sessions.cwd`, `sessions.git_repo_root`, or `system_prompts`.
 
 ### Seeing what exists and what is on — `knowl config list`
 

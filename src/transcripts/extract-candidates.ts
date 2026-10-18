@@ -10,6 +10,7 @@ import { hasAiConfigured } from '../core/config.js';
 import { extractKnowledge, initAI } from '../ai/provider.js';
 import { resolveDomainProfile } from '../ai/profiles/index.js';
 import { readCopilotCheckpointsText } from './copilot.js';
+import { isHermesSessionPath, readHermesCompactedSummaryText, statHermesVirtualSession } from './hermes.js';
 import { readProseFrom } from './parse.js';
 
 /**
@@ -122,18 +123,20 @@ export async function planExtraction(
 async function sessionText(session: ExtractionPlanSession, sessionStoreDbPath?: string): Promise<string> {
   const { messages } = await readProseFrom(session.path, 0, 0);
   const prose = messages.map(message => `${message.role}: ${message.text}`).join('\n\n');
-  if (session.harness === 'copilot') {
-    const checkpoints = await readCopilotCheckpointsText(session.sessionId, session.path, sessionStoreDbPath);
-    if (checkpoints) {
-      if (checkpoints.length >= MAX_SESSION_CHARS) {
-        return checkpoints.slice(checkpoints.length - MAX_SESSION_CHARS);
+  if (session.harness === 'copilot' || session.harness === 'hermes') {
+    const summaryText = session.harness === 'copilot'
+      ? await readCopilotCheckpointsText(session.sessionId, session.path, sessionStoreDbPath)
+      : await readHermesCompactedSummaryText(session.sessionId, session.path);
+    if (summaryText) {
+      if (summaryText.length >= MAX_SESSION_CHARS) {
+        return summaryText.slice(summaryText.length - MAX_SESSION_CHARS);
       }
-      const budget = MAX_SESSION_CHARS - checkpoints.length - 2;
+      const budget = MAX_SESSION_CHARS - summaryText.length - 2;
       let tail = '';
       if (budget > 0) {
         tail = prose.length > budget ? prose.slice(prose.length - budget) : prose;
       }
-      return tail ? `${checkpoints}\n\n${tail}` : checkpoints;
+      return tail ? `${summaryText}\n\n${tail}` : summaryText;
     }
   }
   return prose.length > MAX_SESSION_CHARS ? prose.slice(prose.length - MAX_SESSION_CHARS) : prose;
@@ -219,7 +222,11 @@ export async function extractCandidates(
         // file as an empty one, which is right for the index pass and wrong here -- so the
         // question is asked directly, and only in the ambiguous case. A throw here lands in the
         // catch below and leaves the session unwatermarked, exactly like a provider failure.
-        await access(session.path);
+        if (isHermesSessionPath(session.path)) {
+          if (!(await statHermesVirtualSession(session.path))) throw new Error('Hermes session missing');
+        } else {
+          await access(session.path);
+        }
         await recordExtraction(db, session.sessionId, 0, 0);
         empty += 1;
         continue;

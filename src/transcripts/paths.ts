@@ -12,14 +12,58 @@ import {
   scanCopilotArchive,
   type CopilotSessionMap,
 } from './copilot.js';
+import {
+  anchorHermesAt,
+  buildHermesRepoSessionMap,
+  cleanHermesMessageContent,
+  defaultHermesHomeDir,
+  defaultHermesStateDbs,
+  extractHermesProse,
+  formatHermesSessionPath,
+  isHermesSessionPath,
+  parseHermesSessionPath,
+  readHermesCompactedSummaryText,
+  readHermesMessageAt,
+  readHermesMessagesAt,
+  readHermesMessagesFor,
+  readHermesProseFrom,
+  readHermesWithContext,
+  scanHermesArchive,
+  statHermesVirtualSession,
+  streamHermesProseFrom,
+  type HermesSessionMap,
+  type HermesTranscriptFile,
+  type HermesVirtualFileMeta,
+} from './hermes.js';
 
 export {
+  anchorHermesAt,
   buildCopilotRepoSessionMap,
+  buildHermesRepoSessionMap,
+  cleanHermesMessageContent,
   defaultCopilotSessionsDir,
   defaultCopilotSessionStoreDb,
+  defaultHermesHomeDir,
+  defaultHermesStateDbs,
+  extractHermesProse,
+  formatHermesSessionPath,
+  isHermesSessionPath,
   normalizeCopilotRepoCwd,
+  parseHermesSessionPath,
   readCopilotCheckpointsText,
+  readHermesCompactedSummaryText,
+  readHermesMessageAt,
+  readHermesMessagesAt,
+  readHermesMessagesFor,
+  readHermesProseFrom,
+  readHermesWithContext,
+  scanHermesArchive,
+  statHermesVirtualSession,
+  streamHermesProseFrom,
   type CopilotSessionMap,
+  type HermesSessionMap,
+  type HermesTranscriptFile,
+  type HermesVirtualFileMeta,
 };
 
 const run = promisify(execFile);
@@ -32,7 +76,7 @@ const run = promisify(execFile);
  * Codex records its project inside the file -- so by the time a file reaches the indexer the
  * knowledge of where it came from is not recoverable from its path without redoing that work.
  */
-export type TranscriptHarness = 'claude' | 'codex' | 'copilot';
+export type TranscriptHarness = 'claude' | 'codex' | 'copilot' | 'hermes';
 
 export type TranscriptFile = {
   /** Absolute path to the `.jsonl`. */
@@ -528,6 +572,7 @@ export async function scanTranscriptArchive(
     projectsDir?: string;
     codexSessionsDir?: string;
     copilotSessionsDir?: string;
+    hermesHomeDir?: string;
     roots?: string[];
     onlySessionIds?: Set<string>;
   } = {},
@@ -627,7 +672,9 @@ export async function scanTranscriptArchive(
   // That is not hypothetical -- it is what happened the first time this landed, and eight
   // discovery tests started returning 137 of this repository's real sessions alongside their
   // three fixtures. Production passes neither option and gets both real archives.
-  const anyRedirected = Boolean(options.projectsDir || options.codexSessionsDir || options.copilotSessionsDir);
+  const anyRedirected = Boolean(
+    options.projectsDir || options.codexSessionsDir || options.copilotSessionsDir || options.hermesHomeDir,
+  );
   const codexSessionsDir = options.codexSessionsDir
     ?? (anyRedirected ? null : defaultCodexSessionsDir());
   if (codexSessionsDir) {
@@ -644,6 +691,16 @@ export async function scanTranscriptArchive(
     });
     found.push(...copilot.files);
     degraded = degraded || copilot.degraded;
+  }
+
+  const hermesHomeDir = options.hermesHomeDir
+    ?? (anyRedirected ? null : defaultHermesHomeDir());
+  if (hermesHomeDir) {
+    const hermes = await scanHermesArchive(hermesHomeDir, rootSet.roots, uncanonicalise, {
+      onlySessionIds: options.onlySessionIds,
+    });
+    found.push(...hermes.files);
+    degraded = degraded || hermes.degraded;
   }
 
   const filtered = options.onlySessionIds
@@ -673,7 +730,8 @@ export async function hasIndexableArchive(projectRoot: string): Promise<boolean>
   const claudeDir = path.join(defaultProjectsDir(), encodeProjectDir(path.resolve(projectRoot)));
   if (await exists(claudeDir)) return true;
   if (await exists(defaultCodexSessionsDir())) return true;
-  return exists(defaultCopilotSessionsDir());
+  if (await exists(defaultCopilotSessionsDir())) return true;
+  return (await defaultHermesStateDbs()).length > 0;
 }
 
 /** The file list alone, for callers with nothing to decide about a degraded scan. */
@@ -683,6 +741,7 @@ export async function discoverTranscriptFiles(
     projectsDir?: string;
     codexSessionsDir?: string;
     copilotSessionsDir?: string;
+    hermesHomeDir?: string;
     roots?: string[];
     onlySessionIds?: Set<string>;
   } = {},
