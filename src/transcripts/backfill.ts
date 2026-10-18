@@ -22,7 +22,7 @@ export type BackfillResult = {
  */
 export async function rebuildTranscriptIndex(
   projectRoot: string,
-  options: { budgetMinutes?: number; projectsDir?: string; onlySessionIds?: Set<string> } = {},
+  options: { budgetMinutes?: number; projectsDir?: string; hermesHomeDir?: string; onlySessionIds?: Set<string> } = {},
 ): Promise<BackfillResult> {
   const config = await loadConfig(projectRoot);
   if (!isTranscriptSearchEnabled(config)) {
@@ -40,6 +40,7 @@ export async function rebuildTranscriptIndex(
     projectRoot,
     dbPath,
     projectsDir: options.projectsDir,
+    hermesHomeDir: options.hermesHomeDir,
     onlySessionIds: options.onlySessionIds,
     deadline,
   });

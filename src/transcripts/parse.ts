@@ -1,5 +1,6 @@
 import { createReadStream } from 'node:fs';
 import { extractCopilotProse } from './copilot.js';
+import { extractHermesProse, isHermesSessionPath, streamHermesProseFrom } from './hermes.js';
 
 export type ProseMessage = {
   /** 1-indexed line within the `.jsonl`. This is the pointer stored instead of the text. */
@@ -32,6 +33,9 @@ export function extractProse(entry: unknown): Extracted | null {
   // neither, and no caller has to know which archive a line came from.
   if (record.type === 'response_item') return extractCodexProse(record);
   if (record.type === 'user.message' || record.type === 'assistant.message') return extractCopilotProse(record);
+  if ((record.role === 'user' || record.role === 'assistant') && typeof record.content === 'string') {
+    return extractHermesProse(record);
+  }
 
   const role = record.type;
   if (role !== 'user' && role !== 'assistant') return null;
@@ -251,6 +255,9 @@ export async function* streamProseFrom(
   /** Called for each naming entry seen. Ignored by callers that do not index session names. */
   onNaming?: (naming: SessionNaming) => void,
 ): AsyncGenerator<ProseChunk, ProseWatermark> {
+  if (isHermesSessionPath(filePath)) {
+    return yield* streamHermesProseFrom(filePath, startByte, startLine, onNaming);
+  }
   let carry = Buffer.alloc(0);
   /** Absolute file offset of `carry[0]`. */
   let consumed = startByte;
