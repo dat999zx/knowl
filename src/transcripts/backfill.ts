@@ -22,7 +22,7 @@ export type BackfillResult = {
  */
 export async function rebuildTranscriptIndex(
   projectRoot: string,
-  options: { budgetMinutes?: number; projectsDir?: string } = {},
+  options: { budgetMinutes?: number; projectsDir?: string; onlySessionIds?: Set<string> } = {},
 ): Promise<BackfillResult> {
   const config = await loadConfig(projectRoot);
   if (!isTranscriptSearchEnabled(config)) {
@@ -36,7 +36,13 @@ export async function rebuildTranscriptIndex(
     : undefined;
 
   const dbPath = resolveStorage(projectRoot).transcripts;
-  const pass = await runIndexPass({ projectRoot, dbPath, projectsDir: options.projectsDir, deadline });
+  const pass = await runIndexPass({
+    projectRoot,
+    dbPath,
+    projectsDir: options.projectsDir,
+    onlySessionIds: options.onlySessionIds,
+    deadline,
+  });
 
   // Semantic ranking follows search.vector.enabled rather than inheriting from the transcript
   // flag. The model, dtype and pooling all come from search.vector.preset, so embedding here

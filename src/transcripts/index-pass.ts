@@ -518,6 +518,7 @@ export async function runIndexPass(input: {
   projectsDir?: string;
   codexSessionsDir?: string;
   copilotSessionsDir?: string;
+  onlySessionIds?: Set<string>;
   /** `Date.now()` value after which the pass stops between files. */
   deadline?: number;
 }): Promise<IndexPassResult> {
@@ -533,6 +534,7 @@ export async function runIndexPass(input: {
     projectsDir: input.projectsDir,
     codexSessionsDir: input.codexSessionsDir,
     copilotSessionsDir: input.copilotSessionsDir,
+    onlySessionIds: input.onlySessionIds,
   });
   const files = scan.files;
   const onDisk = new Set(files.map(file => file.path));
@@ -571,7 +573,9 @@ export async function runIndexPass(input: {
     codex: codexReadable,
     copilot: copilotReadable,
   };
-  if (!scan.degraded && Object.values(readableByHarness).some(Boolean)) {
+  // When `onlySessionIds` is provided, the caller is indexing a targeted subset of sessions, so
+  // sessions outside that subset must not be treated as deleted from disk.
+  if (!scan.degraded && !input.onlySessionIds && Object.values(readableByHarness).some(Boolean)) {
     const known = await withWriteRetry(input.dbPath, async client =>
       (await client.execute('SELECT path, harness FROM transcript_files')).rows.map(row => ({
         path: String(row.path),

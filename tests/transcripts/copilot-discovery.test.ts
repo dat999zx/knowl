@@ -6,10 +6,13 @@ import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/data
 import { runIndexPass } from '../../src/transcripts/index-pass.js';
 import { extractProse } from '../../src/transcripts/parse.js';
 import {
+  buildCopilotRepoSessionMap,
   defaultCopilotSessionsDir,
   discoverTranscriptFiles,
   encodeProjectDir,
   hasIndexableArchive,
+  normalizeCopilotRepoCwd,
+  readCopilotCheckpointsText,
   scanTranscriptArchive,
 } from '../../src/transcripts/paths.js';
 
@@ -418,5 +421,109 @@ describe('Copilot end-to-end indexing and cold-start probe', () => {
       if (homeBefore.USERPROFILE === undefined) delete process.env.USERPROFILE;
       await fs.rm(fakeHome, { recursive: true, force: true }).catch(() => {});
     }
+  });
+
+  it('normalizes pruned worktree CWDs (<repo>.worktrees/*, <repo>/worktrees/*, worktrees/<repo>-<task>, <repo>-Task<id>) back to the parent repo', async () => {
+    const repo = path.resolve(process.platform === 'win32' ? 'C:\\repos\\CRM.ICon.VIVR.Web' : '/repos/CRM.ICon.VIVR.Web');
+    expect(normalizeCopilotRepoCwd(`${repo}.worktrees/Task6646044_provision_EU`)).toBe(repo);
+    expect(normalizeCopilotRepoCwd(`${repo}/worktrees/wi-6648932`)).toBe(repo);
+    expect(normalizeCopilotRepoCwd(`${repo}-Task6617582`)).toBe(repo);
+    const siblingWt = path.resolve(
+      process.platform === 'win32'
+        ? 'C:\\repos\\worktrees\\CRM.ICon.VIVR.Web-6604101-api-contracts'
+        : '/repos/worktrees/CRM.ICon.VIVR.Web-6604101-api-contracts',
+    );
+    expect(normalizeCopilotRepoCwd(siblingWt)).toBe(repo);
+
+    // Also discovers sessions recorded inside a pruned worktree when scanning for ROOT
+    const id1 = '11111111-2222-4333-8444-555555555551';
+    const id2 = '11111111-2222-4333-8444-555555555552';
+    await writeCopilotSession(id1, { yamlCwd: `${ROOT}.worktrees/feat-branch` });
+    await writeCopilotSession(id2, { yamlCwd: `${OTHER}.worktrees/other-branch` });
+
+    const found = await discoverTranscriptFiles(ROOT, {
+      projectsDir,
+      codexSessionsDir,
+      copilotSessionsDir,
+    });
+    expect(found.map(f => f.sessionId)).toEqual([id1]);
+  });
+
+  it('builds a repo-to-sessions map once and supports onlySessionIds without deleting other indexed sessions', async () => {
+    const s1 = '22222222-3333-4444-8555-666666666661';
+    const s2 = '22222222-3333-4444-8555-666666666662';
+    const s3 = '22222222-3333-4444-8555-666666666663';
+    await writeCopilotSession(s1, {
+      yamlCwd: ROOT,
+      lines: [copilotUserMessage('session one'), copilotAssistantMessage('reply one')],
+    });
+    await writeCopilotSession(s2, {
+      yamlCwd: `${ROOT}.worktrees/task-two`,
+      lines: [copilotUserMessage('session two in worktree'), copilotAssistantMessage('reply two')],
+    });
+    await writeCopilotSession(s3, {
+      yamlCwd: OTHER,
+      lines: [copilotUserMessage('other repo session'), copilotAssistantMessage('reply three')],
+    });
+
+    const map = await buildCopilotRepoSessionMap(copilotSessionsDir, [ROOT, OTHER]);
+    const rootKey = process.platform === 'win32' || process.platform === 'darwin' ? ROOT.toLowerCase() : ROOT;
+    expect(map.byRoot.get(rootKey)?.map(f => f.sessionId).sort()).toEqual([s1, s2]);
+
+    const dbDir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-copilot-scoped-'));
+    try {
+      const dbPath = path.join(dbDir, 'transcripts.db');
+      const pass1 = await runIndexPass({
+        projectRoot: ROOT,
+        dbPath,
+        projectsDir,
+        codexSessionsDir,
+        copilotSessionsDir,
+        onlySessionIds: new Set([s1]),
+      });
+      expect(pass1.indexed).toBe(2);
+
+      // Indexing only s2 next must not delete s1 from transcript_files
+      const pass2 = await runIndexPass({
+        projectRoot: ROOT,
+        dbPath,
+        projectsDir,
+        codexSessionsDir,
+        copilotSessionsDir,
+        onlySessionIds: new Set([s2]),
+      });
+      expect(pass2.indexed).toBe(2);
+      expect(pass2.removed).toBe(0);
+
+      const client = await openTranscriptDb(dbPath, { readOnly: true });
+      const rows = (await client.execute('SELECT session_id FROM transcript_files ORDER BY session_id')).rows;
+      expect(rows.map(r => String(r.session_id))).toEqual([s1, s2]);
+    } finally {
+      await closeTranscriptDbs();
+      await fs.rm(dbDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('reads pre-distilled checkpoints from session checkpoints/*.json and index.md', async () => {
+    const id = '33333333-4444-4555-8666-777777777771';
+    const eventsPath = await writeCopilotSession(id, { yamlCwd: ROOT });
+    const sessionDir = path.dirname(eventsPath);
+    await fs.mkdir(path.join(sessionDir, 'checkpoints'), { recursive: true });
+    await fs.writeFile(
+      path.join(sessionDir, 'checkpoints', '001.json'),
+      JSON.stringify({
+        checkpoint_number: 1,
+        title: 'Wire Multi-Model Copilot Provider',
+        overview: 'Added copilot provider descriptor.',
+        work_done: 'Routed claude* to Anthropic SDK and gpt* to OpenAI SDK.',
+        technical_details: 'Updated schemas.ts for strict mode.',
+      }),
+    );
+    await fs.writeFile(path.join(sessionDir, 'index.md'), 'Completed multi-model provider wiring.');
+
+    const text = await readCopilotCheckpointsText(id, eventsPath, path.join(sessionDir, 'no-store.db'));
+    expect(text).toContain('## Checkpoint 1: Wire Multi-Model Copilot Provider');
+    expect(text).toContain('Routed claude* to Anthropic SDK');
+    expect(text).toContain('## Session Summary');
   });
 });
