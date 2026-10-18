@@ -27,10 +27,21 @@ import { candidateToAtom, listCandidates, type ExtractionCandidate } from './ext
 /** How many candidates one `--all` run promotes before stopping. */
 export const APPROVE_ALL_LIMIT = 1_000;
 
+/**
+ * Categories excluded when promoting `--all` transcript candidates unless explicitly included.
+ *
+ * `state` atoms extracted from historical transcripts describe transient in-flight activity at the
+ * moment that old session ended (e.g. "branch holds uncommitted changes", "test run incomplete").
+ * Promoting them into active memory surfaces weeks-old snapshots as current repository state.
+ */
+export const DEFAULT_APPROVE_ALL_EXCLUDED_CATEGORIES: readonly KnowledgeCategory[] = ['state'];
+
 export type ApprovalResult = {
   approved: number;
   /** Candidates the merge path folded into an item that already said this. */
   deduped: number;
+  /** Candidates left staged in `transcript_candidates` because their category was excluded. */
+  skipped: number;
   failed: { id: string; reason: string }[];
   itemIds: string[];
   /**
@@ -93,21 +104,42 @@ async function loadCandidates(db: Client, ids: string[]): Promise<(ExtractionCan
  * discarded; what it must not do is silently disappear into a status that reads like a decision
  * somebody made.
  */
+function inPlaceholders(values: readonly unknown[]): string {
+  return values.map(() => '?').join(', ');
+}
+
 export async function approveCandidates(
   db: Client,
   projectId: string,
   config: ProjectConfig,
-  selection: { ids?: string[]; all?: boolean; limit?: number },
+  selection: {
+    ids?: string[];
+    all?: boolean;
+    limit?: number;
+    excludeCategories?: readonly KnowledgeCategory[];
+  },
 ): Promise<ApprovalResult> {
+  const excluded = new Set<string>(
+    selection.excludeCategories ?? (selection.all ? DEFAULT_APPROVE_ALL_EXCLUDED_CATEGORIES : []),
+  );
+  const excludedList = [...excluded];
+  const result: ApprovalResult = { approved: 0, deduped: 0, skipped: 0, failed: [], itemIds: [], remaining: 0 };
+
   const targets = selection.all
-    ? (await listCandidates(db, { status: 'pending', limit: selection.limit ?? APPROVE_ALL_LIMIT }))
-      .map(candidate => candidate.id)
+    ? (await listCandidates(db, {
+      status: 'pending',
+      limit: selection.limit ?? APPROVE_ALL_LIMIT,
+      excludeCategories: excludedList,
+    })).map(candidate => candidate.id)
     : selection.ids ?? [];
 
   const candidates = await loadCandidates(db, targets);
-  const result: ApprovalResult = { approved: 0, deduped: 0, failed: [], itemIds: [], remaining: 0 };
 
   for (const candidate of candidates) {
+    if (excluded.has(candidate.category)) {
+      result.skipped += 1;
+      continue;
+    }
     try {
       // Checked here rather than trusted from the row. These titles and categories were written
       // by a model over unreviewed text, and nothing between the provider and this line refuses a
@@ -152,10 +184,19 @@ export async function approveCandidates(
   }
 
   // Counted from the store after the run rather than derived from the cap, so it stays right
-  // whatever a concurrent extraction added and whatever failed.
-  result.remaining = Number((await db.execute(
-    `SELECT COUNT(*) AS n FROM transcript_candidates WHERE status = 'pending'`,
-  )).rows[0]?.n ?? 0);
+  // whatever a concurrent extraction added and whatever failed. Excluded categories stay staged in
+  // `transcript_candidates` for historical auditability without counting as actionable remaining work.
+  if (selection.all && excludedList.length > 0) {
+    const skippedRows = (await db.execute({
+      sql: `SELECT COUNT(*) AS n FROM transcript_candidates WHERE status = 'pending' AND category IN (${inPlaceholders(excludedList)})`,
+      args: excludedList,
+    })).rows;
+    result.skipped = Number(skippedRows[0]?.n ?? 0);
+  }
+  const remainingSql = excludedList.length > 0
+    ? `SELECT COUNT(*) AS n FROM transcript_candidates WHERE status = 'pending' AND category NOT IN (${inPlaceholders(excludedList)})`
+    : `SELECT COUNT(*) AS n FROM transcript_candidates WHERE status = 'pending'`;
+  result.remaining = Number((await db.execute({ sql: remainingSql, args: excludedList })).rows[0]?.n ?? 0);
 
   return result;
 }
