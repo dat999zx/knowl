@@ -153,8 +153,51 @@ async function pluginInstalled(home: string): Promise<boolean> {
 
 const RESTART_NOTE = 'Restart Hermes (or start a new session) to load the plugin; /reload-mcp connects the knowl server in a running chat. Knowl is set as the memory provider (Settings > Memory & Context) so knowl_query and knowl_store are always available; if you already use another provider it was left alone, and the tools stay behind tool_search.';
 
+async function hermesHomesToConfigure(home: string): Promise<string[]> {
+  const homes = [home];
+  const profilesDir = path.join(home, 'profiles');
+  try {
+    const entries = await fs.readdir(profilesDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') || entry.name.includes('.backup')) continue;
+      const profileHome = path.join(profilesDir, entry.name);
+      const isDir = entry.isDirectory()
+        || (entry.isSymbolicLink() && await fs.stat(profileHome).then(s => s.isDirectory(), () => false));
+      if (!isDir) continue;
+      const hasConfig = await fs.access(path.join(profileHome, 'config.yaml')).then(() => true, () => false);
+      if (hasConfig) homes.push(profileHome);
+    }
+  } catch {
+    // No named profiles directory, or unreadable: configure only the base home.
+  }
+  return homes;
+}
+
+async function homeLifecycleConfigured(home: string): Promise<boolean> {
+  try {
+    const doc = await readYamlDocument(path.join(home, 'config.yaml'));
+    return doc !== undefined && pluginEnabled(doc) && await pluginInstalled(home);
+  } catch {
+    return false;
+  }
+}
+
+async function homeConfigured(home: string, entry: McpEntry): Promise<boolean> {
+  try {
+    const doc = await readYamlDocument(path.join(home, 'config.yaml'));
+    return doc !== undefined
+      && serverMatches(doc, entry)
+      && pluginEnabled(doc)
+      && providerOk(doc)
+      && !hasShellHooks(doc)
+      && await pluginInstalled(home);
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Hermes: one global `config.yaml` plus a plugin directory.
+ * Hermes: global `config.yaml` plus a plugin directory, and any named profiles under `profiles/`.
  *
  * The plugin files are copied, not linked: Hermes runs from a managed venv and `hermes update`
  * re-runs install hooks, and a symlink into a `node_modules` that npm may replace is a plugin
@@ -163,26 +206,16 @@ const RESTART_NOTE = 'Restart Hermes (or start a new session) to load the plugin
 export function createHermesAdapter(environment: AgentEnvironment): AgentAdapter {
   const entry: McpEntry = { command: environment.platform === 'win32' ? 'knowl.cmd' : 'knowl', args: ['serve', '--host', 'hermes'] };
   const configPath = () => path.join(hermesHomeDir(environment), 'config.yaml');
-  const readDoc = async () => {
-    try {
-      return await readYamlDocument(configPath());
-    } catch {
-      return undefined;
-    }
-  };
   return {
     name: 'hermes',
     label: 'Hermes Agent',
     async detect(): Promise<AgentDetection> {
-      const doc = await readDoc();
-      const configured = doc !== undefined
-        && serverMatches(doc, entry)
-        && pluginEnabled(doc)
-        && providerOk(doc)
-        && !hasShellHooks(doc)
-        && await pluginInstalled(hermesHomeDir(environment));
+      const baseHome = hermesHomeDir(environment);
+      const homes = await hermesHomesToConfigure(baseHome);
+      const results = await Promise.all(homes.map(h => homeConfigured(h, entry)));
+      const configured = results.length > 0 && results.every(Boolean);
       // A plugin directory that exists but differs from the shipped one is an install an update left behind.
-      const present = configured || await fs.access(path.join(hermesHomeDir(environment), 'plugins', PLUGIN_NAME, '__init__.py')).then(() => true, () => false);
+      const present = configured || await fs.access(path.join(baseHome, 'plugins', PLUGIN_NAME, '__init__.py')).then(() => true, () => false);
       return {
         installed: await environment.commandExists('hermes'),
         configured,
@@ -192,16 +225,22 @@ export function createHermesAdapter(environment: AgentEnvironment): AgentAdapter
       };
     },
     async configure(): Promise<AgentIntegrationResult> {
-      const home = hermesHomeDir(environment);
-      let status: MergeStatus;
-      try {
-        status = await mergeYamlDocument(configPath(), doc => mutateHermesConfig(doc, entry));
-      } catch (error: any) {
-        return { agent: 'hermes', status: 'failed', scope: 'global', configPath: configPath(), message: `Could not merge ${configPath()}: ${error.message}` };
+      const baseHome = hermesHomeDir(environment);
+      const homes = await hermesHomesToConfigure(baseHome);
+      let status: MergeStatus = 'unchanged';
+      for (const home of homes) {
+        const targetConfig = path.join(home, 'config.yaml');
+        try {
+          const currentStatus = await mergeYamlDocument(targetConfig, doc => mutateHermesConfig(doc, entry));
+          if (home === baseHome) status = currentStatus;
+          else if (status === 'unchanged' && currentStatus !== 'unchanged') status = 'updated';
+          const target = path.join(home, 'plugins', PLUGIN_NAME);
+          await fs.mkdir(target, { recursive: true });
+          for (const file of PLUGIN_FILES) await fs.copyFile(path.join(hermesPluginSourceDir(), file), path.join(target, file));
+        } catch (error: any) {
+          return { agent: 'hermes', status: 'failed', scope: 'global', configPath: targetConfig, message: `Could not configure ${targetConfig}: ${error.message}` };
+        }
       }
-      const target = path.join(home, 'plugins', PLUGIN_NAME);
-      await fs.mkdir(target, { recursive: true });
-      for (const file of PLUGIN_FILES) await fs.copyFile(path.join(hermesPluginSourceDir(), file), path.join(target, file));
       return { agent: 'hermes', status, scope: 'global', configPath: configPath(), message: RESTART_NOTE };
     },
     async verify() {
@@ -211,7 +250,8 @@ export function createHermesAdapter(environment: AgentEnvironment): AgentAdapter
     // The lifecycle is the plugin, installed by `configure` in the same pass as the MCP entry;
     // this reports on it rather than writing a second time.
     async configureLifecycle() {
-      const installed = await pluginInstalled(hermesHomeDir(environment));
+      const homes = await hermesHomesToConfigure(hermesHomeDir(environment));
+      const installed = (await Promise.all(homes.map(h => pluginInstalled(h)))).every(Boolean);
       return {
         agent: 'hermes',
         status: installed ? 'unchanged' : 'failed',
@@ -221,8 +261,9 @@ export function createHermesAdapter(environment: AgentEnvironment): AgentAdapter
       };
     },
     async verifyLifecycle() {
-      const doc = await readDoc();
-      return doc !== undefined && pluginEnabled(doc) && await pluginInstalled(hermesHomeDir(environment));
+      const homes = await hermesHomesToConfigure(hermesHomeDir(environment));
+      const checks = await Promise.all(homes.map(h => homeLifecycleConfigured(h)));
+      return checks.every(Boolean);
     },
   };
 }

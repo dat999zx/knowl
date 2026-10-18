@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { loadConfig, upgradeConfigDefaults } from '../core/config.js';
+import { loadConfig, setGlobalNamespace, upgradeConfigDefaults } from '../core/config.js';
 import type { ProjectConfig } from '../core/types.js';
 import { installKnowlProjectGuidance, KnowlProjectGuidanceInstallResult } from '../core/agents-guidance.js';
 import { installKnowlGitignoreEntry } from '../core/gitignore.js';
@@ -62,8 +62,13 @@ export async function upgradeExistingRepository(projectRoot: string, fallbackNam
   // or predate this, and re-recording an already-known repo is a no-op.
   await recordKnownRepo(projectRoot);
 
-  const configStatus = await upgradeConfigDefaults(projectRoot);
-  const config = await loadConfig(projectRoot);
+  let configStatus = await upgradeConfigDefaults(projectRoot);
+  let config = await loadConfig(projectRoot);
+  if (config.memory?.global?.enabled === undefined) {
+    await setGlobalNamespace(projectRoot, true);
+    config = await loadConfig(projectRoot);
+    configStatus = 'updated';
+  }
   const guidanceStatus = await installKnowlProjectGuidance(projectRoot);
   const gitignoreStatus = await installKnowlGitignoreEntry(projectRoot);
   await fs.mkdir(path.join(projectRoot, '.knowl', 'skills'), { recursive: true });

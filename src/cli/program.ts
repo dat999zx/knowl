@@ -549,16 +549,18 @@ program
       const { ensureGlobalStore } = await import('../store/global-store.js');
       await ensureGlobalStore();
 
-      // Prompt to link this project to the global store if interactive
+      // Prompt to link this project to the global store if interactive; auto-link on non-interactive/yes
+      let shouldLinkGlobal = true;
       if (interactive && !options.yes) {
         const clack = await import('@clack/prompts');
         const linkChoice = await clack.confirm({
           message: 'Link this project to the global store? (reversible with `knowl link global --off`)',
           initialValue: true,
         });
-        if (!clack.isCancel(linkChoice) && linkChoice) {
-          await setGlobalNamespace(cwd, true);
-        }
+        shouldLinkGlobal = !clack.isCancel(linkChoice) && Boolean(linkChoice);
+      }
+      if (shouldLinkGlobal) {
+        await setGlobalNamespace(cwd, true);
       }
 
       // Recorded here as well as in `upgrade`, so a repository is reachable by a machine-wide
