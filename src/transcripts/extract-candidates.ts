@@ -263,16 +263,20 @@ async function recordExtraction(db: Client, sessionId: string, count: number, ch
 
 export async function listCandidates(
   db: Client,
-  options: { status?: string; limit?: number } = {},
+  options: { status?: string; limit?: number; excludeCategories?: readonly string[] } = {},
 ): Promise<ExtractionCandidate[]> {
   const status = options.status ?? 'pending';
+  const excluded = options.excludeCategories ?? [];
+  const filterClause = excluded.length > 0
+    ? ` AND category NOT IN (${excluded.map(() => '?').join(', ')})`
+    : '';
   const rows = (await db.execute({
     sql: `SELECT id, session_id, source_path, harness, category, title, content, confidence, status
           FROM transcript_candidates
-          WHERE status = ?
+          WHERE status = ?${filterClause}
           ORDER BY confidence DESC, title ASC
           LIMIT ?`,
-    args: [status, Math.max(1, options.limit ?? 50)],
+    args: [status, ...excluded, Math.max(1, options.limit ?? 50)],
   })).rows;
 
   return rows.map(row => ({

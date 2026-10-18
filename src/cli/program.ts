@@ -3506,7 +3506,8 @@ transcripts
 transcripts
   .command('approve [ids...]')
   .description('Promote staged candidates into the knowledge store')
-  .option('--all', `Approve up to ${APPROVE_ALL_LIMIT} pending candidates`)
+  .option('--all', `Approve up to ${APPROVE_ALL_LIMIT} pending durable candidates (skips 'state' unless --include-state)`)
+  .option('--include-state', 'With --all, also promote transient state candidates into active memory')
   .action(async (ids: string[], options) => {
     try {
       if (!options.all && (!ids || ids.length === 0)) {
@@ -3518,9 +3519,14 @@ transcripts
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not registered in the database.');
 
-      const result = await approveCandidates(db, project.id, config, { ids, all: options.all });
+      const result = await approveCandidates(db, project.id, config, {
+        ids,
+        all: options.all,
+        excludeCategories: options.includeState ? [] : undefined,
+      });
       console.log(`Approved ${result.approved} candidate(s).`);
       if (result.deduped > 0) console.log(`${result.deduped} merged into knowledge the store already held.`);
+      if (result.skipped > 0) console.log(`Skipped ${result.skipped} transient state candidate(s) (kept staged in transcript_candidates).`);
       for (const failure of result.failed) console.log(`Failed ${failure.id}: ${failure.reason}`);
       // Said out loud, because `--all` stops at a cap and a first run over a real archive
       // produces atoms on that order. "Approved 1000 candidate(s)" alone reads as finished.
