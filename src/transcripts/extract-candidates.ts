@@ -9,6 +9,7 @@ import { hasAiConfigured } from '../core/config.js';
 // exists precisely so verify and merge happen later, under a human decision.
 import { extractKnowledge, initAI } from '../ai/provider.js';
 import { resolveDomainProfile } from '../ai/profiles/index.js';
+import { readCopilotCheckpointsText } from './copilot.js';
 import { readProseFrom } from './parse.js';
 
 /**
@@ -71,11 +72,11 @@ export type ExtractionPlan = {
  */
 export async function planExtraction(
   db: Client,
-  options: { limit?: number } = {},
+  options: { limit?: number; onlySessionIds?: Set<string> } = {},
 ): Promise<ExtractionPlan> {
   const limit = Math.max(1, options.limit ?? DEFAULT_EXTRACT_LIMIT);
 
-  const rows = (await db.execute(
+  const allRows = (await db.execute(
     `SELECT f.session_id AS session_id, f.path AS path, f.harness AS harness,
             COALESCE(SUM(m.chars), 0) AS chars
      FROM transcript_files f
@@ -86,6 +87,9 @@ export async function planExtraction(
      HAVING chars > 0
      ORDER BY chars DESC`,
   )).rows;
+  const rows = options.onlySessionIds
+    ? allRows.filter(row => options.onlySessionIds!.has(String(row.session_id)))
+    : allRows;
 
   const done = Number((await db.execute('SELECT COUNT(*) AS n FROM transcript_extractions')).rows[0]?.n ?? 0);
 
@@ -115,10 +119,24 @@ export async function planExtraction(
  * decided, what turned out to be true, what was fixed. Keeping the head would preserve the
  * problem statement and drop the answer.
  */
-async function sessionText(filePath: string): Promise<string> {
-  const { messages } = await readProseFrom(filePath, 0, 0);
-  const joined = messages.map(message => `${message.role}: ${message.text}`).join('\n\n');
-  return joined.length > MAX_SESSION_CHARS ? joined.slice(joined.length - MAX_SESSION_CHARS) : joined;
+async function sessionText(session: ExtractionPlanSession, sessionStoreDbPath?: string): Promise<string> {
+  const { messages } = await readProseFrom(session.path, 0, 0);
+  const prose = messages.map(message => `${message.role}: ${message.text}`).join('\n\n');
+  if (session.harness === 'copilot') {
+    const checkpoints = await readCopilotCheckpointsText(session.sessionId, session.path, sessionStoreDbPath);
+    if (checkpoints) {
+      if (checkpoints.length >= MAX_SESSION_CHARS) {
+        return checkpoints.slice(checkpoints.length - MAX_SESSION_CHARS);
+      }
+      const budget = MAX_SESSION_CHARS - checkpoints.length - 2;
+      let tail = '';
+      if (budget > 0) {
+        tail = prose.length > budget ? prose.slice(prose.length - budget) : prose;
+      }
+      return tail ? `${checkpoints}\n\n${tail}` : checkpoints;
+    }
+  }
+  return prose.length > MAX_SESSION_CHARS ? prose.slice(prose.length - MAX_SESSION_CHARS) : prose;
 }
 
 function stageAtom(
@@ -164,7 +182,7 @@ export type ExtractionResult = {
 export async function extractCandidates(
   db: Client,
   config: ProjectConfig,
-  options: { limit?: number; deadline?: number } = {},
+  options: { limit?: number; deadline?: number; onlySessionIds?: Set<string>; sessionStoreDbPath?: string } = {},
 ): Promise<ExtractionResult> {
   if (!hasAiConfigured(config)) {
     throw new Error(
@@ -193,7 +211,7 @@ export async function extractCandidates(
       // that can fail on a session, and for the same kind of reason -- a transcript deleted
       // between indexing and now, an archive on a volume that went away. Outside, one such file
       // ended the whole run, after the sessions before it had already been paid for.
-      text = await sessionText(session.path);
+      text = await sessionText(session, options.sessionStoreDbPath);
       if (!text.trim()) {
         // An empty read has two causes and they deserve opposite answers: a session that really
         // holds no prose is finished with, while a transcript that is no longer on disk has not

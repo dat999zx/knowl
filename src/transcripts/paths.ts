@@ -3,9 +3,24 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { defaultCopilotSessionsDir, scanCopilotArchive } from './copilot.js';
+import {
+  buildCopilotRepoSessionMap,
+  defaultCopilotSessionsDir,
+  defaultCopilotSessionStoreDb,
+  normalizeCopilotRepoCwd,
+  readCopilotCheckpointsText,
+  scanCopilotArchive,
+  type CopilotSessionMap,
+} from './copilot.js';
 
-export { defaultCopilotSessionsDir };
+export {
+  buildCopilotRepoSessionMap,
+  defaultCopilotSessionsDir,
+  defaultCopilotSessionStoreDb,
+  normalizeCopilotRepoCwd,
+  readCopilotCheckpointsText,
+  type CopilotSessionMap,
+};
 
 const run = promisify(execFile);
 
@@ -509,7 +524,13 @@ export type TranscriptScan = {
  */
 export async function scanTranscriptArchive(
   projectRoot: string,
-  options: { projectsDir?: string; codexSessionsDir?: string; copilotSessionsDir?: string; roots?: string[] } = {},
+  options: {
+    projectsDir?: string;
+    codexSessionsDir?: string;
+    copilotSessionsDir?: string;
+    roots?: string[];
+    onlySessionIds?: Set<string>;
+  } = {},
 ): Promise<TranscriptScan> {
   const projectsDir = options.projectsDir ?? defaultProjectsDir();
   const rootSet = options.roots
@@ -618,12 +639,19 @@ export async function scanTranscriptArchive(
   const copilotSessionsDir = options.copilotSessionsDir
     ?? (anyRedirected ? null : defaultCopilotSessionsDir());
   if (copilotSessionsDir) {
-    const copilot = await scanCopilotArchive(copilotSessionsDir, rootSet.roots, uncanonicalise);
+    const copilot = await scanCopilotArchive(copilotSessionsDir, rootSet.roots, uncanonicalise, {
+      onlySessionIds: options.onlySessionIds,
+    });
     found.push(...copilot.files);
     degraded = degraded || copilot.degraded;
   }
 
-  return { files: found, degraded };
+  const filtered = options.onlySessionIds
+    ? found.filter(file =>
+      options.onlySessionIds!.has(file.sessionId)
+      || (file.parentSessionId !== null && options.onlySessionIds!.has(file.parentSessionId)))
+    : found;
+  return { files: filtered, degraded };
 }
 
 /**
@@ -651,7 +679,13 @@ export async function hasIndexableArchive(projectRoot: string): Promise<boolean>
 /** The file list alone, for callers with nothing to decide about a degraded scan. */
 export async function discoverTranscriptFiles(
   projectRoot: string,
-  options: { projectsDir?: string; codexSessionsDir?: string; copilotSessionsDir?: string; roots?: string[] } = {},
+  options: {
+    projectsDir?: string;
+    codexSessionsDir?: string;
+    copilotSessionsDir?: string;
+    roots?: string[];
+    onlySessionIds?: Set<string>;
+  } = {},
 ): Promise<TranscriptFile[]> {
   return (await scanTranscriptArchive(projectRoot, options)).files;
 }

@@ -3364,12 +3364,18 @@ program
     }
   });
 
+function parseSessionIdsOption(raw: unknown): Set<string> | undefined {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  return new Set<string>(raw.split(',').map((s: string) => s.trim()).filter(Boolean));
+}
+
 // --- 8. REINDEX COMMAND ---
 program
   .command('reindex')
   .description('Rebuild derived search indexes')
   .option('--vectors', 'Rebuild optional vector embeddings')
   .option('--transcripts', 'Build or update the optional session transcript index')
+  .option('--sessions <ids>', 'With --transcripts, only index the comma-separated session IDs')
   .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', positiveNumber('--budget'))
   .option('--force', 'With --vectors, re-embed every item instead of only the stale ones')
   .action(async (options) => {
@@ -3382,7 +3388,8 @@ program
       if (options.vectors) await rebuildVectorEmbeddings(root, { force: options.force });
 
       if (options.transcripts) {
-        const result = await rebuildTranscriptIndex(root, { budgetMinutes: options.budget });
+        const onlySessionIds = parseSessionIdsOption(options.sessions);
+        const result = await rebuildTranscriptIndex(root, { budgetMinutes: options.budget, onlySessionIds });
         console.log(`Indexed ${result.indexed} transcript message(s).`);
         if (result.embedded > 0) console.log(`Embedded ${result.embedded} message(s).`);
         if (result.removed > 0) console.log(`Removed ${result.removed} deleted transcript(s).`);
@@ -3422,13 +3429,15 @@ transcripts
   .command('extract')
   .description('Run the configured model over unextracted sessions and stage what it finds')
   .option('--limit <n>', `Sessions to extract in this run (default ${DEFAULT_EXTRACT_LIMIT})`, positiveInt('--limit'))
+  .option('--sessions <ids>', 'Only extract the comma-separated session IDs')
   .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', positiveNumber('--budget'))
   .option('--yes', 'Skip the cost estimate and run')
   .action(async (options) => {
     try {
       const root = await findProjectRoot(process.cwd());
       const { config, db } = await openCandidateStore(root);
-      const plan = await planExtraction(db, { limit: options.limit });
+      const onlySessionIds = parseSessionIdsOption(options.sessions);
+      const plan = await planExtraction(db, { limit: options.limit, onlySessionIds });
 
       if (plan.sessions.length === 0) {
         console.log(plan.done > 0
@@ -3451,7 +3460,7 @@ transcripts
       }
 
       const deadline = options.budget !== undefined ? Date.now() + options.budget * 60_000 : undefined;
-      const result = await extractCandidates(db, config, { limit: options.limit, deadline });
+      const result = await extractCandidates(db, config, { limit: options.limit, deadline, onlySessionIds });
 
       console.log(`Extracted ${result.sessionsExtracted} session(s) into ${result.candidates} candidate(s).`);
       if (result.empty > 0) console.log(`${result.empty} session(s) yielded nothing and will not be retried.`);

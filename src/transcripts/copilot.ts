@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createClient, type Client } from '@libsql/client';
 
 export type CopilotExtractedProse = {
   role: 'user' | 'assistant';
@@ -13,6 +15,14 @@ export type CopilotTranscriptFile = {
   sessionId: string;
   parentSessionId: null;
   harness: 'copilot';
+};
+
+export type CopilotSessionMap = {
+  /** Keyed by folded normalized project root path (`foldPath(root)`). */
+  byRoot: Map<string, CopilotTranscriptFile[]>;
+  /** Sessions whose normalized `cwd` did not match any known repository root. */
+  unmapped: (CopilotTranscriptFile & { cwd: string | null })[];
+  degraded: boolean;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -28,6 +38,35 @@ const MAX_META_BYTES = 2 * 1024 * 1024;
 const COPILOT_SCAN_BATCH = 64;
 
 /**
+ * Normalize a historical or active GitHub Copilot worktree `cwd` back to its parent repository
+ * checkout so sessions from pruned worktrees still map to their repository.
+ */
+export function normalizeCopilotRepoCwd(rawCwd: string): string {
+  const resolved = path.resolve(rawCwd);
+  const posix = resolved.replaceAll('\\', '/');
+
+  const dotWorktrees = /^(.+?)\.worktrees(?:\/|$)/i.exec(posix);
+  if (dotWorktrees) return path.resolve(dotWorktrees[1]);
+
+  const nestedWorktrees = /^(.+?)\/worktrees\/([^/]+)(?:\/|$)/i.exec(posix);
+  if (nestedWorktrees) {
+    const parent = nestedWorktrees[1];
+    const leaf = nestedWorktrees[2];
+    if (/(?:^|\/)worktrees$/i.test(parent)) return path.resolve(parent);
+    const siblingMatch = /^([A-Za-z0-9._-]+?)-(?:Task\d+|wi-?\d+|\d{5,})(?:[-_].*)?$/i.exec(leaf);
+    if (siblingMatch && /^(?:.*\/)?(?:repos|learn|git|code|projects|src)$/i.test(parent)) {
+      return path.resolve(`${parent}/${siblingMatch[1]}`);
+    }
+    return path.resolve(parent);
+  }
+
+  const inlineTaskSuffix = /^(.+?)-(?:Task\d{4,}|wi-\d{4,})(?:[-_][^/]*)?(?:\/.*)?$/i.exec(posix);
+  if (inlineTaskSuffix) return path.resolve(inlineTaskSuffix[1]);
+
+  return resolved;
+}
+
+/**
  * GitHub Copilot CLI's session archive: `~/.copilot/session-state/<session-uuid>/events.jsonl`.
  *
  * Each UUID directory holds `workspace.yaml` (carrying `cwd` even for `agency`-spawned sessions
@@ -37,6 +76,10 @@ const COPILOT_SCAN_BATCH = 64;
  */
 export function defaultCopilotSessionsDir(): string {
   return path.join(os.homedir(), '.copilot', 'session-state');
+}
+
+export function defaultCopilotSessionStoreDb(): string {
+  return path.join(os.homedir(), '.copilot', 'session-store.db');
 }
 
 async function readDir(dir: string): Promise<import('node:fs').Dirent[] | null> {
@@ -123,6 +166,136 @@ async function copilotStartCwd(filePath: string): Promise<{ cwd: string | null; 
   }
 }
 
+function matchesWantedRoot(rawCwd: string | null, wanted: Set<string>): boolean {
+  if (!rawCwd) return false;
+  const resolved = path.resolve(rawCwd);
+  if (wanted.has(foldPath(resolved))) return true;
+  const normalized = normalizeCopilotRepoCwd(resolved);
+  // A heuristic worktree normalization only applies when the session's raw CWD is not itself one of
+  // the caller's target roots, and the normalized parent root is in `wanted`.
+  return normalized !== resolved && wanted.has(foldPath(normalized));
+}
+
+type ScannedCopilotSession = {
+  file: CopilotTranscriptFile;
+  yamlCwd: string | null;
+  startCwd: string | null;
+  degraded: boolean;
+};
+
+async function scanCopilotSessionEntries(
+  sessionsDir: string,
+  options: { onlySessionIds?: Set<string>; sinceMs?: number } = {},
+): Promise<{ sessions: ScannedCopilotSession[]; degraded: boolean }> {
+  const entries = await readDir(sessionsDir);
+  if (entries === null) return { sessions: [], degraded: true };
+
+  const candidates = entries.filter(
+    entry => UUID.test(entry.name) && (!options.onlySessionIds || options.onlySessionIds.has(entry.name)),
+  );
+  const sessions: ScannedCopilotSession[] = [];
+  let degraded = false;
+
+  for (let start = 0; start < candidates.length; start += COPILOT_SCAN_BATCH) {
+    const batch = candidates.slice(start, start + COPILOT_SCAN_BATCH);
+    const scannedBatch = await Promise.all(batch.map(async (entry): Promise<ScannedCopilotSession | null> => {
+      const sessionDir = path.join(sessionsDir, entry.name);
+      if (!(await isDirectoryLike(sessionDir, entry))) return null;
+
+      const eventsPath = path.join(sessionDir, 'events.jsonl');
+      let stat: import('node:fs').Stats;
+      try {
+        stat = await fs.stat(eventsPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+          return {
+            file: { path: eventsPath, sessionId: entry.name, parentSessionId: null, harness: 'copilot' },
+            yamlCwd: null,
+            startCwd: null,
+            degraded: true,
+          };
+        }
+        return null;
+      }
+      if (!stat.isFile()) return null;
+      if (options.sinceMs !== undefined && stat.mtimeMs < options.sinceMs) return null;
+
+      const yaml = await copilotWorkspaceCwd(path.join(sessionDir, 'workspace.yaml'));
+      const startRec = await copilotStartCwd(eventsPath);
+      return {
+        file: {
+          path: eventsPath,
+          sessionId: entry.name,
+          parentSessionId: null,
+          harness: 'copilot',
+        },
+        yamlCwd: yaml.cwd,
+        startCwd: startRec.cwd,
+        degraded: yaml.degraded || startRec.degraded,
+      };
+    }));
+
+    for (const item of scannedBatch) {
+      if (!item) continue;
+      if (item.degraded) degraded = true;
+      if (item.yamlCwd !== null || item.startCwd !== null || !item.degraded) {
+        sessions.push(item);
+      }
+    }
+  }
+
+  return { sessions, degraded };
+}
+
+/**
+ * Pre-build a repo-to-sessions lookup map in a single pass over `~/.copilot/session-state` so
+ * multi-repo backfills and scoped reindexing only touch the sessions belonging to each repo.
+ */
+export async function buildCopilotRepoSessionMap(
+  sessionsDir: string,
+  repoRoots: string[],
+  options: { sinceMs?: number } = {},
+): Promise<CopilotSessionMap> {
+  const byRoot = new Map<string, CopilotTranscriptFile[]>();
+  const canonicalByFolded = new Map<string, string>();
+
+  for (const root of repoRoots) {
+    const folded = foldPath(root);
+    byRoot.set(folded, []);
+    canonicalByFolded.set(folded, folded);
+    const real = await fs.realpath(path.resolve(root)).catch(() => null);
+    if (real) canonicalByFolded.set(foldPath(real), folded);
+  }
+
+  const { sessions, degraded } = await scanCopilotSessionEntries(sessionsDir, { sinceMs: options.sinceMs });
+  const unmapped: (CopilotTranscriptFile & { cwd: string | null })[] = [];
+
+  for (const item of sessions) {
+    let matchedOwner: string | null = null;
+    for (const candidateCwd of [item.yamlCwd, item.startCwd]) {
+      if (!candidateCwd) continue;
+      const exactOwner = canonicalByFolded.get(foldPath(candidateCwd));
+      if (exactOwner) {
+        matchedOwner = exactOwner;
+        break;
+      }
+      const normOwner = canonicalByFolded.get(foldPath(normalizeCopilotRepoCwd(candidateCwd)));
+      if (normOwner) {
+        matchedOwner = normOwner;
+        break;
+      }
+    }
+
+    if (matchedOwner) {
+      byRoot.get(matchedOwner)?.push(item.file);
+    } else {
+      unmapped.push({ ...item.file, cwd: item.yamlCwd ?? item.startCwd ?? null });
+    }
+  }
+
+  return { byRoot, unmapped, degraded };
+}
+
 /**
  * This repo's GitHub Copilot CLI sessions (`~/.copilot/session-state/<uuid>/events.jsonl`).
  *
@@ -135,10 +308,8 @@ export async function scanCopilotArchive(
   sessionsDir: string,
   roots: string[],
   uncanonicalise: (target: string) => string | null,
+  options: { onlySessionIds?: Set<string> } = {},
 ): Promise<{ files: CopilotTranscriptFile[]; degraded: boolean }> {
-  const entries = await readDir(sessionsDir);
-  if (entries === null) return { files: [], degraded: true };
-
   const wanted = new Set<string>();
   for (const root of roots) {
     const resolved = path.resolve(root);
@@ -148,50 +319,101 @@ export async function scanCopilotArchive(
     }
   }
 
-  const candidates = entries.filter(entry => UUID.test(entry.name));
+  const { sessions, degraded } = await scanCopilotSessionEntries(sessionsDir, {
+    onlySessionIds: options.onlySessionIds,
+  });
   const files: CopilotTranscriptFile[] = [];
-  let degraded = false;
 
-  for (let start = 0; start < candidates.length; start += COPILOT_SCAN_BATCH) {
-    const batch = candidates.slice(start, start + COPILOT_SCAN_BATCH);
-    const matchedBatch = await Promise.all(batch.map(async (entry): Promise<CopilotTranscriptFile | null> => {
-      const sessionDir = path.join(sessionsDir, entry.name);
-      if (!(await isDirectoryLike(sessionDir, entry))) return null;
-
-      const eventsPath = path.join(sessionDir, 'events.jsonl');
-      let stat: import('node:fs').Stats;
-      try {
-        stat = await fs.stat(eventsPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') degraded = true;
-        return null;
-      }
-      if (!stat.isFile()) return null;
-
-      const yaml = await copilotWorkspaceCwd(path.join(sessionDir, 'workspace.yaml'));
-      if (yaml.degraded) degraded = true;
-      let matched = Boolean(yaml.cwd && wanted.has(foldPath(yaml.cwd)));
-      if (!matched) {
-        const startRec = await copilotStartCwd(eventsPath);
-        if (startRec.degraded) degraded = true;
-        matched = Boolean(startRec.cwd && wanted.has(foldPath(startRec.cwd)));
-      }
-      if (!matched) return null;
-
-      return {
-        path: eventsPath,
-        sessionId: entry.name,
-        parentSessionId: null,
-        harness: 'copilot',
-      };
-    }));
-
-    for (const file of matchedBatch) {
-      if (file) files.push(file);
+  for (const item of sessions) {
+    if (matchesWantedRoot(item.yamlCwd, wanted) || matchesWantedRoot(item.startCwd, wanted)) {
+      files.push(item.file);
     }
   }
 
   return { files, degraded };
+}
+
+/**
+ * Read pre-distilled checkpoint summaries (`checkpoints/*.json` in the session directory or the
+ * `checkpoints` table in `~/.copilot/session-store.db`) for a Copilot session.
+ */
+export async function readCopilotCheckpointsText(
+  sessionId: string,
+  eventsFilePath?: string,
+  sessionStoreDbPath: string = defaultCopilotSessionStoreDb(),
+): Promise<string> {
+  const sections: string[] = [];
+
+  if (eventsFilePath) {
+    const sessionDir = path.dirname(eventsFilePath);
+    const ckptDir = path.join(sessionDir, 'checkpoints');
+    const files = await readDir(ckptDir);
+    if (files && files.length > 0) {
+      const jsonFiles = files
+        .filter(f => f.isFile() && f.name.endsWith('.json'))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      for (const file of jsonFiles) {
+        try {
+          const parsed = JSON.parse(await fs.readFile(path.join(ckptDir, file.name), 'utf8')) as Record<string, unknown>;
+          const block = formatCheckpointRecord(parsed);
+          if (block) sections.push(block);
+        } catch {
+          // Ignore malformed checkpoint file
+        }
+      }
+    }
+    const indexMd = path.join(sessionDir, 'index.md');
+    try {
+      const summaryMd = (await fs.readFile(indexMd, 'utf8')).trim();
+      if (summaryMd) sections.push(`## Session Summary\n${summaryMd}`);
+    } catch {
+      // Optional index.md
+    }
+  }
+
+  if (sections.length === 0 && await fs.access(sessionStoreDbPath).then(() => true, () => false)) {
+    let client: Client | null = null;
+    try {
+      client = createClient({ url: pathToFileURL(path.resolve(sessionStoreDbPath)).href });
+      const rows = (await client.execute({
+        sql: `SELECT checkpoint_number, title, overview, work_done, technical_details
+              FROM checkpoints
+              WHERE session_id = ?
+              ORDER BY checkpoint_number ASC`,
+        args: [sessionId],
+      })).rows;
+      for (const row of rows) {
+        const block = formatCheckpointRecord(row as Record<string, unknown>);
+        if (block) sections.push(block);
+      }
+    } catch {
+      // Optional session-store.db fallback
+    } finally {
+      try { client?.close(); } catch { /* ignore */ }
+    }
+  }
+
+  return sections.join('\n\n');
+}
+
+function formatCheckpointRecord(record: Record<string, unknown>): string | null {
+  const num = record.checkpoint_number ?? record.checkpointNumber;
+  const title = typeof record.title === 'string' ? record.title.trim() : '';
+  const overview = typeof record.overview === 'string' ? record.overview.trim() : '';
+  const workDone = typeof record.work_done === 'string'
+    ? record.work_done.trim()
+    : (typeof record.workDone === 'string' ? record.workDone.trim() : '');
+  const tech = typeof record.technical_details === 'string'
+    ? record.technical_details.trim()
+    : (typeof record.technicalDetails === 'string' ? record.technicalDetails.trim() : '');
+  const body = [
+    overview ? `Overview: ${overview}` : '',
+    workDone ? `Work Done: ${workDone}` : '',
+    tech ? `Technical Details: ${tech}` : '',
+  ].filter(Boolean).join('\n');
+  if (!body) return null;
+  const heading = num !== undefined && num !== null ? `## Checkpoint ${num}: ${title}` : `## Checkpoint: ${title}`;
+  return `${heading}\n${body}`;
 }
 
 /**

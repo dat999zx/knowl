@@ -34,7 +34,8 @@ export function initAI(config: AIConfig): LanguageModel {
   try {
     const descriptor = aiProvider(provider);
     const settings = descriptor.settings({ apiKey, baseUrl });
-    currentModel = descriptor.sdk === 'anthropic' ? createAnthropic(settings)(model) : createOpenAI(settings)(model);
+    const sdk = descriptor.resolveSdk ? descriptor.resolveSdk(model) : descriptor.sdk;
+    currentModel = sdk === 'anthropic' ? createAnthropic(settings)(model) : createOpenAI(settings)(model);
 
     currentConfig = config;
     return currentModel;
@@ -90,7 +91,10 @@ export async function filterInput(
       temperature: 0.1,
     });
 
-    return object;
+    return {
+      pass: object.pass,
+      ...(object.reason ? { reason: object.reason } : {}),
+    };
   } catch (error: any) {
     throw new AIProviderError(`Filter classification failed: ${error.message}`);
   }
@@ -110,7 +114,13 @@ export async function extractKnowledge(input: string, profile: DomainProfile = c
       temperature: 0.1,
     });
 
-    return object.atoms;
+    return object.atoms.map(atom => ({
+      ...atom,
+      reasoning: atom.reasoning ?? undefined,
+      alternatives: atom.alternatives ?? undefined,
+      tags: atom.tags ?? undefined,
+      steps: atom.steps ?? undefined,
+    }));
   } catch (error: any) {
     throw new AIProviderError(`Knowledge extraction failed: ${error.message}`);
   }
@@ -161,7 +171,16 @@ Tags: ${JSON.stringify(existingItem.tags || [])}
       temperature: 0.1,
     });
 
-    return object;
+    return {
+      relationship: object.relationship,
+      reason: object.reason,
+      ...(object.updatedContent ? { updatedContent: object.updatedContent } : {}),
+      ...(object.updatedTitle ? { updatedTitle: object.updatedTitle } : {}),
+      ...(object.updatedReasoning ? { updatedReasoning: object.updatedReasoning } : {}),
+      ...(object.updatedAlternatives ? { updatedAlternatives: object.updatedAlternatives } : {}),
+      ...(object.updatedTags ? { updatedTags: object.updatedTags } : {}),
+      ...(object.updatedSteps ? { updatedSteps: object.updatedSteps } : {}),
+    };
   } catch (error: any) {
     throw new AIProviderError(`Knowledge comparison failed: ${error.message}`);
   }

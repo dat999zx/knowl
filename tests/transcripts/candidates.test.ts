@@ -222,6 +222,54 @@ describe('extraction', () => {
     expect(extractKnowledge).not.toHaveBeenCalled();
     expect(result.remaining).toBe(3);
   });
+
+  it('includes Copilot checkpoints alongside session prose and supports onlySessionIds filtering', async () => {
+    await seedSession(db, 'other-session', ['ignore me', 'ignored'], 'claude');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-cand-copilot-'));
+    roots.push(dir);
+    const filePath = path.join(dir, 'events.jsonl');
+    const lines = [
+      JSON.stringify({ type: 'user.message', data: { content: 'how should we configure sqlite?' }, timestamp: '2026-10-18T00:00:00Z' }),
+      JSON.stringify({ type: 'assistant.message', data: { content: 'use WAL mode.' }, timestamp: '2026-10-18T00:00:01Z' }),
+    ];
+    await fs.writeFile(filePath, lines.join('\n') + '\n');
+    await fs.mkdir(path.join(dir, 'checkpoints'), { recursive: true });
+    await fs.writeFile(
+      path.join(dir, 'checkpoints', '001.json'),
+      JSON.stringify({
+        checkpoint_number: 1,
+        title: 'SQLite Concurrency Setup',
+        overview: 'Configured WAL mode for Knowl SQLite stores.',
+        work_done: 'Enabled PRAGMA journal_mode=WAL.',
+      }),
+    );
+
+    await db.execute({
+      sql: `INSERT INTO transcript_files (path, session_id, parent_session_id, bytes_indexed, lines_indexed, size_at_index, updated_at, harness)
+            VALUES (?, 'copilot-1', NULL, 0, 0, 0, ?, 'copilot')`,
+      args: [filePath, new Date().toISOString()],
+    });
+    await db.execute({
+      sql: `INSERT INTO transcript_messages (path, session_id, parent_session_id, line, role, chars)
+            VALUES (?, 'copilot-1', NULL, 1, 'user', 32)`,
+      args: [filePath],
+    });
+
+    extractKnowledge.mockResolvedValue([
+      { category: 'decision', title: 'Use WAL mode', content: 'PRAGMA journal_mode=WAL', confidence: 0.9 },
+    ]);
+
+    const result = await extractCandidates(db, AI_CONFIG, {
+      onlySessionIds: new Set(['copilot-1']),
+      sessionStoreDbPath: path.join(dir, 'absent.db'),
+    });
+
+    expect(result.sessionsExtracted).toBe(1);
+    expect(extractKnowledge).toHaveBeenCalledTimes(1);
+    const sent = extractKnowledge.mock.calls[0][0] as string;
+    expect(sent).toContain('## Checkpoint 1: SQLite Concurrency Setup');
+    expect(sent).toContain('user: how should we configure sqlite?');
+  });
 });
 
 describe('deciding on candidates', () => {
