@@ -310,11 +310,13 @@ export interface ProjectConfig {
   // a field the product does not have. The strip stays: it is what cleans the key out of configs
   // written before this.
   ai?: {
-    provider: 'openai' | 'anthropic' | 'ollama' | 'custom';
+    provider: string;
     model: string;
     temperature?: number;
     baseUrl?: string;
     apiKey?: string;
+    /** Domain profile id for AI ingestion. Absent: `code` for a project store, `general` for the global store. */
+    profile?: string;
   };
   search?: {
     vector?: {

@@ -37,7 +37,7 @@
 Your agent starts every session blank, so you keep a `CLAUDE.md`. It only grows. Six months in it
 still names the database you migrated off last spring, and now the agent gets both answers.
 
-Knowl is persistent memory for Claude Code, Cursor and Codex, over
+Knowl is persistent memory for AI agents, for code, research and everyday life, over
 [MCP](https://modelcontextprotocol.io) or the CLI. When a fact is replaced, the old one is retired
 instead of competing with the new one. No API key needed. When Knowl isn't sure the new fact
 replaces the old, it leaves both active and hands you the `knowl supersede` command to say so.
@@ -90,7 +90,10 @@ registers Knowl with whichever agents it detects. It also warms a local embeddin
 in the background — `init` succeeds either way, and without it you still get keyword search.
 
 To refresh every repository and every machine-wide host after an update, run `knowl init --all`
-once. It replaces `knowl upgrade --all`, which still works for one release.
+once. It only upgrades what is already set up: your repositories, the global store if you have one, and
+a global instruction block (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) only where one is already
+there. It never creates any of them; `knowl init` and `knowl init --global <host>` do that. It replaces
+`knowl upgrade --all`, which still works for one release.
 
 That is the whole setup. You do not record memory by hand: your agent reads and writes it as it
 works.
@@ -408,10 +411,11 @@ Use `knowl.cmd` as the command on Windows. Codex reads the same entry under `mcp
 
 ## What Knowl is for
 
-Knowl does one job: keep a project's settled knowledge accurate for the agents working on it.
-Not user preferences, not chat history — the decisions, constraints, and architecture a project
-runs on, and which of them are still true today. Most stores sit in a codebase, and the drift and
-evidence tooling is aimed there, but nothing in the knowledge model requires one.
+Knowl keeps settled knowledge accurate for the agents that use it: the decisions, constraints,
+facts and goals something runs on, and which of them are still true today. Most stores sit in a
+codebase, and the drift and evidence tooling is aimed there, but the knowledge model is not
+code-specific: a project store can hold a thesis, and the machine-wide global store holds what is
+true of you across projects. Knowl stores distilled atoms, never chat history.
 
 <div align="center">
 <img src="docs/assets/demo-drift.svg" alt="One question answered four times over two years: append-only keeps every answer true forever so a query today matches four contradicting ones, while a governed store ends each replaced answer and matches one" width="92%" />
@@ -428,8 +432,9 @@ Three choices follow from that:
 - **Repository-local, not a service.** The database sits beside the project it describes. No account,
   no egress, no vendor between you and your own project history.
 
-Knowl is deliberately not a personalization layer. It has no opinion about your users, and it keeps
-no transcripts of its own.
+Knowl keeps no transcripts and never captures prompts. Optional AI ingestion reads only text you
+hand it, through a domain profile (`code`, `general` or `academic`, or your own) that decides what
+is worth keeping. [Domain profiles and providers](docs/domain-profiles.md)
 
 ## Features
 
@@ -625,7 +630,7 @@ knowl doctor                           # setup, retrieval, and registration
 - **Resume keys** — park a workstream under a short key you keep, and pick it up in any session,
   from any directory, any number of times later. `knowl resume <key>`
 - **Transcript search** — on by default, and off means nothing exists on disk. With it on, past
-  session prose is searchable, so a memory miss degrades to a slower lookup instead
+  session prose from Claude Code, Codex, GitHub Copilot CLI and Hermes Agent is searchable, so a memory miss degrades to a slower lookup instead
   of amnesia. Keyword indexing keeps up on its own; semantic coverage is filled by
   `knowl reindex --transcripts`, because an embedding model does not belong in a per-turn hook.
 - **The recall gap** — how often an agent edited a file this store already knew something about
@@ -749,7 +754,8 @@ is refused as before. Either way a repo's private knowledge stays private until 
 - **Garbage collection** that previews by default and protects anything recently used. `knowl gc`
 - **`knowl doctor`** — one command that checks setup, config, integrity, schema, retrieval, vector
   coverage, agent registration, and workspace health.
-- **Optional AI** — configure a provider for `knowl ask` and raw-text ingest. Every feature above
+- **Optional AI** — configure a provider for `knowl ask` and raw-text ingest, and pick a domain
+  profile (`code`, `general`, `academic` or your own) for what ingest keeps. Every feature above
   works without one.
 
 → [Portability and maintenance](docs/reference.md#portability-and-maintenance) ·
@@ -820,6 +826,8 @@ global entries sit behind the project's own, and can never crowd them out. And a
 repository at all, such as a Hermes Desktop window with no folder open, reads the global store
 alone rather than having no memory. A project that exists but fails to open stays an error: global
 is personal defaults, never a fallback for a broken store.
+
+AI ingestion into the global store uses the `general` profile unless `ai.profile` in `~/.knowl/config.json` says otherwise.
 
 **It follows you to another machine.** The machine store syncs to a cloud workspace the same way a
 project does — it is not a project, but it is addressed like one:

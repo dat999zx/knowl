@@ -3,6 +3,116 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.27.0 - 2026-10-19
+
+### Feature: transcript search and extraction now read GitHub Copilot CLI and Hermes Agent sessions
+
+- `knowl reindex --transcripts` and `knowl transcripts extract / candidates / approve / discard` now
+  cover GitHub Copilot CLI sessions (`~/.copilot/session-state/<id>/`) and Hermes Agent sessions
+  (the `state.db` in the Hermes home and in every `profiles/<name>/`), alongside Claude Code and
+  Codex. A past Copilot or Hermes conversation about a repository is searchable from that
+  repository, and can be turned into staged candidates like any other.
+- A Copilot session run in a git worktree that has since been pruned is mapped back to its parent
+  repository, so its history is not lost with the worktree.
+- Copilot's own checkpoint summaries, and the summaries Hermes writes when it compacts a long
+  session, are placed ahead of the session's tail text, so the conclusions of a long session
+  survive truncation.
+- Hermes messages are de-duplicated across context-compaction copies, and the model banners,
+  skill-invocation preambles and background-process notices Hermes adds are stripped, so what is
+  indexed is what was said.
+- `--sessions <ids>` on `knowl reindex --transcripts` and `knowl transcripts extract` limits the run
+  to the listed sessions. The rest of the index is left as it was.
+
+### Feature: `copilot` AI provider
+
+- `knowl config set ai.provider copilot` points Knowl at a local multi-model gateway
+  (`http://127.0.0.1:8794/v1` by default; `ai.baseUrl` or `COPILOT_BASE_URL` overrides it) and needs
+  no API key. `claude-*` models use the Anthropic Messages API and every other model the OpenAI
+  API. `custom` is unchanged and always speaks the OpenAI API.
+- The structured-output schemas for filter, extract and compare now mark every field as required
+  and nullable, which OpenAI's strict mode needs. A model that returns `null` for an optional field
+  is read as "not set"; one that omits `confidence` now fails that call instead of defaulting to 1.
+
+### Change: `knowl transcripts approve --all` leaves `state` candidates staged
+
+- A `state` atom extracted from an old session describes what was in flight when that session ended,
+  and promoting it presented a weeks-old snapshot as the current state of the repository. `--all`
+  now promotes `fact`, `decision`, `constraint`, `architecture`, `skill` and `goal`, prints how many
+  `state` candidates it skipped, and keeps them staged. `--include-state` promotes those too;
+  approving by id is unchanged.
+
+### Feature: `knowl init hermes` wires every Hermes profile
+
+- If you run named Hermes profiles under `<Hermes home>/profiles/`, `knowl init hermes` now writes
+  the MCP entry and the plugin into each profile that has a `config.yaml`, not only the default
+  home.
+
+## 5.26.2 - 2026-10-16
+
+### Fix: `knowl init --all` upgrades what exists and creates nothing
+
+- 5.26.1 made `knowl init --all` write Knowl's block into the global instruction file of every host a
+  swept repository used (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and the Antigravity and
+  Windsurf equivalents). That block tells the agent to query Knowl on every task, so it also fired in
+  folders with no Knowl. The sweep no longer writes a block that is not there; it refreshes one that
+  is, and `knowl init --global <host>` is still the command that adds it.
+- `knowl init --all` now also opens an existing global store, so its schema is upgraded with the
+  repositories. It never creates one.
+- If 5.26.1 added the block and you do not want it, delete the text between
+  `<!-- KNOWL_GLOBAL_MEMORY -->` and `<!-- /KNOWL_GLOBAL_MEMORY -->` in those files.
+
+## 5.26.1 - 2026-10-16
+
+### Fix: the Hermes rules card and the global instruction block match the rest of the host text
+
+- The Hermes plugin's rules card still described a code-only memory and said nothing about storing
+  what you state or about the project-first default. It now says both, and a session with no project
+  is told the global store holds people, dates and research notes as well as preferences.
+- The block in `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and the Antigravity and Windsurf
+  equivalents says the same.
+- `knowl init --all` now keeps the global instruction file (`~/.claude/CLAUDE.md`,
+  `~/.codex/AGENTS.md`, and the Antigravity and Windsurf equivalents) current, once per machine: it
+  writes Knowl's block for every host a swept repository already uses and refreshes any block that
+  is already there. Before, only `knowl init --global <host>` wrote it, so an upgrade left it on the
+  old wording. A host no repository uses is left alone, and `--dry-run` lists what it would write.
+
+## 5.26.0 - 2026-10-16
+
+### Feature: domain profiles, so AI ingestion keeps everyday and academic knowledge
+
+- The AI ingestion prompts (filter, extract, ask, derive) now come from a domain profile. `code` is
+  the previous text, unchanged byte for byte, and stays the default for every project. `general`
+  (people, preferences, plans, dates, how-tos) and `academic` (sources, claims, definitions,
+  methods, results, people in the work) ship alongside it.
+- The agent picks the profile per call: `knowl_ingest` takes an optional `profile`, so a store that
+  mixes code, research and personal notes filters each text correctly. An unknown profile fails
+  before any model call.
+- Or set a store default with `knowl config set ai.profile general`. The global store defaults to
+  `general`, set in `~/.knowl/config.json`.
+- Add your own as one file, `~/.knowl/profiles/<id>.yaml`. See `docs/domain-profiles.md`.
+- `knowl_ingest` takes `namespace: "global"`, and works in a session with no project open. It
+  previously could not write to the global store.
+- Knowl still stores distilled atoms only. Nothing new is captured; ingestion reads only text you
+  hand it.
+
+### Change: host instructions are no longer code-only
+
+- The instruction text every host receives (`KNOWL.md`, the managed blocks, the Hermes guidance)
+  now says "memory" and "any work" instead of "project memory" and "project work". The agent is
+  asked to store facts you state without being asked, to write to the project unless you ask for
+  global (or no project is open), and to pick the profile for each `knowl_ingest`.
+
+### Change: the one-line description is no longer Claude Code, Cursor and Codex only
+
+- `package.json`, `server.json` and the README intro now say "persistent memory for AI agents, for
+  code, research and everyday life". Supported hosts are still listed in `docs/hosts.md`.
+
+### Change: AI providers are a registry
+
+- `openai`, `anthropic`, `ollama` and `custom` are now one descriptor file each under
+  `src/core/ai-providers/`, built with the same settings as before. An unknown `ai.provider` now
+  fails with the list of registered providers.
+
 ## 5.25.1 — 2026-10-12
 
 ### Fix: agents ignored Knowl's mid-turn cards because they arrived as plain text inside a tool result

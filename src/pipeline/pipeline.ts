@@ -6,6 +6,8 @@ import { runDeriveTruth } from './derive.js';
 import { getKnowledgeItem } from '../store/repository.js';
 import { ProjectConfig, KnowledgeAtom, KnowledgeItem } from '../core/types.js';
 import { hasAiConfigured } from '../core/config.js';
+import { resolveDomainProfile } from '../ai/profiles/index.js';
+import type { DomainProfile } from '../ai/profiles/types.js';
 
 export interface PipelineResult {
   passedFilter: boolean;
@@ -18,10 +20,11 @@ export async function runPipeline(
   projectId: string,
   input: string,
   config: ProjectConfig,
-  options: MergeOptions = {}
+  options: MergeOptions = {},
+  profile: DomainProfile = resolveDomainProfile(config)
 ): Promise<PipelineResult> {
   // 1. Run Filter
-  const filterResult = await runFilter(input, config);
+  const filterResult = await runFilter(input, config, profile);
   if (!filterResult.pass) {
     return {
       passedFilter: false,
@@ -31,7 +34,7 @@ export async function runPipeline(
   }
 
   // 2. Run Extract
-  const atoms = await runExtract(input);
+  const atoms = await runExtract(input, profile);
   if (atoms.length === 0) {
     return {
       passedFilter: true,
@@ -54,7 +57,7 @@ export async function runPipeline(
       const item = await getKnowledgeItem(id);
       if (item) items.push(item);
     }
-    await runDeriveTruth(projectId, items);
+    await runDeriveTruth(projectId, items, undefined, profile);
   }
 
   return {
@@ -74,6 +77,8 @@ export async function runDecisionPipeline(
   options: MergeOptions = {},
   config?: ProjectConfig
 ): Promise<MergeResult> {
+  // Resolved first: an invalid ai.profile must fail before the model call and the write, not after.
+  const profile = hasAiConfigured(config) ? resolveDomainProfile(config) : undefined;
   const verifiedActions = await runVerify(projectId, [atom]);
   const mergeResult = await runMerge(projectId, verifiedActions, options);
 
@@ -85,7 +90,7 @@ export async function runDecisionPipeline(
       const item = await getKnowledgeItem(id);
       if (item) items.push(item);
     }
-    await runDeriveTruth(projectId, items);
+    await runDeriveTruth(projectId, items, undefined, profile);
   }
 
   return mergeResult;

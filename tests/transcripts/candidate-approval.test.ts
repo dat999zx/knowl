@@ -96,13 +96,25 @@ describe('approving a staged candidate', () => {
     expect(approved.id).toBe(id);
   });
 
-  it('approves every pending candidate on --all', async () => {
-    await stage(db, { title: 'First thing', content: 'One distinct fact about retries.' });
-    await stage(db, { title: 'Second thing', content: 'A different fact about caching entirely.' });
+  it('approves every pending durable candidate on --all while keeping transient state candidates staged unless included', async () => {
+    await stage(db, { category: 'fact', title: 'First thing', content: 'One distinct fact about retries.' });
+    await stage(db, { category: 'decision', title: 'Second thing', content: 'A different fact about caching entirely.' });
+    const stateId = await stage(db, { category: 'state', title: 'Branch uncommitted', content: 'Uncommitted work in progress.' });
 
     const result = await approveCandidates(db, projectId, DEFAULT_CONFIG, { all: true });
 
     expect(result.approved).toBe(2);
+    expect(result.skipped).toBe(1);
+    expect(result.remaining).toBe(0);
+    // The state candidate remains staged in transcript_candidates and is not promoted into active memory.
+    expect((await listCandidates(db, { status: 'pending' })).map(c => c.id)).toEqual([stateId]);
+
+    const withState = await approveCandidates(db, projectId, DEFAULT_CONFIG, {
+      all: true,
+      excludeCategories: [],
+    });
+    expect(withState.approved).toBe(1);
+    expect(withState.skipped).toBe(0);
   });
 
   it('never touches a candidate that was already decided', async () => {

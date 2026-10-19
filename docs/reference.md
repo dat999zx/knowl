@@ -243,12 +243,15 @@ anywhere.
 Creating the store does not make any project read it. Linking does, and it is per project so that
 one careless write cannot become visible everywhere at once.
 
-**What belongs in it.** Global is a personal-defaults layer, not a second place to put project
-truth. Knowledge that is true of *you* or of *this machine*:
+**What belongs in it.** Global is for what is true of *you* or of *this machine*, not a second
+place to put project truth. That covers personal defaults and everyday knowledge alike: a
+preference, a person, a date, a research note that belongs to no repository. Agents write to the
+project by default and to global only when you ask, or when no project is open. Examples:
 
 - "I prefer pnpm over npm"
 - "this machine's driver breaks on CUDA 12"
 - "every repository here uses conventional commits"
+- "my advisor is Dr. Nguyen; the draft is due 15 December"
 
 Knowledge that is true of one repository stays in it. "The auth rewrite chose JWT over sessions
 because of X" belongs to that repo: stored globally it is wrong everywhere else, and it dilutes
@@ -669,8 +672,9 @@ Both are passes, not durable notes. Anything worth keeping goes to `knowl_store`
 ### Searchable session transcripts (on by default)
 
 Atoms are distilled and therefore lossy: whatever the writer did not judge salient is gone. The
-raw Claude Code `.jsonl` transcripts are the complete record underneath. Indexing them turns a
-memory miss into a slower lookup instead of amnesia.
+raw session transcripts are the complete record underneath: Claude Code, Codex and GitHub Copilot
+CLI write `.jsonl` files, and Hermes Agent keeps its sessions in a SQLite `state.db`. Indexing them
+turns a memory miss into a slower lookup instead of amnesia.
 
 On by default. Turned off with `knowl config set search.transcripts.enabled false`, and off
 means nothing exists — no database file, no registered tools, no tokens spent in the guidance card.
@@ -689,12 +693,17 @@ means nothing exists — no database file, no registered tools, no tokens spent 
 ```bash
 knowl config                                  # toggle it interactively
 knowl reindex --transcripts --budget 5        # build the index, resumable
+knowl reindex --transcripts --sessions <ids>  # only these comma-separated session ids
 ```
+
+`--sessions` is for backfilling a few known sessions: only those are scanned and indexed, and no
+other indexed session is treated as deleted. `knowl transcripts extract` takes the same flag.
 
 What it indexes and what it costs, measured on this repository's own archive: prose is **2.7% of
 80.9 MB** across 75 transcripts. Only user messages and assistant prose are indexed; `tool_use`
 and `tool_result` blocks are skipped entirely. Rows are pointers — `(session, line, role)` — and
-message bodies stay in the `.jsonl`, so the whole index is **under 3 MB**.
+message bodies stay in the session archive (the `.jsonl`, or Hermes' `state.db`), so the whole
+index is **under 3 MB**.
 
 Ranking fuses BM25 with whole-corpus semantic search over int8 vectors, so a message that shares
 no word with your query can still win. Semantic ranking follows `search.vector.enabled`; with
@@ -744,11 +753,16 @@ Workspace peers may opt in with `share: true`, which lets linked repositories op
 read-only. Sharing is re-checked on every read, so revoking it revokes previously issued
 locators too.
 
-Both Claude Code and Codex archives are discovered. They are found by different mechanisms
-because they are laid out differently: Claude Code names a directory after the project
-(`~/.claude/projects/<encoded-root>/`), while Codex partitions by date
+Claude Code, Codex, GitHub Copilot CLI and Hermes Agent archives are discovered. They are found by
+different mechanisms because they are laid out differently: Claude Code names a directory after the
+project (`~/.claude/projects/<encoded-root>/`), Codex partitions by date
 (`~/.codex/sessions/YYYY/MM/DD/`) and records the project inside each file as
-`session_meta.payload.cwd`. Every Codex candidate is therefore opened, with a bounded header read.
+`session_meta.payload.cwd`, Copilot stores one directory per session
+(`~/.copilot/session-state/<uuid>/`) with the project recorded in `workspace.yaml` and on the
+`session.start` line of `events.jsonl` (a session run in a git worktree that has since been pruned
+is mapped back to its parent repository), and Hermes Agent stores sessions and messages in SQLite
+(`state.db` in the default Hermes home and `profiles/<name>/state.db`) with the project recorded in
+`sessions.cwd`, `sessions.git_repo_root`, or `system_prompts`.
 
 ### Seeing what exists and what is on — `knowl config list`
 
@@ -1050,8 +1064,10 @@ store until you approve it.
 ```bash
 knowl transcripts extract --limit 10        # prints the estimate, then stops
 knowl transcripts extract --limit 10 --yes  # actually runs
+knowl transcripts extract --sessions <ids>  # only these sessions
 knowl transcripts candidates                # review what was staged
 knowl transcripts approve <id>...           # promote, or --all
+knowl transcripts approve --all --include-state  # also promote transient `state` candidates
 knowl transcripts discard <id>...           # reject, or --all
 ```
 
@@ -1072,6 +1088,13 @@ yielded nothing — short sessions yield nothing most often and would otherwise 
 session whose extraction *failed* is deliberately left unwatermarked, because a provider error is
 not a verdict about that session. Long sessions are truncated from the start, keeping the tail,
 where a session's conclusions are.
+
+**`approve --all` leaves `state` candidates staged.** A `state` atom extracted from an old session
+describes what was in flight when that session ended ("the branch holds uncommitted changes", "the
+test run is incomplete"). Promoting it would present a weeks-old snapshot as current. So `--all`
+promotes `fact`, `decision`, `constraint`, `architecture`, `skill` and `goal`, reports how many
+`state` candidates it skipped, and keeps them in `transcript_candidates`; `--include-state`
+promotes those too, and approving a candidate by id always works.
 
 Promoted atoms carry `provenance: inferred` and `source: transcript:<harness>:<session>`. A model
 distilled them from a conversation nobody re-read at approval time; calling that `observed` would
@@ -2715,7 +2738,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | Command | Description |
 | --- | --- |
 | `knowl init [agents...] [--global] [-y\|--yes]` | Initialize or upgrade the project in this directory and configure selected agents. `--global` switches to machine scope: the personal-defaults store plus any hosts named, with nothing written into the current directory. Naming `claude`, `codex`, `antigravity` or `windsurf` with `--global` also adds a short managed block to that host's global instruction file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`, `~/.codeium/windsurf/memories/global_rules.md`) so a session in a folder with no `AGENTS.md` still knows to use Knowl; only with `--yes` or an interactive yes, the previous file is kept as `<file>.backup`, and a host with no documented file is named and skipped |
-| `knowl init --all [--root <dir...>] [--dry-run] [--reindex] [--no-snapshot]` | Upgrade and repair every Knowl repository on this machine, snapshotting each first. An integration an update left out of date (the copied Hermes plugin, a Claude Code entry from before `alwaysLoad`) is re-registered in the repository that already has it; no repository is opted into an agent it did not use. Machine-wide hosts are refreshed once, not once per repository |
+| `knowl init --all [--root <dir...>] [--dry-run] [--reindex] [--no-snapshot]` | Upgrade and repair every Knowl repository on this machine, snapshotting each first. An integration an update left out of date (the copied Hermes plugin, a Claude Code entry from before `alwaysLoad`) is re-registered in the repository that already has it; no repository is opted into an agent it did not use. Machine-wide hosts are refreshed once, not once per repository, and so are the global store (opened, never created) and any global instruction block (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and the Antigravity and Windsurf equivalents) that is already there. It never creates a store, a file or a block, and `--dry-run` lists the blocks it would refresh |
 | `knowl upgrade` | Deprecated alias for `knowl init`'s project maintenance (`upgrade --all` for `init --all`); prints a notice and will be removed |
 | `knowl status` | Show repository, memory, AI, commit, and workspace status |
 | `knowl doctor` | Check project, vector coverage, agent, and workspace readiness |
@@ -2810,7 +2833,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl config reset [key]` | Restore one key, or all of them, to the default |
 | `knowl config set-model <model>` | Verify, download and select a custom embedding model |
 | `knowl reindex --vectors` | Prepare the local model and embed items that have no current vector; `--force` re-embeds every item |
-| `knowl reindex --transcripts [--budget <minutes>]` | Build or update the optional session transcript index; resumable, so a budget is a stopping point rather than a rollback |
+| `knowl reindex --transcripts [--budget <minutes>] [--sessions <ids>]` | Build or update the optional session transcript index for Claude Code, Codex, Copilot CLI and Hermes Agent sessions; resumable, so a budget is a stopping point rather than a rollback; `--sessions` limits it to the listed session ids |
 | `knowl park --goal <goal> [--next-action <a>] [--completed <c...>] [--blocker <b>] [--artifact <p...>] [--verified\|--unverified]` | Park a workstream and get a key back; hand the key to the user verbatim |
 | `knowl handoff --goal <goal> --next-action <a> [--completed <c...>] [--blocker <b>] [--artifact <p...>] [--verified\|--unverified]` | Leave a baton the next session in this project receives once |
 | `knowl resume [key]` | Resume a parked workstream from its key, or list what is parked here |
@@ -2874,7 +2897,7 @@ unless fleet awareness is switched off.
 | `knowl_skill_read` | Inspect one learned skill before running it |
 | `knowl_skill_run` | Run a trusted learned-skill entrypoint |
 | `knowl_skill_create` | Create a learned skill when explicitly requested |
-| `knowl_ingest` | Process explicitly supplied raw source through configured AI |
+| `knowl_ingest` | Process explicitly supplied raw source through configured AI. `profile` (`code`, `general`, `academic` or your own) picks what is worth keeping for this text; `namespace: "global"` writes to the machine-wide store |
 | `knowl_synthesize` | Create or refresh one explicitly tag-scoped understanding |
 | `knowl_session_finish` | Finish an explicitly owned manual memory session |
 | `knowl_gc_preview` | Preview duplicate, stale, or cold-memory maintenance |
@@ -2953,10 +2976,27 @@ knowl config set ai.provider custom
 knowl config set ai.model provider-model-id
 knowl config set ai.baseUrl https://provider.example/v1
 knowl config set ai.apiKey '${CUSTOM_API_KEY}'
+
+# A local multi-model gateway in front of GitHub Copilot (no key needed)
+knowl config set ai.provider copilot
+knowl config set ai.model gpt-model-id        # or a claude-* model
 ```
 
 Environment-variable placeholders are resolved at runtime. Ollama can run without an API key.
+
+`copilot` is keyless and talks to a local gateway, `http://127.0.0.1:8794/v1` unless `ai.baseUrl` or
+`COPILOT_BASE_URL` says otherwise. It serves both model families, so the model name picks the
+protocol: `claude-*` and `anthropic/claude-*` go to the Anthropic Messages API, everything else to
+the OpenAI API. `custom` never switches protocol; it always speaks the OpenAI API.
 Deterministic `knowl synthesize` does not use this configuration.
+
+`ai.profile` chooses the domain profile that decides what AI ingestion keeps: `code` (the default
+for a project), `general`, `academic`, or your own file in `~/.knowl/profiles/`. The global store
+defaults to `general`. Profiles change the prompts only; the seven categories are fixed.
+
+`knowl_ingest` accepts `namespace: "global"` to write to the machine-wide store, using the profile
+from `~/.knowl/config.json`. With no project open it does so automatically. See
+[Domain profiles and providers](domain-profiles.md).
 
 `ai.apiKey` may be set literally, and `.knowl/config.json` is written owner-readable (`0600`) on
 POSIX systems and replaced atomically, so an interrupted write cannot leave a half file that

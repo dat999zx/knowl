@@ -2935,13 +2935,15 @@ program
 
       // Deferred: the AI SDK tree is hundreds of modules and only AI-backed commands need it.
       const { initAI, askQuestion } = await import('../ai/provider.js');
+      const { resolveDomainProfile } = await import('../ai/profiles/index.js');
       initAI(config.ai!);
+      const profile = resolveDomainProfile(config);
 
       const hierarchy = await getHierarchicalKnowledge(project.id);
       const contextMarkdown = formatHierarchyToMarkdown(hierarchy);
 
       console.log(`🤔 Thinking...`);
-      const answer = await askQuestion(question, contextMarkdown);
+      const answer = await askQuestion(question, contextMarkdown, profile);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       console.log(answer);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -3360,12 +3362,18 @@ program
     }
   });
 
+function parseSessionIdsOption(raw: unknown): Set<string> | undefined {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  return new Set<string>(raw.split(',').map((s: string) => s.trim()).filter(Boolean));
+}
+
 // --- 8. REINDEX COMMAND ---
 program
   .command('reindex')
   .description('Rebuild derived search indexes')
   .option('--vectors', 'Rebuild optional vector embeddings')
   .option('--transcripts', 'Build or update the optional session transcript index')
+  .option('--sessions <ids>', 'With --transcripts, only index the comma-separated session IDs')
   .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', positiveNumber('--budget'))
   .option('--force', 'With --vectors, re-embed every item instead of only the stale ones')
   .action(async (options) => {
@@ -3378,7 +3386,8 @@ program
       if (options.vectors) await rebuildVectorEmbeddings(root, { force: options.force });
 
       if (options.transcripts) {
-        const result = await rebuildTranscriptIndex(root, { budgetMinutes: options.budget });
+        const onlySessionIds = parseSessionIdsOption(options.sessions);
+        const result = await rebuildTranscriptIndex(root, { budgetMinutes: options.budget, onlySessionIds });
         console.log(`Indexed ${result.indexed} transcript message(s).`);
         if (result.embedded > 0) console.log(`Embedded ${result.embedded} message(s).`);
         if (result.removed > 0) console.log(`Removed ${result.removed} deleted transcript(s).`);
@@ -3418,13 +3427,15 @@ transcripts
   .command('extract')
   .description('Run the configured model over unextracted sessions and stage what it finds')
   .option('--limit <n>', `Sessions to extract in this run (default ${DEFAULT_EXTRACT_LIMIT})`, positiveInt('--limit'))
+  .option('--sessions <ids>', 'Only extract the comma-separated session IDs')
   .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', positiveNumber('--budget'))
   .option('--yes', 'Skip the cost estimate and run')
   .action(async (options) => {
     try {
       const root = await findProjectRoot(process.cwd());
       const { config, db } = await openCandidateStore(root);
-      const plan = await planExtraction(db, { limit: options.limit });
+      const onlySessionIds = parseSessionIdsOption(options.sessions);
+      const plan = await planExtraction(db, { limit: options.limit, onlySessionIds });
 
       if (plan.sessions.length === 0) {
         console.log(plan.done > 0
@@ -3447,7 +3458,7 @@ transcripts
       }
 
       const deadline = options.budget !== undefined ? Date.now() + options.budget * 60_000 : undefined;
-      const result = await extractCandidates(db, config, { limit: options.limit, deadline });
+      const result = await extractCandidates(db, config, { limit: options.limit, deadline, onlySessionIds });
 
       console.log(`Extracted ${result.sessionsExtracted} session(s) into ${result.candidates} candidate(s).`);
       if (result.empty > 0) console.log(`${result.empty} session(s) yielded nothing and will not be retried.`);
@@ -3493,7 +3504,8 @@ transcripts
 transcripts
   .command('approve [ids...]')
   .description('Promote staged candidates into the knowledge store')
-  .option('--all', `Approve up to ${APPROVE_ALL_LIMIT} pending candidates`)
+  .option('--all', `Approve up to ${APPROVE_ALL_LIMIT} pending durable candidates (skips 'state' unless --include-state)`)
+  .option('--include-state', 'With --all, also promote transient state candidates into active memory')
   .action(async (ids: string[], options) => {
     try {
       if (!options.all && (!ids || ids.length === 0)) {
@@ -3505,9 +3517,14 @@ transcripts
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not registered in the database.');
 
-      const result = await approveCandidates(db, project.id, config, { ids, all: options.all });
+      const result = await approveCandidates(db, project.id, config, {
+        ids,
+        all: options.all,
+        excludeCategories: options.includeState ? [] : undefined,
+      });
       console.log(`Approved ${result.approved} candidate(s).`);
       if (result.deduped > 0) console.log(`${result.deduped} merged into knowledge the store already held.`);
+      if (result.skipped > 0) console.log(`Skipped ${result.skipped} transient state candidate(s) (kept staged in transcript_candidates).`);
       for (const failure of result.failed) console.log(`Failed ${failure.id}: ${failure.reason}`);
       // Said out loud, because `--all` stops at a cap and a first run over a real archive
       // produces atoms on that order. "Approved 1000 candidate(s)" alone reads as finished.
@@ -3731,6 +3748,17 @@ async function runRepoSweep(options: SweepFlags) {
     console.log(`Forgot ${stale} -- recorded as a Knowl repository, but no longer one.`);
   }
   if (forgotten.length > 0) console.log('');
+
+  // The machine-wide pieces, once per machine and not per repository. Upgrade only: the global store
+  // if it already exists, and a global instruction block only where one is already present. A sweep
+  // never creates either; `knowl init --global` is the command that does.
+  const { upgradeExistingGlobalStore } = await import('../store/global-store.js');
+  const { refreshInstalledGlobalInstructions } = await import('./agents/global-instructions.js');
+  if (!options.dryRun && await upgradeExistingGlobalStore()) console.log('Global store is up to date.');
+  for (const file of await refreshInstalledGlobalInstructions(undefined, Boolean(options.dryRun))) {
+    console.log(`${options.dryRun ? 'Would refresh' : 'Refreshed'} the Knowl block in ${file.configPath} (${file.host}).`);
+  }
+  console.log('');
 
   const discovered = await discoverRepos({ roots: options.root, record: !options.dryRun });
   if (discovered.length === 0) {

@@ -1,8 +1,8 @@
 {
   "name": "@dat999zx/knowl",
   "mcpName": "io.github.dat999zx/knowl",
-  "version": "5.25.1",
-  "description": "Persistent memory for Claude Code, Cursor and Codex. Facts are typed, sourced, and retired when they change. Local SQLite, no API keys.",
+  "version": "5.27.0",
+  "description": "Persistent memory for AI agents, for code, research and everyday life. Facts are typed, sourced, and retired when they change. Local SQLite, no API keys.",
   "main": "dist/index.js",
   "exports": {
     ".": "./dist/index.js",

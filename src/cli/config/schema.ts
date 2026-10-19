@@ -1,6 +1,7 @@
 import { DEFAULT_CONFIG, DEFAULT_DRIFT_REMINDER_EVERY } from '../../core/config.js';
 import { DEFAULT_PRESET_ID, PRESET_IDS } from '../../core/vector-profile.js';
 import { HOOK_TRANSPORTS } from '../../core/hooks-transport.js';
+import { AI_PROVIDER_IDS } from '../../core/ai-providers/index.js';
 
 export type ConfigKey =
   | 'security.rejectSecrets'
@@ -23,6 +24,7 @@ export type ConfigKey =
   | 'ai.temperature'
   | 'ai.baseUrl'
   | 'ai.apiKey'
+  | 'ai.profile'
   | 'memory.organization.enabled'
   | 'memory.organization.path'
   | 'memory.global.enabled'
@@ -88,6 +90,11 @@ const enumValue = <T extends string>(values: readonly T[]) => (raw: string): T =
   throw new Error(`Expected one of: ${values.join(', ')}`);
 };
 
+const profileId = (raw: string) => {
+  if (/^[a-z][a-z0-9-]*$/.test(raw)) return raw;
+  throw new Error('Expected a lowercase profile id, such as code or general');
+};
+
 const optionalNumber = (raw: string) => {
   const value = Number(raw);
   if (!Number.isFinite(value)) throw new Error('Expected a number');
@@ -105,7 +112,7 @@ const stringList = (raw: string) => raw.split(',').map(value => value.trim()).fi
 
 const VECTOR_DTYPES = ['q4', 'q8', 'fp16', 'fp32'] as const;
 const VECTOR_POOLINGS = ['mean', 'cls'] as const;
-const AI_PROVIDERS = ['openai', 'anthropic', 'ollama', 'custom'] as const;
+const AI_PROVIDERS = AI_PROVIDER_IDS;
 // Ordered by how much they can cost the person running them, which is also the order they are
 // meant to be adopted in: nothing, then measurement, then refusal.
 const IMPACT_GATE_MODES = ['off', 'shadow', 'enforce'] as const;
@@ -168,7 +175,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'search.transcripts.enabled', category: 'Search', type: 'boolean',
     parse: booleanValue, defaultValue: true,
     label: 'Transcript search',
-    description: 'Search this repo\'s past Claude Code and Codex sessions. Builds a separate index the first time you run `knowl reindex --transcripts`.',
+    description: 'Search this repo\'s past Claude Code, Codex, Copilot and Hermes sessions. Builds a separate index the first time you run `knowl reindex --transcripts`.',
   },
   {
     key: 'search.transcripts.share', category: 'Search', type: 'boolean',
@@ -228,6 +235,11 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'ai.apiKey', category: 'AI provider', type: 'string', parse: String, secret: true,
     label: 'API key',
     description: 'Stored redacted. An environment-variable placeholder is preserved as written.',
+  },
+  {
+    key: 'ai.profile', category: 'AI provider', type: 'string', parse: profileId,
+    label: 'Knowledge domain',
+    description: 'Which domain profile AI ingestion uses: code, general, academic, or your own in ~/.knowl/profiles. Unset means code in a project and general in the global store.',
   },
   {
     key: 'memory.organization.enabled', category: 'Memory namespaces', type: 'boolean',
