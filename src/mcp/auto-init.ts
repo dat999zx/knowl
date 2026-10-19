@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { NEW_PROJECT_CONFIG, isProjectRoot, loadConfig, mainWorktreeRoot, saveConfig, setGlobalNamespace } from '../core/config.js';
+import { NEW_PROJECT_CONFIG, isProjectRoot, mainWorktreeRoot, saveConfig } from '../core/config.js';
 import { knowlHome } from '../core/paths.js';
 import { initDb } from '../store/database.js';
 import type { Project } from '../core/types.js';
@@ -110,14 +110,6 @@ export async function scaffoldProject(root: string): Promise<void> {
 export async function adoptProject(projectRoot: string): Promise<Project | null> {
   await initDb(projectRoot);
   await recordKnownRepo(projectRoot);
-  try {
-    const current = await loadConfig(projectRoot);
-    if (current.memory?.global?.enabled === undefined) {
-      await setGlobalNamespace(projectRoot, true);
-    }
-  } catch {
-    // Linking the global store is best-effort during serve auto-init.
-  }
   await fs.writeFile(
     path.join(projectRoot, '.knowl', '.gitignore'),
     '# Created by knowl serve auto-init. Ignores the whole store.\n*\n',
