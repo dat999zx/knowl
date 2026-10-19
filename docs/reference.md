@@ -672,8 +672,9 @@ Both are passes, not durable notes. Anything worth keeping goes to `knowl_store`
 ### Searchable session transcripts (on by default)
 
 Atoms are distilled and therefore lossy: whatever the writer did not judge salient is gone. The
-raw Claude Code `.jsonl` transcripts are the complete record underneath. Indexing them turns a
-memory miss into a slower lookup instead of amnesia.
+raw session transcripts are the complete record underneath: Claude Code, Codex and GitHub Copilot
+CLI write `.jsonl` files, and Hermes Agent keeps its sessions in a SQLite `state.db`. Indexing them
+turns a memory miss into a slower lookup instead of amnesia.
 
 On by default. Turned off with `knowl config set search.transcripts.enabled false`, and off
 means nothing exists — no database file, no registered tools, no tokens spent in the guidance card.
@@ -692,12 +693,17 @@ means nothing exists — no database file, no registered tools, no tokens spent 
 ```bash
 knowl config                                  # toggle it interactively
 knowl reindex --transcripts --budget 5        # build the index, resumable
+knowl reindex --transcripts --sessions <ids>  # only these comma-separated session ids
 ```
+
+`--sessions` is for backfilling a few known sessions: only those are scanned and indexed, and no
+other indexed session is treated as deleted. `knowl transcripts extract` takes the same flag.
 
 What it indexes and what it costs, measured on this repository's own archive: prose is **2.7% of
 80.9 MB** across 75 transcripts. Only user messages and assistant prose are indexed; `tool_use`
 and `tool_result` blocks are skipped entirely. Rows are pointers — `(session, line, role)` — and
-message bodies stay in the `.jsonl`, so the whole index is **under 3 MB**.
+message bodies stay in the session archive (the `.jsonl`, or Hermes' `state.db`), so the whole
+index is **under 3 MB**.
 
 Ranking fuses BM25 with whole-corpus semantic search over int8 vectors, so a message that shares
 no word with your query can still win. Semantic ranking follows `search.vector.enabled`; with
@@ -753,7 +759,8 @@ project (`~/.claude/projects/<encoded-root>/`), Codex partitions by date
 (`~/.codex/sessions/YYYY/MM/DD/`) and records the project inside each file as
 `session_meta.payload.cwd`, Copilot stores one directory per session
 (`~/.copilot/session-state/<uuid>/`) with the project recorded in `workspace.yaml` and on the
-`session.start` line of `events.jsonl`, and Hermes Agent stores sessions and messages in SQLite
+`session.start` line of `events.jsonl` (a session run in a git worktree that has since been pruned
+is mapped back to its parent repository), and Hermes Agent stores sessions and messages in SQLite
 (`state.db` in the default Hermes home and `profiles/<name>/state.db`) with the project recorded in
 `sessions.cwd`, `sessions.git_repo_root`, or `system_prompts`.
 
@@ -1057,8 +1064,10 @@ store until you approve it.
 ```bash
 knowl transcripts extract --limit 10        # prints the estimate, then stops
 knowl transcripts extract --limit 10 --yes  # actually runs
+knowl transcripts extract --sessions <ids>  # only these sessions
 knowl transcripts candidates                # review what was staged
 knowl transcripts approve <id>...           # promote, or --all
+knowl transcripts approve --all --include-state  # also promote transient `state` candidates
 knowl transcripts discard <id>...           # reject, or --all
 ```
 
@@ -1079,6 +1088,13 @@ yielded nothing — short sessions yield nothing most often and would otherwise 
 session whose extraction *failed* is deliberately left unwatermarked, because a provider error is
 not a verdict about that session. Long sessions are truncated from the start, keeping the tail,
 where a session's conclusions are.
+
+**`approve --all` leaves `state` candidates staged.** A `state` atom extracted from an old session
+describes what was in flight when that session ended ("the branch holds uncommitted changes", "the
+test run is incomplete"). Promoting it would present a weeks-old snapshot as current. So `--all`
+promotes `fact`, `decision`, `constraint`, `architecture`, `skill` and `goal`, reports how many
+`state` candidates it skipped, and keeps them in `transcript_candidates`; `--include-state`
+promotes those too, and approving a candidate by id always works.
 
 Promoted atoms carry `provenance: inferred` and `source: transcript:<harness>:<session>`. A model
 distilled them from a conversation nobody re-read at approval time; calling that `observed` would
@@ -2817,7 +2833,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl config reset [key]` | Restore one key, or all of them, to the default |
 | `knowl config set-model <model>` | Verify, download and select a custom embedding model |
 | `knowl reindex --vectors` | Prepare the local model and embed items that have no current vector; `--force` re-embeds every item |
-| `knowl reindex --transcripts [--budget <minutes>]` | Build or update the optional session transcript index; resumable, so a budget is a stopping point rather than a rollback |
+| `knowl reindex --transcripts [--budget <minutes>] [--sessions <ids>]` | Build or update the optional session transcript index for Claude Code, Codex, Copilot CLI and Hermes Agent sessions; resumable, so a budget is a stopping point rather than a rollback; `--sessions` limits it to the listed session ids |
 | `knowl park --goal <goal> [--next-action <a>] [--completed <c...>] [--blocker <b>] [--artifact <p...>] [--verified\|--unverified]` | Park a workstream and get a key back; hand the key to the user verbatim |
 | `knowl handoff --goal <goal> --next-action <a> [--completed <c...>] [--blocker <b>] [--artifact <p...>] [--verified\|--unverified]` | Leave a baton the next session in this project receives once |
 | `knowl resume [key]` | Resume a parked workstream from its key, or list what is parked here |
@@ -2960,9 +2976,18 @@ knowl config set ai.provider custom
 knowl config set ai.model provider-model-id
 knowl config set ai.baseUrl https://provider.example/v1
 knowl config set ai.apiKey '${CUSTOM_API_KEY}'
+
+# A local multi-model gateway in front of GitHub Copilot (no key needed)
+knowl config set ai.provider copilot
+knowl config set ai.model gpt-model-id        # or a claude-* model
 ```
 
 Environment-variable placeholders are resolved at runtime. Ollama can run without an API key.
+
+`copilot` is keyless and talks to a local gateway, `http://127.0.0.1:8794/v1` unless `ai.baseUrl` or
+`COPILOT_BASE_URL` says otherwise. It serves both model families, so the model name picks the
+protocol: `claude-*` and `anthropic/claude-*` go to the Anthropic Messages API, everything else to
+the OpenAI API. `custom` never switches protocol; it always speaks the OpenAI API.
 Deterministic `knowl synthesize` does not use this configuration.
 
 `ai.profile` chooses the domain profile that decides what AI ingestion keeps: `code` (the default

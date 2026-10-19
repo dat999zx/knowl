@@ -630,7 +630,7 @@ knowl doctor                           # setup, retrieval, and registration
 - **Resume keys** — park a workstream under a short key you keep, and pick it up in any session,
   from any directory, any number of times later. `knowl resume <key>`
 - **Transcript search** — on by default, and off means nothing exists on disk. With it on, past
-  session prose is searchable, so a memory miss degrades to a slower lookup instead
+  session prose from Claude Code, Codex, GitHub Copilot CLI and Hermes Agent is searchable, so a memory miss degrades to a slower lookup instead
   of amnesia. Keyword indexing keeps up on its own; semantic coverage is filled by
   `knowl reindex --transcripts`, because an embedding model does not belong in a per-turn hook.
 - **The recall gap** — how often an agent edited a file this store already knew something about
