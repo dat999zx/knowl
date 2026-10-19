@@ -3,7 +3,18 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.28.0 - 2026-10-19
+
+### Fix: memory tools work from a folder with no project, and `knowl_update` reaches global atoms
+
+- With `knowl serve` started in a folder that is not a Knowl project (your home directory, for
+  example), `knowl_update` and a dozen sibling tools failed with `Database has not been initialized`
+  even though `knowl_query` and `knowl_store` worked. `knowl_update`, `knowl_ingest_atoms`,
+  `knowl_decide`, `knowl_timeline`, `knowl_evidence_list`, `knowl_feedback`, `knowl_conflicts`,
+  `knowl_context`, `knowl_synthesize`, `knowl_session_finish`, `knowl_gc_preview`, `knowl_gc_apply`
+  and the `knowl_task_*` tools now run against the global store there.
+- `knowl_update`, `knowl_evidence_list` and `knowl_feedback` also reach a global atom from inside a
+  project. Before, an id that search had just returned from the global store failed with "not found".
 
 ### Change: skills run without `knowl skill approve`
 
