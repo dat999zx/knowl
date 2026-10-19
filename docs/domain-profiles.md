@@ -75,7 +75,9 @@ missing.
 Anything OpenAI-compatible needs no code: set `ai.provider custom` with `ai.baseUrl` and
 `ai.apiKey`. To ship a named provider, add one descriptor file under `src/core/ai-providers/` and
 one entry in `ALL` in `index.ts`; the guard in `tests/ai/provider-registry.test.ts` fails if the
-entry is missing. Example, not shipped:
+entry is missing. A gateway that serves both OpenAI and Claude models can add `resolveSdk` (see
+`copilot.ts`) to choose the SDK per model name; `custom` does not, so it never switches protocol.
+Example, not shipped:
 
 ```ts
 import type { AiProviderDescriptor } from './types.js';
