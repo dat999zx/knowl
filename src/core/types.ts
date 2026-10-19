@@ -567,11 +567,11 @@ export interface ProjectConfig {
   };
   /**
    * Skill execution trust. Not under `skills`, which is a map keyed by skill name: a skill called
-   * `autoApproveCreatedSkills` would collide with the key.
+   * `autoApproveSkills` would collide with the key.
    */
   trust?: {
-    /** Approve a skill the moment `knowl skill create` writes it. On unless the literal `false`. */
-    autoApproveCreatedSkills?: boolean;
+    /** Run a skill without `knowl skill approve`. On unless the literal `false`. */
+    autoApproveSkills?: boolean;
   };
   /** Opt out of the once-a-day npm update check shown by `status` and `doctor`. */
   updateCheck?: {

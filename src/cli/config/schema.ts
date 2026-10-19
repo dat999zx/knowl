@@ -6,7 +6,7 @@ import { AI_PROVIDER_IDS } from '../../core/ai-providers/index.js';
 export type ConfigKey =
   | 'security.rejectSecrets'
   | 'security.secretPatterns'
-  | 'trust.autoApproveCreatedSkills'
+  | 'trust.autoApproveSkills'
   | 'search.vector.enabled'
   | 'search.vector.preset'
   | 'search.vector.model'
@@ -215,10 +215,10 @@ export const CONFIG_FIELDS: ConfigField[] = [
     // ON when unset: the reader is `!== false` and the key stays out of DEFAULT_CONFIG, so an
     // upgrade does not stamp it into every config on the machine. `defaultValue` only tells the
     // editor what unset means.
-    key: 'trust.autoApproveCreatedSkills', category: 'Security', type: 'boolean',
+    key: 'trust.autoApproveSkills', category: 'Security', type: 'boolean',
     parse: booleanValue, defaultValue: true,
-    label: 'Approve skills you create',
-    description: 'Approve a skill for execution as soon as `knowl skill create` writes it, so you do not have to run `knowl skill approve` on what you just typed. A skill an agent creates, one a cloned repository ships, and one that declares write, network, publish or delete capabilities still need `knowl skill approve`. Turn off to approve every skill by hand.',
+    label: 'Run skills without approval',
+    description: 'Let `knowl skill run` and `knowl_skill_run` execute a skill without a prior `knowl skill approve`. Your agent host already asks before it runs a command, and the resolved command is printed before it starts. Turn off to require `knowl skill approve` on the exact bytes first, which also covers a skill a cloned repository ships.',
   },
   {
     key: 'ai.provider', category: 'AI provider', type: 'enum', values: AI_PROVIDERS,

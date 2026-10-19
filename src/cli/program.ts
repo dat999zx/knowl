@@ -99,7 +99,7 @@ import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } 
 import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince, listRenamedPathsSince } from '../store/drift.js';
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from '../skills/registry.js';
-import { approveCreatedSkill, approveSkill, listTrust, revokeSkill, requiresStrongerApproval } from '../skills/trust.js';
+import { approveSkill, listTrust, revokeSkill, requiresStrongerApproval } from '../skills/trust.js';
 import { globalSkillsRoot } from '../skills/paths.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
 import { createSnapshot, restoreSnapshot } from '../store/snapshots.js';
@@ -4352,17 +4352,6 @@ skillCommand
       await closeDb();
 
       console.log(`Created skill ${skill.manifest.name}`);
-      const approval = await approveCreatedSkill(
-        root,
-        skill.manifest,
-        await loadConfig(root).catch(() => null),
-        process.env.USER ?? process.env.USERNAME ?? 'unknown',
-      );
-      if (approval === 'approved') {
-        console.log('Approved for execution. Turn that off with: knowl config set trust.autoApproveCreatedSkills false');
-      } else if (approval === 'needs-confirmation') {
-        console.log(`Not approved: it declares capabilities with external effects. Review it, then run: knowl skill approve ${skill.manifest.name}`);
-      }
     } catch (error: any) {
       try {
         await closeDb();

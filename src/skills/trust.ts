@@ -116,31 +116,17 @@ export async function approveSkill(
 }
 
 /**
- * Whether `knowl skill create` approves what it writes. On unless the literal `false` says
- * otherwise, as `search.pathsChanged` is; the key stays out of DEFAULT_CONFIG for the same reason.
- */
-export function isAutoApproveCreatedSkills(config?: ProjectConfig | null): boolean {
-  return config?.trust?.autoApproveCreatedSkills !== false;
-}
-
-/**
- * Approve a package the person has just made with `knowl skill create`, or say why not.
+ * Whether a skill may run without a prior `knowl skill approve`. On unless the literal `false`
+ * says otherwise, as `search.pathsChanged` is; the key stays out of DEFAULT_CONFIG so an upgrade
+ * does not stamp it into every config on the machine.
  *
- * Called from the CLI command only. The MCP `knowl_skill_create` never reaches it: a package an
- * agent wrote is exactly what the approval exists to have a human look at, and a package a cloned
- * repository ships was never created here at all. A skill that declares an external effect keeps
- * the confirmation `knowl skill approve` asks for.
+ * The host agent already asks the person before it runs a command or calls a tool, and a skill
+ * run prints its resolved command first, so a second approval step in Knowl was a prompt with
+ * nothing new to show. Setting the key to `false` restores the gate in full: nothing runs until
+ * these exact bytes were approved.
  */
-export async function approveCreatedSkill(
-  root: string,
-  manifest: { name: string; requires?: { capabilities?: SkillCapability[] } },
-  config: ProjectConfig | null,
-  user: string,
-): Promise<'approved' | 'off' | 'needs-confirmation'> {
-  if (!isAutoApproveCreatedSkills(config)) return 'off';
-  if (requiresStrongerApproval(manifest.requires?.capabilities ?? []).length > 0) return 'needs-confirmation';
-  await approveSkill(root, manifest.name, { approvedBy: `cli:create:${user}` });
-  return 'approved';
+export function isAutoApproveSkills(config?: ProjectConfig | null): boolean {
+  return config?.trust?.autoApproveSkills !== false;
 }
 
 export async function revokeSkill(root: string, name: string): Promise<boolean> {
