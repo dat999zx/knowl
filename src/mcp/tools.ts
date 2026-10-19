@@ -758,12 +758,18 @@ export function registerTools(
         try { await assertOwnedTargets(atoms.map((atom: any) => atom.supersedes), projectRoot, config); }
         catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
 
-        const result = await storeKnowledgeAtomsDeduped(
+        if (!projectRoot) {
+          const { assertGlobalWrite, ensureGlobalStore } = await import('../store/global-store.js');
+          for (const atom of atoms) assertGlobalWrite(atom.affectedPaths ?? []);
+          await ensureGlobalStore();
+        }
+        const ingestAtoms = () => storeKnowledgeAtomsDeduped(
           projectId!,
           atoms,
           commitMessage || `Store ${atoms.length} structured knowledge atom(s)`,
           config?.security,
         );
+        const result = projectRoot ? await ingestAtoms() : await withDbPath(globalStorePath(), ingestAtoms);
 
         // Report per atom. Counting result.itemIds as "stored" reported a verbatim no-op
         // as a successful write, and said nothing about atoms left beside an overlapping
@@ -802,7 +808,11 @@ export function registerTools(
         const { title, content, reasoning, alternatives, tags, supersedes } = args as any;
         try { await assertOwnedTargets([supersedes], projectRoot, config); }
         catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
-        const result = await recordDecisionDirect(projectId!, {
+        if (!projectRoot) {
+          const { ensureGlobalStore } = await import('../store/global-store.js');
+          await ensureGlobalStore();
+        }
+        const decide = () => recordDecisionDirect(projectId!, {
           title,
           content,
           reasoning,
@@ -810,6 +820,7 @@ export function registerTools(
           tags: tags || [],
           supersedes,
         }, `Record decision via MCP: ${title}`, config || undefined);
+        const result = projectRoot ? await decide() : await withDbPath(globalStorePath(), decide);
 
         if (result.action === 'duplicate') {
           return {
@@ -905,12 +916,17 @@ export function registerTools(
           // standing objection belongs here more than anywhere.
           const [disputed] = await annotateDisputes([{ id: item.id }], active);
           const withDisputes = disputed.disputed?.length ? { ...full, disputed: disputed.disputed } : full;
-          const evidenceWithStale = async (itemId: string) => Promise.all(
-            (await listEvidenceForItem(itemId)).map(async evidence => ({
-              ...evidence,
-              stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
-            })),
-          );
+          const evidenceWithStale = async (itemId: string) => {
+            const read = async () => Promise.all(
+              (await listEvidenceForItem(itemId)).map(async evidence => ({
+                ...evidence,
+                stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
+              })),
+            );
+            return projectRoot
+              ? (await withItemNamespace(itemId, projectRoot, config ?? undefined, read))?.value ?? []
+              : await withDbPath(globalStorePath(), read);
+          };
           // `includeEvidence` is deliberately not honoured for a foreign atom, matching the
           // search path: `listEvidenceForItem` reads THIS repo's database and `isEvidenceStale`
           // measures against THIS repo's working tree, so the answer would be an empty citation
@@ -934,10 +950,14 @@ export function registerTools(
           // one way to ask for the whole store: 15,133 characters where the same query without
           // it returned 2,528, from an argument that says nothing about size.
           const asOfLimit = limit ?? DEFAULT_RESULT_LIMIT;
-          let items = await queryKnowledgeBase(projectId!, { query, category, status, tags, limit: asOfLimit, asOf });
-          if (items.length === 0 && category) {
-            items = await queryKnowledgeBase(projectId!, { query, status, tags, limit: asOfLimit, asOf });
-          }
+          const runAsOf = async () => {
+            let found = await queryKnowledgeBase(projectId!, { query, category, status, tags, limit: asOfLimit, asOf });
+            if (found.length === 0 && category) {
+              found = await queryKnowledgeBase(projectId!, { query, status, tags, limit: asOfLimit, asOf });
+            }
+            return found;
+          };
+          const items = projectRoot ? await runAsOf() : await withDbPath(globalStorePath(), runAsOf);
           // Access is deliberately not recorded here: retrieval counts feed the
           // access-weighted GC decay, so logging time-travel reads would make stale items
           // look hot and shield them from collection.
@@ -1064,10 +1084,15 @@ export function registerTools(
         }
         const skippedRepos: FederatedResult['skipped'] = federated?.skipped ?? [];
 
-        const withStaleStatus = async (itemId: string) => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({
-          ...evidence,
-          stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
-        })));
+        const withStaleStatus = async (itemId: string) => {
+          const read = async () => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({
+            ...evidence,
+            stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
+          })));
+          return projectRoot
+            ? (await (await import('../store/namespaces.js')).withItemNamespace(itemId, projectRoot, config ?? undefined, read))?.value ?? []
+            : await withDbPath(globalStorePath(), read);
+        };
         // The repo label goes through compactItemResponse's provenance argument: the compact
         // shape is an allowlist, so a field attached to the item alone is dropped here.
         //
@@ -1526,7 +1551,7 @@ export function registerTools(
         // global database, so this answered `[]` for one that demonstrably had history.
         const assertions = projectRoot
           ? (await withItemNamespace(itemId, projectRoot, config ?? undefined, async () => listAssertions(itemId)))?.value ?? []
-          : await listAssertions(itemId);
+          : await withDbPath(globalStorePath(), () => listAssertions(itemId));
         const timelineBlocks: { type: 'text'; text: string }[] = [
           { type: 'text', text: compactMcpJson(assertions.slice(0, 5).map(compactAssertionResponse)) },
         ];
@@ -1539,16 +1564,19 @@ export function registerTools(
       else if (name === 'knowl_conflicts') {
         const { listActiveConflictKeys } = await import('../store/conflicts.js');
         const { scanContradictions } = await import('../store/contradiction-scan.js');
-        const items = await listActiveConflictKeys();
-        // Detected pairs beside the declared keys, or the command keeps missing the very pairs
-        // the write path creates on purpose: a polarity clamp reports its pair once in a write
-        // result and this was the only surface that could ever have shown it again.
-        //
-        // No reversal candidates. The cue-sentence reversal detector stays on the write path and is
-        // deliberately not listed here: measured at ~4% recall and 45 false candidates on this
-        // repo's own store (docs/evals/reversal-detector-recall.md), it is a dismissable note
-        // beside the sentence that triggered it and a work queue of false leads in a list.
-        const detected = await scanContradictions();
+        const scan = async () => ({
+          items: await listActiveConflictKeys(),
+          // Detected pairs beside the declared keys, or the command keeps missing the very pairs
+          // the write path creates on purpose: a polarity clamp reports its pair once in a write
+          // result and this was the only surface that could ever have shown it again.
+          //
+          // No reversal candidates. The cue-sentence reversal detector stays on the write path and is
+          // deliberately not listed here: measured at ~4% recall and 45 false candidates on this
+          // repo's own store (docs/evals/reversal-detector-recall.md), it is a dismissable note
+          // beside the sentence that triggered it and a work queue of false leads in a list.
+          detected: await scanContradictions(),
+        });
+        const { items, detected } = projectRoot ? await scan() : await withDbPath(globalStorePath(), scan);
         const conflictBlocks: { type: 'text'; text: string }[] = [
           {
             type: 'text',
@@ -1607,7 +1635,8 @@ export function registerTools(
       else if (name === 'knowl_context') {
         const { composeContext } = await import('../store/context-composer.js');
         const { query, task, tokenBudget, explain } = args as any;
-        const pack = await composeContext(projectId!, { query, task, tokenBudget, namespaceRoot: projectRoot ?? undefined });
+        const compose = () => composeContext(projectId!, { query, task, tokenBudget, namespaceRoot: projectRoot ?? undefined });
+        const pack = projectRoot ? await compose() : await withDbPath(globalStorePath(), compose);
         // A ceiling on the argument bounds the pack; this bounds the response. Items are
         // dropped from the end rather than the string being cut, so what comes back is still
         // parseable JSON and says how much it left out.
@@ -1617,17 +1646,22 @@ export function registerTools(
       else if (name === 'knowl_synthesize') {
         const { scope } = args as any;
         const { synthesizeKnowledge } = await import('../store/synthesis.js');
-        return { content: [{ type: 'text', text: compactMcpJson(compactItemResponse(await synthesizeKnowledge(projectId!, scope))) }] };
+        const synth = () => synthesizeKnowledge(projectId!, scope);
+        return { content: [{ type: 'text', text: compactMcpJson(compactItemResponse(projectRoot ? await synth() : await withDbPath(globalStorePath(), synth))) }] };
       }
 
       else if (name === 'knowl_evidence_list') {
         const { itemId } = args as any;
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
         try { await assertOwnedItem(itemId, owner); } catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
-        const evidence = await Promise.all((await listEvidenceForItem(itemId)).map(async item => ({
+        const { withItemNamespace } = await import('../store/namespaces.js');
+        const readEvidence = async () => Promise.all((await listEvidenceForItem(itemId)).map(async item => ({
           ...item,
           stale: projectRoot ? await isEvidenceStale(item, projectRoot) : false,
         })));
+        const evidence = projectRoot
+          ? (await withItemNamespace(itemId, projectRoot, config ?? undefined, readEvidence))?.value ?? []
+          : await withDbPath(globalStorePath(), readEvidence);
         return { content: [{ type: 'text', text: compactMcpJson(boundedEvidence(evidence)) }] };
       }
 
@@ -1635,19 +1669,26 @@ export function registerTools(
         const { itemId, used, useful, causedCorrection } = args as any;
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
         try { await assertOwnedItem(itemId, owner); } catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
-        const feedback = await recordKnowledgeFeedback({ itemId, used, useful, causedCorrection });
-        // Standing is the deliberate consequence of feedback, applied here rather than
-        // inside telemetry recording, which still never alters retrieval by itself.
-        const tierChange = await applyFeedbackToTierBestEffort(projectId!, itemId, { useful, causedCorrection });
-        // A correction implicates the corrected item's batch, not just the item: the
-        // pass that produced one wrong atom usually produced more. Explicit
-        // causedCorrection is the unambiguous signal; a routine supersede is not.
-        let blast: Awaited<ReturnType<typeof flagCorrectionSiblingsBestEffort>> = null;
-        if (causedCorrection === true) {
-          const { getKnowledgeItem } = await import('../store/repository.js');
-          const corrected = await getKnowledgeItem(itemId);
-          blast = await flagCorrectionSiblingsBestEffort(projectId!, itemId, `"${corrected?.title ?? itemId}" (correction feedback)`);
-        }
+        const { withItemNamespace } = await import('../store/namespaces.js');
+        const runFeedback = async () => {
+          const feedback = await recordKnowledgeFeedback({ itemId, used, useful, causedCorrection });
+          // Standing is the deliberate consequence of feedback, applied here rather than
+          // inside telemetry recording, which still never alters retrieval by itself.
+          const tierChange = await applyFeedbackToTierBestEffort(projectId!, itemId, { useful, causedCorrection });
+          // A correction implicates the corrected item's batch, not just the item: the
+          // pass that produced one wrong atom usually produced more. Explicit
+          // causedCorrection is the unambiguous signal; a routine supersede is not.
+          let blast: Awaited<ReturnType<typeof flagCorrectionSiblingsBestEffort>> = null;
+          if (causedCorrection === true) {
+            const { getKnowledgeItem } = await import('../store/repository.js');
+            const corrected = await getKnowledgeItem(itemId);
+            blast = await flagCorrectionSiblingsBestEffort(projectId!, itemId, `"${corrected?.title ?? itemId}" (correction feedback)`);
+          }
+          return { feedback, tierChange, blast };
+        };
+        const { feedback, tierChange, blast } = projectRoot
+          ? (await withItemNamespace(itemId, projectRoot, config ?? undefined, runFeedback))?.value ?? await runFeedback()
+          : await withDbPath(globalStorePath(), runFeedback);
         const tierNote = tierChange
           ? `\n\nStanding: item ${tierChange.reason} to ${tierChange.tier}.`
           : '';
@@ -1665,8 +1706,12 @@ export function registerTools(
 
       else if (name === 'knowl_session_finish') {
         const { sessionId, status, summary, promote = true } = args as any;
-        const session = await finishMemorySession(sessionId, status, summary);
-        const promotion = promote ? await finalizeMemorySession(projectId!, sessionId) : { status: 'skipped', itemIds: [], candidateCount: 0, usedAi: false };
+        const finish = async () => {
+          const session = await finishMemorySession(sessionId, status, summary);
+          const promotion = promote ? await finalizeMemorySession(projectId!, sessionId) : { status: 'skipped', itemIds: [], candidateCount: 0, usedAi: false };
+          return { session, promotion };
+        };
+        const { session, promotion } = projectRoot ? await finish() : await withDbPath(globalStorePath(), finish);
         return { content: [{ type: 'text', text: compactMcpJson({ session: { id: session.id, status: session.status }, promotion: { status: promotion.status, candidateCount: promotion.candidateCount, itemIds: promotion.itemIds.slice(0, 3) } }) }] };
       }
       
@@ -1700,7 +1745,7 @@ export function registerTools(
             throw new Error(`No knowledge item "${supersedeId}" to supersede. Nothing was updated.`);
           }
         }
-        const updated = await updateKnowledgeItemWithCommit(projectId!, id, {
+        const update = () => updateKnowledgeItemWithCommit(projectId!, id, {
           title,
           content,
           category: category as KnowledgeCategory,
@@ -1714,6 +1759,12 @@ export function registerTools(
           freshness,
           validationOptions: config?.security,
         });
+        // Run in the namespace that holds `id` (or the global store when no project is open).
+        // Without this, updating a global atom from a project checkout failed with "not found",
+        // and updating from `~` failed with "Database has not been initialized".
+        const updated = projectRoot
+          ? ((await withItemNamespace(id, projectRoot, config ?? undefined, update))?.value ?? await update())
+          : await withDbPath(globalStorePath(), update);
 
         // Past this point the update is durable, so a failure here can never be reported as
         // "the call failed" -- that is the lie the pre-check exists to make impossible, and
@@ -1754,7 +1805,9 @@ export function registerTools(
       }
 
       else if (name === 'knowl_gc_preview') {
-        const result = await previewKnowledgeGc(projectId!);
+        const result = projectRoot
+          ? await previewKnowledgeGc(projectId!)
+          : await withDbPath(globalStorePath(), () => previewKnowledgeGc(projectId!));
         // Every purge id, not the first three. Purge is the one action `knowl_gc_apply` will
         // not take unless it is handed the ids a preview named, so a truncated list here would
         // make the approvable set unknowable from the response that is meant to supply it.
@@ -1766,7 +1819,9 @@ export function registerTools(
 
       else if (name === 'knowl_task_start') {
         const { title, query } = args as any;
-        const result = await startWorkLoop(projectId!, title, query);
+        const result = projectRoot
+          ? await startWorkLoop(projectId!, title, query)
+          : await withDbPath(globalStorePath(), () => startWorkLoop(projectId!, title, query));
         return {
           content: [{ type: 'text', text: compactMcpJson({ ...result, relevantMemory: result.relevantMemory.map(item => ({ ...item, content: truncateMiddle(item.content, MAX_ITEM_CONTENT_CHARS) })) }) }],
         };
@@ -1774,7 +1829,7 @@ export function registerTools(
 
       else if (name === 'knowl_task_checkpoint') {
         const { taskId, summary, goal, completed, nextAction, blocker, artifactRefs, verificationStatus } = args as any;
-        const result = await checkpointWorkLoop(projectId!, taskId, {
+        const checkpoint = () => checkpointWorkLoop(projectId!, taskId, {
           summary,
           goal,
           completed,
@@ -1783,6 +1838,7 @@ export function registerTools(
           artifactRefs,
           verificationStatus,
         });
+        const result = projectRoot ? await checkpoint() : await withDbPath(globalStorePath(), checkpoint);
         return {
           content: [{ type: 'text', text: compactMcpJson(result) }],
         };
@@ -1801,7 +1857,9 @@ export function registerTools(
         // one agent's finish over another agent's stale read. The write gate
         // (`session/write-gate.ts`) is the chokepoint instead, and it needs no such join because
         // it runs inside the session that holds the read. Plan §15.
-        const result = await finishWorkLoop(projectId!, taskId, summary);
+        const result = projectRoot
+          ? await finishWorkLoop(projectId!, taskId, summary)
+          : await withDbPath(globalStorePath(), () => finishWorkLoop(projectId!, taskId, summary));
         return {
           content: [{ type: 'text', text: compactMcpJson(result) }],
         };
@@ -1809,9 +1867,10 @@ export function registerTools(
 
       else if (name === 'knowl_gc_apply') {
         const { purgeItemIds } = args as { purgeItemIds?: string[] };
-        const result = await applyKnowledgeGc(projectId!, {
+        const apply = () => applyKnowledgeGc(projectId!, {
           ...(Array.isArray(purgeItemIds) ? { approvedPurgeIds: purgeItemIds } : {}),
         });
+        const result = projectRoot ? await apply() : await withDbPath(globalStorePath(), apply);
         return {
           content: [{
             type: 'text',
@@ -1830,7 +1889,7 @@ export function registerTools(
       }
 
       else if (name === 'knowl_skill_list') {
-        const skills = await listSkillPackages(projectRoot!);
+        const skills = await listSkillPackages(projectRoot ?? knowlHome());
         // The one tool that bypassed response formatting entirely: pretty-printed, unbounded,
         // and echoing an absolute path per skill -- 13,871 characters for six of them. A list
         // is for choosing which skill to read; knowl_skill_read is where the detail lives.
@@ -1852,7 +1911,7 @@ export function registerTools(
 
       else if (name === 'knowl_skill_read') {
         const { name: skillName } = args as any;
-        const skill = await readSkillPackage(projectRoot!, skillName);
+        const skill = await readSkillPackage(projectRoot ?? knowlHome(), skillName);
         return {
           content: [{ type: 'text', text: compactMcpJson({ manifest: skill.manifest, markdown: truncateText(skill.markdown, MAX_PREVIEW_CHARS), truncated: skill.markdown.length > MAX_PREVIEW_CHARS }) }],
         };
@@ -1860,7 +1919,7 @@ export function registerTools(
 
       else if (name === 'knowl_skill_create') {
         const { name: skillName, purpose, markdown, triggers, files, entrypoints } = args as any;
-        const skill = await createSkillPackage(projectRoot!, {
+        const skill = await createSkillPackage(projectRoot ?? knowlHome(), {
           name: skillName,
           purpose,
           markdown,
@@ -1868,7 +1927,8 @@ export function registerTools(
           files,
           entrypoints,
         });
-        await indexSkillPackage(projectId!, skill.manifest);
+        if (projectRoot) await indexSkillPackage(projectId!, skill.manifest);
+        else await withDbPath(globalStorePath(), () => indexSkillPackage(projectId!, skill.manifest));
         return {
           content: [{ type: 'text', text: `Successfully created skill ${skill.manifest.name}` }],
         };
@@ -1876,18 +1936,19 @@ export function registerTools(
 
       else if (name === 'knowl_skill_run') {
         const { name: skillName, entrypoint, args: runtimeArgs } = args as any;
-        const result = await runSkillPackage(projectRoot!, skillName, entrypoint || 'default', runtimeArgs || []);
-        await recordSkillRun(projectId!, skillName, result.exitCode === 0);
+        const result = await runSkillPackage(projectRoot ?? knowlHome(), skillName, entrypoint || 'default', runtimeArgs || []);
+        if (projectRoot) await recordSkillRun(projectId!, skillName, result.exitCode === 0);
+        else await withDbPath(globalStorePath(), () => recordSkillRun(projectId!, skillName, result.exitCode === 0));
         return { content: [{ type: 'text', text: compactMcpJson({ ...result, stdout: truncateText(result.stdout, MAX_PREVIEW_CHARS), stderr: truncateText(result.stderr, MAX_PREVIEW_CHARS), attempts: result.attempts.map(attempt => ({ entrypoint: attempt.entrypoint, exitCode: attempt.exitCode })) }) }] };
       }
 
       else if (name === 'knowl_handoff') {
         const { goal, completed, nextAction, blocker, artifactRefs, verificationStatus, sessionId } = args as any;
-        const { handoff, replacedPrevious } = await recordDeliberateHandoff(projectId!, {
+        const recordHandoff = () => recordDeliberateHandoff(projectId!, {
           // The MCP layer is host-neutral and has no way to learn which host is calling, so a
           // baton parked here is filed under the host whose hooks deliver it on session start.
           host: 'claude',
-          projectRoot: projectRoot!,
+          projectRoot: projectRoot ?? knowlHome(),
           externalSessionId: sessionId ? String(sessionId) : 'unknown',
           taskState: {
             goal: String(goal ?? ''),
@@ -1898,6 +1959,9 @@ export function registerTools(
             verificationStatus: verificationStatus === 'verified' ? 'verified' : 'unverified',
           },
         });
+        const { handoff, replacedPrevious } = projectRoot
+          ? await recordHandoff()
+          : await withDbPath(globalStorePath(), recordHandoff);
         return {
           content: [{
             type: 'text',
@@ -1911,7 +1975,7 @@ export function registerTools(
 
       else if (name === 'knowl_park') {
         const { goal, completed, nextAction, blocker, artifactRefs, verificationStatus, sessionId } = args as any;
-        const point = await createResumePoint(projectRoot!, {
+        const point = await createResumePoint(projectRoot ?? knowlHome(), {
           goal: String(goal ?? ''),
           completed: Array.isArray(completed) ? completed.map(String).slice(0, 20) : undefined,
           nextAction: nextAction ? String(nextAction) : undefined,
@@ -1946,7 +2010,7 @@ export function registerTools(
           return { content: [{ type: 'text', text: formatResumeBrief(point) }] };
         }
 
-        const points = await listResumePoints(projectRoot!);
+        const points = await listResumePoints(projectRoot ?? knowlHome());
         if (points.length === 0) {
           return { content: [{ type: 'text', text: 'Nothing is parked in this project.' }] };
         }
