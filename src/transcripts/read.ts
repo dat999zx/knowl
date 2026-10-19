@@ -1,4 +1,10 @@
 import { streamProseFrom } from './parse.js';
+import {
+  isHermesSessionPath,
+  readHermesMessagesAt,
+  readHermesMessagesFor,
+  readHermesWithContext,
+} from './hermes.js';
 
 export type TranscriptExcerpt = {
   line: number;
@@ -23,6 +29,7 @@ export async function readMessagesAt(
   filePath: string,
   lines: number[],
 ): Promise<Map<number, TranscriptExcerpt>> {
+  if (isHermesSessionPath(filePath)) return readHermesMessagesAt(filePath, lines);
   const found = new Map<number, TranscriptExcerpt>();
   if (lines.length === 0) return found;
 
@@ -115,6 +122,7 @@ export async function readMessagesFor(
   filePath: string,
   pointers: MessagePointer[],
 ): Promise<Map<number, TranscriptExcerpt>> {
+  if (isHermesSessionPath(filePath)) return readHermesMessagesFor(filePath, pointers);
   const found = new Map<number, TranscriptExcerpt>();
   const unresolved: number[] = [];
 
@@ -149,6 +157,7 @@ export async function readWithContext(
   line: number,
   context: number,
 ): Promise<TranscriptExcerpt[]> {
+  if (isHermesSessionPath(filePath)) return readHermesWithContext(filePath, line, context);
   const before: TranscriptExcerpt[] = [];
   const after: TranscriptExcerpt[] = [];
   let target: TranscriptExcerpt | null = null;

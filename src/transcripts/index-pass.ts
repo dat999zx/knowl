@@ -5,10 +5,15 @@ import { openTranscriptDb, withWriteRetry } from './database.js';
 import { describesSameMessage, NAME_KIND, readOpeningAsk, streamProseFrom, type ProseChunk } from './parse.js';
 import { fillMissingByteOffsets } from './offset-backfill.js';
 import {
+  anchorHermesAt,
   defaultCodexSessionsDir,
   defaultCopilotSessionsDir,
+  defaultHermesHomeDir,
+  defaultHermesStateDbs,
   defaultProjectsDir,
+  isHermesSessionPath,
   scanTranscriptArchive,
+  statHermesVirtualSession,
   type TranscriptFile,
 } from './paths.js';
 
@@ -67,6 +72,7 @@ const ANCHOR_BYTES = 512;
  */
 export async function anchorAt(filePath: string, bytes: number): Promise<string | null> {
   if (bytes <= 0) return null;
+  if (isHermesSessionPath(filePath)) return anchorHermesAt(filePath, bytes);
   const start = Math.max(0, bytes - ANCHOR_BYTES);
   const length = bytes - start;
 
@@ -518,6 +524,7 @@ export async function runIndexPass(input: {
   projectsDir?: string;
   codexSessionsDir?: string;
   copilotSessionsDir?: string;
+  hermesHomeDir?: string;
   onlySessionIds?: Set<string>;
   /** `Date.now()` value after which the pass stops between files. */
   deadline?: number;
@@ -534,6 +541,7 @@ export async function runIndexPass(input: {
     projectsDir: input.projectsDir,
     codexSessionsDir: input.codexSessionsDir,
     copilotSessionsDir: input.copilotSessionsDir,
+    hermesHomeDir: input.hermesHomeDir,
     onlySessionIds: input.onlySessionIds,
   });
   const files = scan.files;
@@ -559,19 +567,23 @@ export async function runIndexPass(input: {
   // their vectors*. Re-indexing is cheap; re-embedding an archive is not, and nothing was
   // stale. A definitive "not a checkout" is not degraded: it misses no roots.
   const anyRedirected = Boolean(
-    input.projectsDir || input.codexSessionsDir || input.copilotSessionsDir,
+    input.projectsDir || input.codexSessionsDir || input.copilotSessionsDir || input.hermesHomeDir,
   );
   const probe = (override: string | undefined, fallback: () => string) =>
     override || !anyRedirected ? readableDir(override ?? fallback()) : Promise.resolve(false);
-  const [claudeReadable, codexReadable, copilotReadable] = await Promise.all([
+  const [claudeReadable, codexReadable, copilotReadable, hermesReadable] = await Promise.all([
     probe(input.projectsDir, defaultProjectsDir),
     probe(input.codexSessionsDir, defaultCodexSessionsDir),
     probe(input.copilotSessionsDir, defaultCopilotSessionsDir),
+    input.hermesHomeDir || !anyRedirected
+      ? defaultHermesStateDbs(input.hermesHomeDir ?? defaultHermesHomeDir()).then(dbs => dbs.length > 0, () => false)
+      : Promise.resolve(false),
   ]);
   const readableByHarness: Record<string, boolean> = {
     claude: claudeReadable,
     codex: codexReadable,
     copilot: copilotReadable,
+    hermes: hermesReadable,
   };
   // When `onlySessionIds` is provided, the caller is indexing a targeted subset of sessions, so
   // sessions outside that subset must not be treated as deleted from disk.
@@ -627,10 +639,20 @@ export async function runIndexPass(input: {
       examined++;
 
       let size: number;
-      try {
-        size = (await fs.stat(file.path)).size;
-      } catch {
-        continue; // Vanished between discovery and now; the next pass cleans it up.
+      if (isHermesSessionPath(file.path)) {
+        try {
+          const meta = await statHermesVirtualSession(file.path);
+          if (!meta) continue;
+          size = meta.size;
+        } catch {
+          continue;
+        }
+      } else {
+        try {
+          size = (await fs.stat(file.path)).size;
+        } catch {
+          continue; // Vanished between discovery and now; the next pass cleans it up.
+        }
       }
 
       const state = await readFileState(input.dbPath, file.path);
