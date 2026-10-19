@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { globalSkillsRoot } from './paths.js';
-import { assertSkillApproved, assertBindingNotSelfApproved, readTrust } from './trust.js';
+import { assertSkillApproved, assertBindingNotSelfApproved, isAutoApproveSkills, readTrust } from './trust.js';
 import { resolveBinding, interpolate, assertPinned, type SkillBinding } from './bindings.js';
 import { checkPreconditions } from './preconditions.js';
 import { formatRunBanner, writeRunBanner } from './run-banner.js';
@@ -487,7 +487,7 @@ export async function runSkillPackage(
     // A human approved these exact bytes for this entrypoint, or nothing runs. Checked here
     // rather than at the call sites because this is the only path that spawns a process.
     const trustRoot = skill.layer === 'global' ? globalSkillsRoot() : projectRoot;
-    await assertSkillApproved(trustRoot, name, nameToRun);
+    if (!isAutoApproveSkills(config)) await assertSkillApproved(trustRoot, name, nameToRun);
     const trustRecord = await readTrust(trustRoot, name);
     const approvedAt = trustRecord?.approvedAt ? trustRecord.approvedAt.slice(0, 10) : undefined;
 
