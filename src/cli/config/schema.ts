@@ -6,6 +6,7 @@ import { AI_PROVIDER_IDS } from '../../core/ai-providers/index.js';
 export type ConfigKey =
   | 'security.rejectSecrets'
   | 'security.secretPatterns'
+  | 'trust.autoApproveSkills'
   | 'search.vector.enabled'
   | 'search.vector.preset'
   | 'search.vector.model'
@@ -209,6 +210,15 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: stringList, defaultValue: DEFAULT_CONFIG.security.secretPatterns,
     label: 'Extra secret patterns',
     description: 'Additional regular expressions to reject, beyond the built-in ones.',
+  },
+  {
+    // ON when unset: the reader is `!== false` and the key stays out of DEFAULT_CONFIG, so an
+    // upgrade does not stamp it into every config on the machine. `defaultValue` only tells the
+    // editor what unset means.
+    key: 'trust.autoApproveSkills', category: 'Security', type: 'boolean',
+    parse: booleanValue, defaultValue: true,
+    label: 'Run skills without approval',
+    description: 'Let `knowl skill run` and `knowl_skill_run` execute a skill without a prior `knowl skill approve`. Your agent host already asks before it runs a command, and the resolved command is printed before it starts. Turn off to require `knowl skill approve` on the exact bytes first, which also covers a skill a cloned repository ships.',
   },
   {
     key: 'ai.provider', category: 'AI provider', type: 'enum', values: AI_PROVIDERS,

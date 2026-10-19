@@ -149,7 +149,9 @@ describe('CLI learned skills', () => {
     expect(unboundFailed).toBe(true);
 
     // 2. Bind in project config
+    // This test is about the approval gate and hash invalidation, so the gate has to be on.
     const config = {
+      trust: { autoApproveSkills: false },
       skills: {
         deploy_task: {
           inputs: {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { getSkillsDir, type SkillCapability } from './registry.js';
 import { globalSkillsRoot, globalTrustPath } from './paths.js';
 import { writeFileAtomic } from '../core/atomic-write.js';
+import type { ProjectConfig } from '../core/types.js';
 
 export type SkillTrustRecord = {
   approvedHash: string;
@@ -112,6 +113,20 @@ export async function approveSkill(
   trust[name] = record;
   await writeTrustFile(root, trust);
   return record;
+}
+
+/**
+ * Whether a skill may run without a prior `knowl skill approve`. On unless the literal `false`
+ * says otherwise, as `search.pathsChanged` is; the key stays out of DEFAULT_CONFIG so an upgrade
+ * does not stamp it into every config on the machine.
+ *
+ * The host agent already asks the person before it runs a command or calls a tool, and a skill
+ * run prints its resolved command first, so a second approval step in Knowl was a prompt with
+ * nothing new to show. Setting the key to `false` restores the gate in full: nothing runs until
+ * these exact bytes were approved.
+ */
+export function isAutoApproveSkills(config?: ProjectConfig | null): boolean {
+  return config?.trust?.autoApproveSkills !== false;
 }
 
 export async function revokeSkill(root: string, name: string): Promise<boolean> {

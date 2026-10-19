@@ -2010,7 +2010,7 @@ Project bindings can also pin a version (e.g. `"version": 1`). If the playbook v
 
 #### Approval and trust
 
-Execution is refused unless approved:
+By default a skill runs without approval (`trust.autoApproveSkills`, on unless set to `false`): your agent host already asks before it runs a command, and the resolved command is printed first. Set `knowl config set trust.autoApproveSkills false` to restore the gate, after which execution is refused unless approved:
 - `knowl skill approve <name>` approves a project skill, recording its hash in `.knowl/skill-trust.json`.
 - `knowl skill approve <name> --global` approves a global playbook, recording its hash in `~/.knowl/skill-trust.json`.
 - Any byte modification to the package invalidates approval and requires re-approval.
