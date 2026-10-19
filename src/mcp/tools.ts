@@ -1889,7 +1889,7 @@ export function registerTools(
       }
 
       else if (name === 'knowl_skill_list') {
-        const skills = await listSkillPackages(projectRoot ?? knowlHome());
+        const skills = await listSkillPackages(projectRoot!);
         // The one tool that bypassed response formatting entirely: pretty-printed, unbounded,
         // and echoing an absolute path per skill -- 13,871 characters for six of them. A list
         // is for choosing which skill to read; knowl_skill_read is where the detail lives.
@@ -1911,7 +1911,7 @@ export function registerTools(
 
       else if (name === 'knowl_skill_read') {
         const { name: skillName } = args as any;
-        const skill = await readSkillPackage(projectRoot ?? knowlHome(), skillName);
+        const skill = await readSkillPackage(projectRoot!, skillName);
         return {
           content: [{ type: 'text', text: compactMcpJson({ manifest: skill.manifest, markdown: truncateText(skill.markdown, MAX_PREVIEW_CHARS), truncated: skill.markdown.length > MAX_PREVIEW_CHARS }) }],
         };
@@ -1919,7 +1919,7 @@ export function registerTools(
 
       else if (name === 'knowl_skill_create') {
         const { name: skillName, purpose, markdown, triggers, files, entrypoints } = args as any;
-        const skill = await createSkillPackage(projectRoot ?? knowlHome(), {
+        const skill = await createSkillPackage(projectRoot!, {
           name: skillName,
           purpose,
           markdown,
@@ -1927,8 +1927,7 @@ export function registerTools(
           files,
           entrypoints,
         });
-        if (projectRoot) await indexSkillPackage(projectId!, skill.manifest);
-        else await withDbPath(globalStorePath(), () => indexSkillPackage(projectId!, skill.manifest));
+        await indexSkillPackage(projectId!, skill.manifest);
         return {
           content: [{ type: 'text', text: `Successfully created skill ${skill.manifest.name}` }],
         };
@@ -1936,9 +1935,8 @@ export function registerTools(
 
       else if (name === 'knowl_skill_run') {
         const { name: skillName, entrypoint, args: runtimeArgs } = args as any;
-        const result = await runSkillPackage(projectRoot ?? knowlHome(), skillName, entrypoint || 'default', runtimeArgs || []);
-        if (projectRoot) await recordSkillRun(projectId!, skillName, result.exitCode === 0);
-        else await withDbPath(globalStorePath(), () => recordSkillRun(projectId!, skillName, result.exitCode === 0));
+        const result = await runSkillPackage(projectRoot!, skillName, entrypoint || 'default', runtimeArgs || []);
+        await recordSkillRun(projectId!, skillName, result.exitCode === 0);
         return { content: [{ type: 'text', text: compactMcpJson({ ...result, stdout: truncateText(result.stdout, MAX_PREVIEW_CHARS), stderr: truncateText(result.stderr, MAX_PREVIEW_CHARS), attempts: result.attempts.map(attempt => ({ entrypoint: attempt.entrypoint, exitCode: attempt.exitCode })) }) }] };
       }
 
