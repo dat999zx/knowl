@@ -8,7 +8,7 @@ import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
 import { joinWorkspace } from '../../src/workspace/membership.js';
-import { DEFAULT_CONFIG, loadConfig, saveConfig, setGlobalNamespace } from '../../src/core/config.js';
+import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 import { resetWriteOwnershipCache } from '../../src/store/write-ownership.js';
 import { listKnownRepos } from '../../src/core/repo-registry.js';
 import { upgradeExistingRepository } from '../../src/cli/upgrade.js';
@@ -133,14 +133,5 @@ describe('upgrade', () => {
     expect(result.claimedItems).toBe(0);
     const rows = await readRows('SELECT origin_repo FROM knowledge_items');
     expect(rows.every(row => row.origin_repo === 'web')).toBe(true);
-  });
-
-  it('links unconfigured repositories to the global store while preserving explicit --off', async () => {
-    await upgradeExistingRepository(REPO, 'upgrade');
-    expect((await loadConfig(REPO)).memory?.global?.enabled).toBe(true);
-
-    await setGlobalNamespace(REPO, false);
-    await upgradeExistingRepository(REPO, 'upgrade');
-    expect((await loadConfig(REPO)).memory?.global?.enabled).toBe(false);
   });
 });

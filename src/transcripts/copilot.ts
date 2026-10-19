@@ -375,6 +375,7 @@ export async function readCopilotCheckpointsText(
     let client: Client | null = null;
     try {
       client = createClient({ url: pathToFileURL(path.resolve(sessionStoreDbPath)).href });
+      await client.execute('PRAGMA query_only = ON;'); // Copilot's own database: read it, never write it.
       const rows = (await client.execute({
         sql: `SELECT checkpoint_number, title, overview, work_done, technical_details
               FROM checkpoints

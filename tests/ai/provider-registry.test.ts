@@ -66,14 +66,14 @@ describe('AI provider registry', () => {
     expect(createOpenAI).toHaveBeenLastCalledWith({ apiKey: 'ollama', baseURL: 'http://h:1/v1' });
   });
 
-  it('custom passes through, with an empty key and no base when absent, and routes claude* models to anthropic SDK', () => {
+  it('custom passes through, with an empty key and no base when absent, and never reroutes claude* models', () => {
     initAI({ provider: 'custom', model: 'c1', apiKey: 'ck', baseUrl: 'https://c/v1' });
     expect(createOpenAI).toHaveBeenLastCalledWith({ apiKey: 'ck', baseURL: 'https://c/v1' });
     initAI({ provider: 'custom', model: 'c2' });
     expect(createOpenAI).toHaveBeenLastCalledWith({ apiKey: '', baseURL: undefined });
-    const claudeModel = initAI({ provider: 'custom', model: 'claude-haiku-5.5', baseUrl: 'http://127.0.0.1:8794/v1' });
-    expect(createAnthropic).toHaveBeenLastCalledWith({ apiKey: '', baseURL: 'http://127.0.0.1:8794/v1' });
-    expect(claudeModel).toEqual({ sdk: 'anthropic', model: 'claude-haiku-5.5' });
+    // A claude* name on `custom` stays on the OpenAI SDK: gateways such as OpenRouter serve it there.
+    const claudeModel = initAI({ provider: 'custom', model: 'anthropic/claude-haiku-5.5', baseUrl: 'https://c/v1' });
+    expect(claudeModel).toEqual({ sdk: 'openai', model: 'anthropic/claude-haiku-5.5' });
   });
 
   it('copilot supports multi-model routing (openai SDK for gpt* and anthropic SDK for claude*)', () => {
