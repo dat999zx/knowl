@@ -3,6 +3,50 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.27.0 - 2026-10-19
+
+### Feature: transcript search and extraction now read GitHub Copilot CLI and Hermes Agent sessions
+
+- `knowl reindex --transcripts` and `knowl transcripts extract / candidates / approve / discard` now
+  cover GitHub Copilot CLI sessions (`~/.copilot/session-state/<id>/`) and Hermes Agent sessions
+  (the `state.db` in the Hermes home and in every `profiles/<name>/`), alongside Claude Code and
+  Codex. A past Copilot or Hermes conversation about a repository is searchable from that
+  repository, and can be turned into staged candidates like any other.
+- A Copilot session run in a git worktree that has since been pruned is mapped back to its parent
+  repository, so its history is not lost with the worktree.
+- Copilot's own checkpoint summaries, and the summaries Hermes writes when it compacts a long
+  session, are placed ahead of the session's tail text, so the conclusions of a long session
+  survive truncation.
+- Hermes messages are de-duplicated across context-compaction copies, and the model banners,
+  skill-invocation preambles and background-process notices Hermes adds are stripped, so what is
+  indexed is what was said.
+- `--sessions <ids>` on `knowl reindex --transcripts` and `knowl transcripts extract` limits the run
+  to the listed sessions. The rest of the index is left as it was.
+
+### Feature: `copilot` AI provider
+
+- `knowl config set ai.provider copilot` points Knowl at a local multi-model gateway
+  (`http://127.0.0.1:8794/v1` by default; `ai.baseUrl` or `COPILOT_BASE_URL` overrides it) and needs
+  no API key. `claude-*` models use the Anthropic Messages API and every other model the OpenAI
+  API. `custom` is unchanged and always speaks the OpenAI API.
+- The structured-output schemas for filter, extract and compare now mark every field as required
+  and nullable, which OpenAI's strict mode needs. A model that returns `null` for an optional field
+  is read as "not set"; one that omits `confidence` now fails that call instead of defaulting to 1.
+
+### Change: `knowl transcripts approve --all` leaves `state` candidates staged
+
+- A `state` atom extracted from an old session describes what was in flight when that session ended,
+  and promoting it presented a weeks-old snapshot as the current state of the repository. `--all`
+  now promotes `fact`, `decision`, `constraint`, `architecture`, `skill` and `goal`, prints how many
+  `state` candidates it skipped, and keeps them staged. `--include-state` promotes those too;
+  approving by id is unchanged.
+
+### Feature: `knowl init hermes` wires every Hermes profile
+
+- If you run named Hermes profiles under `<Hermes home>/profiles/`, `knowl init hermes` now writes
+  the MCP entry and the plugin into each profile that has a `config.yaml`, not only the default
+  home.
+
 ## 5.26.2 - 2026-10-16
 
 ### Fix: `knowl init --all` upgrades what exists and creates nothing
