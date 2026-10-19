@@ -1,89 +1,81 @@
-# Auto-approve skills you create at your own terminal
+# Run skills without `knowl skill approve`
 
 ## Problem
 
 A file-backed skill package can carry a runnable entrypoint (a `shell` command or a `script`).
 `knowl_skill_run` and `knowl skill run` refuse to execute it until a human has run
 `knowl skill approve <name>`, which pins the sha256 of every file in the package
-(`src/skills/trust.ts`, `src/skills/registry.ts` `runNamed`).
+(`src/skills/trust.ts`, `runNamed` in `src/skills/registry.ts`).
 
-That gate is right for a package Knowl did not watch a person write: one a cloned repository ships
-under `.knowl/skills/`, or one an agent created through `knowl_skill_create`. It is friction for the
-case where the person types `knowl skill create` themselves and then has to type a second command
-to approve what they just wrote. Skills the user cannot run without a ceremony get written and
-never used.
+The agent host already asks the person before it runs a command or calls a tool, and a skill run
+prints its resolved command, working directory and capabilities before it starts. So the approval
+was a second prompt that showed nothing the first did not, and skills the user could not run
+without a ceremony got written and never used.
 
-What approval does and does not cover today, so the change is not oversold:
+What approval did and did not cover, so the change is not oversold:
 
-- It gates execution only. Listing, reading and the "a saved skill matches this command" nudge work
-  on an unapproved skill.
-- It does not stop an agent that has a shell tool, because that agent can run `knowl skill approve`
-  or `knowl skill create` itself. It stops the MCP-only path (`knowl_skill_create` then
-  `knowl_skill_run`) and a cloned repository's skills.
+- It gated execution only. Listing, reading and the "a saved skill matches this command" nudge
+  worked on an unapproved skill.
+- It did not stop an agent that has a shell tool: that agent can run `knowl skill approve` itself.
+  It stopped the MCP-only path (`knowl_skill_create` then `knowl_skill_run`) and a skill shipped by
+  a cloned repository.
 
 ## Decision
 
-Settled with the user on 2026-10-19: do option 1 and put it behind a config toggle that defaults to
-on.
+Settled with the user on 2026-10-19, after first proposing a narrower version (approve only what
+`knowl skill create` writes, never agent-created or repository-shipped skills, never a skill
+declaring an external effect). The user's ruling: auto-approve applies to everything, because the
+skills are local and made by their own AI. Behind a config toggle that defaults to on.
 
-`knowl skill create` (the CLI command) approves the package it has just written, with the same
-record `knowl skill approve` writes, unless the toggle is off. Nothing else changes:
+`runSkillPackage` skips `assertSkillApproved` unless `trust.autoApproveSkills` is the literal
+`false`. Everything else in the run path is unchanged.
 
-| Package comes from | Approved automatically? |
-|---|---|
-| `knowl skill create` typed at a terminal, toggle on | yes |
-| `knowl skill create`, toggle off | no (`knowl skill approve` as today) |
-| `knowl_skill_create` over MCP (an agent) | never |
-| Shipped by a cloned repository, or imported | never |
-| Any package that declares an external-effect capability (`write`, `network`, `publish`, `delete`) | never; the existing confirmation in `skill approve` still applies |
+| Situation | Default (key unset or true) | `trust.autoApproveSkills = false` |
+|---|---|---|
+| Skill never approved | runs | refused, names `knowl skill approve` |
+| Skill edited after approval | runs | refused, "changed since it was approved" |
+| Agent-created, repository-shipped or imported skill | runs | refused until approved |
+| Skill declaring write, network, publish or delete | runs | approval asks for confirmation as before |
 
 ## Changes
 
-1. **Config key `trust.autoApproveCreatedSkills`** (boolean).
+1. **Config key `trust.autoApproveSkills`** (boolean).
    - Not under `skills.*`: that map is keyed by skill name (`skills.<name>` is a project binding),
-     so a skill called `autoApprove` would collide.
-   - Not in `DEFAULT_CONFIG` or `NEW_PROJECT_CONFIG`. The reader treats an unset key as `true`
-     (`!== false`), the way `search.pathsChanged` does, so an upgrade does not write the key into
-     every config on the machine. Four places, per the config rules: `ProjectConfig` in
-     `src/core/types.ts`, `ConfigKey` plus a `CONFIG_FIELDS` entry in `src/cli/config/schema.ts`
-     (category `Security`), the reader, and `docs/reference.md`.
-   - The reader lives next to the skills code (`src/skills/trust.ts`), not in `src/core`.
-2. **`src/cli/program.ts`, `skill create` action.** After `createSkillPackage` and
-   `indexSkillPackage` succeed: if the toggle is on and `requiresStrongerApproval(manifest.requires?.capabilities ?? [])`
-   is empty, call `approveSkill(root, name, { approvedBy: 'cli:create:<user>' })` and print
-   `Approved for execution (turn off: knowl config set trust.autoApproveCreatedSkills false).`
-   If the skill declares a stronger capability, print that it still needs `knowl skill approve`.
-3. **`approvedBy` carries `cli:create:`** so `knowl skill list`/`read` and the run banner can tell an
-   auto-approval from a deliberate one. The banner already prints `approved <date>`; no new field.
-4. **No change** to `knowl_skill_create`, `runSkillPackage`, `assertSkillApproved`, the hash, the
-   trust file location, or the planted-package check.
+     so a skill called `autoApproveSkills` would collide.
+   - Not in `DEFAULT_CONFIG` or `NEW_PROJECT_CONFIG`; the reader treats unset as `true`
+     (`!== false`), as `search.pathsChanged` does, so an upgrade does not stamp it into every
+     config. Four places: `ProjectConfig` in `src/core/types.ts`, `ConfigKey` plus a
+     `CONFIG_FIELDS` entry in `src/cli/config/schema.ts` (category Security), the reader
+     `isAutoApproveSkills` in `src/skills/trust.ts`, and `docs/reference.md`.
+2. **`src/skills/registry.ts`, `runNamed`:** `if (!isAutoApproveSkills(config)) await assertSkillApproved(...)`.
+   `config` is the project config `runSkillPackage` already loads.
+3. **Unchanged:** `knowl skill approve` and `revoke` (they are how the gate is satisfied once the
+   key is `false`), the hash, the trust file locations, `assertBindingNotSelfApproved` (a repository
+   still cannot bind a global playbook it ships), shell interpolation refusal, preconditions, and
+   the run banner.
 
 ## Out of scope
 
-- Approving agent-created or imported skills automatically.
-- Any change to the trust-file format.
-- The four `knowl_skill_*` hunks in #354 (separate: they are being reverted there).
-- A `knowl skill approve --all`.
+- Removing `knowl skill approve` or the trust file.
+- Auto-binding global playbooks: a global skill still has to be bound in project config before it runs.
 
 ## Risks
 
-- **Default-on changes posture for everyone who types `knowl skill create`.** The skill is theirs
-  and they just wrote it; the cost of the default is that a mistake in a skill they just wrote
-  runs without a second prompt. The CHANGELOG lists it as a default change with the off switch.
-- **The toggle lives in the project config.** A cloned repository can ship `.knowl/config.json`
-  with the key set either way. Setting it to `true` approves nothing: it only affects what the
-  local `knowl skill create` command does when the person runs it. No path lets config approve an
-  existing package.
-- **An agent that can run shell commands can already do everything this enables** (`skill create`
-  then `skill approve`), so this adds no capability to it.
+- **Default-on changes posture for everyone.** A skill a cloned repository ships can now run when
+  the agent calls `knowl_skill_run`. The mitigations are the host's own prompt and the printed
+  command; `trust.autoApproveSkills false` is the answer for a repository whose skills you did not
+  write. The CHANGELOG says so.
+- **The toggle lives in the project config.** A repository can ship `.knowl/config.json` setting it
+  either way. Setting it `true` only matches the default, and setting it `false` only makes the gate
+  stricter, so a repository cannot use it to gain anything.
 
 ## Verification
 
-- Test: toggle unset and `true` approve after create, `false` does not, a skill declaring
-  `network` does not, `knowl_skill_create` over MCP does not. Each against `approveSkill`'s record.
-- Mutant: remove the capability check and the `network` case fails; flip the reader's `!== false`
-  to `=== true` and the unset case fails; call the approval from the MCP create path and the MCP
-  case fails.
-- End to end on the built CLI in a scratch repo: `skill create`, then `skill run` runs with no
-  `approve`; edit one byte of the package and `skill run` is refused again.
-- `config-surface` test and `docs:check` pass with the new key.
+- Tests (`tests/skills/auto-approve.test.ts`): reader semantics; a never-approved skill runs by
+  default, including one declaring `network`; a skill keeps running after its files change; the key
+  `false` refuses again; end to end on the built CLI, create then run with no approve, then
+  `config set trust.autoApproveSkills false` refuses.
+- The gate tests (`tests/skills/trust.test.ts`, the global-playbook lifecycle in
+  `tests/cli/skill-cli.test.ts`) set the key to `false`, since they test the gate itself.
+- Mutants, each failing a different subset: reader `=== true`; the bypass removed so the gate always
+  runs; the gate never running (the existing refusal tests fail).

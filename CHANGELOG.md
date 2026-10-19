@@ -5,15 +5,15 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
-### Change: `knowl skill create` approves the skill it writes
+### Change: skills run without `knowl skill approve`
 
-- Running a skill you had just created needed a second command, `knowl skill approve`, with nothing
-  new to review. `knowl skill create` now records that approval itself, so the skill runs straight
-  away. It never does this for a skill an agent created through `knowl_skill_create`, one a cloned
-  repository ships, or one that declares `write`, `network`, `publish` or `delete`; those still need
-  `knowl skill approve`. Editing any file in the package still revokes the approval.
-- `knowl config set trust.autoApproveCreatedSkills false` turns it off, so every skill is approved
-  by hand as before. Unset counts as on.
+- A skill used to refuse to run until `knowl skill approve <name>` had pinned its exact bytes, a
+  second prompt after the one your agent host already shows before it runs anything. `knowl skill
+  run` and `knowl_skill_run` now run a skill straight away, whoever created it, and the resolved
+  command is still printed first. Editing a skill no longer needs a new approval.
+- `knowl config set trust.autoApproveSkills false` restores the old behaviour in full: nothing runs
+  until `knowl skill approve` has pinned its bytes. Set it to `false` in a repository whose skills
+  you did not write. Unset counts as on.
 
 ## 5.27.0 - 2026-10-19
 
