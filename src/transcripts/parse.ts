@@ -1,4 +1,5 @@
 import { createReadStream } from 'node:fs';
+import { extractCopilotProse } from './copilot.js';
 
 export type ProseMessage = {
   /** 1-indexed line within the `.jsonl`. This is the pointer stored instead of the text. */
@@ -30,6 +31,7 @@ export function extractProse(entry: unknown): Extracted | null {
   // `response_item` there and the role inside `payload` -- so a record matches one reader or
   // neither, and no caller has to know which archive a line came from.
   if (record.type === 'response_item') return extractCodexProse(record);
+  if (record.type === 'user.message' || record.type === 'assistant.message') return extractCopilotProse(record);
 
   const role = record.type;
   if (role !== 'user' && role !== 'assistant') return null;

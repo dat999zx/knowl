@@ -3,6 +3,7 @@ import { openaiProvider } from './openai.js';
 import { anthropicProvider } from './anthropic.js';
 import { ollamaProvider } from './ollama.js';
 import { customProvider } from './custom.js';
+import { copilotProvider } from './copilot.js';
 
 /**
  * Adding a provider: one file here plus one entry in `ALL`. The guard in
@@ -11,7 +12,7 @@ import { customProvider } from './custom.js';
  * Descriptors are pure data and import no SDK, so `core` (`hasAiConfigured`) can read them
  * without loading the AI SDK tree.
  */
-const ALL: AiProviderDescriptor[] = [openaiProvider, anthropicProvider, ollamaProvider, customProvider];
+const ALL: AiProviderDescriptor[] = [openaiProvider, anthropicProvider, ollamaProvider, customProvider, copilotProvider];
 
 export const AI_PROVIDERS: Record<string, AiProviderDescriptor> = Object.fromEntries(ALL.map(p => [p.id, p]));
 export const AI_PROVIDER_IDS = ALL.map(p => p.id);

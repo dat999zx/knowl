@@ -3,6 +3,24 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import {
+  buildCopilotRepoSessionMap,
+  defaultCopilotSessionsDir,
+  defaultCopilotSessionStoreDb,
+  normalizeCopilotRepoCwd,
+  readCopilotCheckpointsText,
+  scanCopilotArchive,
+  type CopilotSessionMap,
+} from './copilot.js';
+
+export {
+  buildCopilotRepoSessionMap,
+  defaultCopilotSessionsDir,
+  defaultCopilotSessionStoreDb,
+  normalizeCopilotRepoCwd,
+  readCopilotCheckpointsText,
+  type CopilotSessionMap,
+};
 
 const run = promisify(execFile);
 
@@ -14,7 +32,7 @@ const run = promisify(execFile);
  * Codex records its project inside the file -- so by the time a file reaches the indexer the
  * knowledge of where it came from is not recoverable from its path without redoing that work.
  */
-export type TranscriptHarness = 'claude' | 'codex';
+export type TranscriptHarness = 'claude' | 'codex' | 'copilot';
 
 export type TranscriptFile = {
   /** Absolute path to the `.jsonl`. */
@@ -506,7 +524,13 @@ export type TranscriptScan = {
  */
 export async function scanTranscriptArchive(
   projectRoot: string,
-  options: { projectsDir?: string; codexSessionsDir?: string; roots?: string[] } = {},
+  options: {
+    projectsDir?: string;
+    codexSessionsDir?: string;
+    copilotSessionsDir?: string;
+    roots?: string[];
+    onlySessionIds?: Set<string>;
+  } = {},
 ): Promise<TranscriptScan> {
   const projectsDir = options.projectsDir ?? defaultProjectsDir();
   const rootSet = options.roots
@@ -603,15 +627,31 @@ export async function scanTranscriptArchive(
   // That is not hypothetical -- it is what happened the first time this landed, and eight
   // discovery tests started returning 137 of this repository's real sessions alongside their
   // three fixtures. Production passes neither option and gets both real archives.
+  const anyRedirected = Boolean(options.projectsDir || options.codexSessionsDir || options.copilotSessionsDir);
   const codexSessionsDir = options.codexSessionsDir
-    ?? (options.projectsDir ? null : defaultCodexSessionsDir());
+    ?? (anyRedirected ? null : defaultCodexSessionsDir());
   if (codexSessionsDir) {
     const codex = await scanCodexArchive(codexSessionsDir, rootSet.roots, uncanonicalise);
     found.push(...codex.files);
     degraded = degraded || codex.degraded;
   }
 
-  return { files: found, degraded };
+  const copilotSessionsDir = options.copilotSessionsDir
+    ?? (anyRedirected ? null : defaultCopilotSessionsDir());
+  if (copilotSessionsDir) {
+    const copilot = await scanCopilotArchive(copilotSessionsDir, rootSet.roots, uncanonicalise, {
+      onlySessionIds: options.onlySessionIds,
+    });
+    found.push(...copilot.files);
+    degraded = degraded || copilot.degraded;
+  }
+
+  const filtered = options.onlySessionIds
+    ? found.filter(file =>
+      options.onlySessionIds!.has(file.sessionId)
+      || (file.parentSessionId !== null && options.onlySessionIds!.has(file.parentSessionId)))
+    : found;
+  return { files: filtered, degraded };
 }
 
 /**
@@ -632,13 +672,20 @@ export async function hasIndexableArchive(projectRoot: string): Promise<boolean>
   const exists = (target: string) => fs.access(target).then(() => true, () => false);
   const claudeDir = path.join(defaultProjectsDir(), encodeProjectDir(path.resolve(projectRoot)));
   if (await exists(claudeDir)) return true;
-  return exists(defaultCodexSessionsDir());
+  if (await exists(defaultCodexSessionsDir())) return true;
+  return exists(defaultCopilotSessionsDir());
 }
 
 /** The file list alone, for callers with nothing to decide about a degraded scan. */
 export async function discoverTranscriptFiles(
   projectRoot: string,
-  options: { projectsDir?: string; codexSessionsDir?: string; roots?: string[] } = {},
+  options: {
+    projectsDir?: string;
+    codexSessionsDir?: string;
+    copilotSessionsDir?: string;
+    roots?: string[];
+    onlySessionIds?: Set<string>;
+  } = {},
 ): Promise<TranscriptFile[]> {
   return (await scanTranscriptArchive(projectRoot, options)).files;
 }
