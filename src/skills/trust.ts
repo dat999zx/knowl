@@ -4,6 +4,7 @@ import path from 'node:path';
 import { getSkillsDir, type SkillCapability } from './registry.js';
 import { globalSkillsRoot, globalTrustPath } from './paths.js';
 import { writeFileAtomic } from '../core/atomic-write.js';
+import type { ProjectConfig } from '../core/types.js';
 
 export type SkillTrustRecord = {
   approvedHash: string;
@@ -112,6 +113,34 @@ export async function approveSkill(
   trust[name] = record;
   await writeTrustFile(root, trust);
   return record;
+}
+
+/**
+ * Whether `knowl skill create` approves what it writes. On unless the literal `false` says
+ * otherwise, as `search.pathsChanged` is; the key stays out of DEFAULT_CONFIG for the same reason.
+ */
+export function isAutoApproveCreatedSkills(config?: ProjectConfig | null): boolean {
+  return config?.trust?.autoApproveCreatedSkills !== false;
+}
+
+/**
+ * Approve a package the person has just made with `knowl skill create`, or say why not.
+ *
+ * Called from the CLI command only. The MCP `knowl_skill_create` never reaches it: a package an
+ * agent wrote is exactly what the approval exists to have a human look at, and a package a cloned
+ * repository ships was never created here at all. A skill that declares an external effect keeps
+ * the confirmation `knowl skill approve` asks for.
+ */
+export async function approveCreatedSkill(
+  root: string,
+  manifest: { name: string; requires?: { capabilities?: SkillCapability[] } },
+  config: ProjectConfig | null,
+  user: string,
+): Promise<'approved' | 'off' | 'needs-confirmation'> {
+  if (!isAutoApproveCreatedSkills(config)) return 'off';
+  if (requiresStrongerApproval(manifest.requires?.capabilities ?? []).length > 0) return 'needs-confirmation';
+  await approveSkill(root, manifest.name, { approvedBy: `cli:create:${user}` });
+  return 'approved';
 }
 
 export async function revokeSkill(root: string, name: string): Promise<boolean> {
