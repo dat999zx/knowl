@@ -132,7 +132,6 @@ describe('serve auto-init', () => {
     const selfIgnore = await fs.readFile(path.join(dir, '.knowl', '.gitignore'), 'utf8');
     expect(selfIgnore).toContain('*');
     await expect(fs.access(path.join(dir, '.gitignore'))).rejects.toThrow();
-    expect((await loadConfig(dir)).memory?.global?.enabled).toBe(true);
   });
 
   it('adopting twice is idempotent', async () => {

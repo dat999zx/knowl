@@ -5,7 +5,7 @@ export interface AiProviderDescriptor {
   id: string;
   /** Which installed SDK builds the model. Only the two in package.json. */
   sdk: 'openai' | 'anthropic';
-  /** Optional per-model SDK selector for multi-model gateways (e.g. GitHub Copilot, custom). */
+  /** Optional per-model SDK selector for the multi-model `copilot` gateway only. */
   resolveSdk?(model: string): 'openai' | 'anthropic';
   /** Runs without an API key in config (`hasAiConfigured`). */
   keyless?: boolean;
