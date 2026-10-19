@@ -3,7 +3,7 @@
   "name": "io.github.dat999zx/knowl",
   "title": "Knowl",
   "description": "Persistent memory for AI agents, for code, research and everyday life. Stale facts retire.",
-  "version": "5.27.0",
+  "version": "5.28.0",
   "websiteUrl": "https://knowl.cloud",
   "repository": {
     "url": "https://github.com/dat999zx/knowl",
@@ -14,7 +14,7 @@
     {
       "registryType": "npm",
       "identifier": "@dat999zx/knowl",
-      "version": "5.27.0",
+      "version": "5.28.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
