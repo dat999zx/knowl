@@ -565,6 +565,14 @@ export interface ProjectConfig {
     rejectSecrets: boolean;
     secretPatterns: string[];
   };
+  /**
+   * Skill execution trust. Not under `skills`, which is a map keyed by skill name: a skill called
+   * `autoApproveSkills` would collide with the key.
+   */
+  trust?: {
+    /** Run a skill without `knowl skill approve`. On unless the literal `false`. */
+    autoApproveSkills?: boolean;
+  };
   /** Opt out of the once-a-day npm update check shown by `status` and `doctor`. */
   updateCheck?: {
     enabled?: boolean;

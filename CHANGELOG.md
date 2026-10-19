@@ -3,6 +3,18 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Change: skills run without `knowl skill approve`
+
+- A skill used to refuse to run until `knowl skill approve <name>` had pinned its exact bytes, a
+  second prompt after the one your agent host already shows before it runs anything. `knowl skill
+  run` and `knowl_skill_run` now run a skill straight away, whoever created it, and the resolved
+  command is still printed first. Editing a skill no longer needs a new approval.
+- `knowl config set trust.autoApproveSkills false` restores the old behaviour in full: nothing runs
+  until `knowl skill approve` has pinned its bytes. Set it to `false` in a repository whose skills
+  you did not write. Unset counts as on.
+
 ## 5.27.0 - 2026-10-19
 
 ### Feature: transcript search and extraction now read GitHub Copilot CLI and Hermes Agent sessions

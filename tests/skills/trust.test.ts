@@ -3,6 +3,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createSkillPackage, runSkillPackage } from '../../src/skills/registry.js';
 import { approveSkill, listTrust, readTrust, revokeSkill } from '../../src/skills/trust.js';
+import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 
 const TEST_ROOT = path.resolve('./.knowl-skill-trust-test');
 const TRUST_FILE = path.join(TEST_ROOT, '.knowl', 'skill-trust.json');
@@ -20,6 +21,8 @@ describe('skill trust', () => {
   beforeAll(async () => {
     await fs.rm(TEST_ROOT, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(path.join(TEST_ROOT, '.knowl'), { recursive: true });
+    // These tests are about the gate itself, which is off by default (trust.autoApproveSkills).
+    await saveConfig(TEST_ROOT, { ...DEFAULT_CONFIG, trust: { autoApproveSkills: false } });
   });
 
   beforeEach(async () => {
