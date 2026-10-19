@@ -2014,6 +2014,7 @@ Execution is refused unless approved:
 - `knowl skill approve <name>` approves a project skill, recording its hash in `.knowl/skill-trust.json`.
 - `knowl skill approve <name> --global` approves a global playbook, recording its hash in `~/.knowl/skill-trust.json`.
 - Any byte modification to the package invalidates approval and requires re-approval.
+- **`knowl skill create` approves the skill it writes** (`trust.autoApproveCreatedSkills`, default on), so a skill you just typed runs without a second command. It never approves a skill an agent created through `knowl_skill_create`, one a cloned repository ships, or one that declares `write`, `network`, `publish` or `delete`; those still need `knowl skill approve`. Turn it off with `knowl config set trust.autoApproveCreatedSkills false`.
 - Capabilities with external effects (`write`, `network`, `publish`, `delete`) require explicit confirmation during approval (`-y` / `--yes` for non-interactive environments).
 - **Planted package protection**: A checkout cannot approve itself. A repository shipping both `.knowl/skills/<name>` and a `skills.<name>` binding is refused.
 
@@ -2808,7 +2809,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | --- | --- |
 | `knowl skill list` | List learned skill packages |
 | `knowl skill read <name>` | Read one learned skill package |
-| `knowl skill create <name>` | Create a file-backed skill package and index it |
+| `knowl skill create <name>` | Create a file-backed skill package and index it; approves it for execution unless `trust.autoApproveCreatedSkills` is off |
 | `knowl skill run <name> [args...]` | Run an approved skill package's entrypoint |
 | `knowl skill approve <name>` | Approve a package for execution, pinned to its current contents |
 | `knowl skill revoke <name>` | Withdraw approval, so the entrypoint stops being runnable |

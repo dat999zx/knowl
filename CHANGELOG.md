@@ -3,6 +3,18 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Change: `knowl skill create` approves the skill it writes
+
+- Running a skill you had just created needed a second command, `knowl skill approve`, with nothing
+  new to review. `knowl skill create` now records that approval itself, so the skill runs straight
+  away. It never does this for a skill an agent created through `knowl_skill_create`, one a cloned
+  repository ships, or one that declares `write`, `network`, `publish` or `delete`; those still need
+  `knowl skill approve`. Editing any file in the package still revokes the approval.
+- `knowl config set trust.autoApproveCreatedSkills false` turns it off, so every skill is approved
+  by hand as before. Unset counts as on.
+
 ## 5.27.0 - 2026-10-19
 
 ### Feature: transcript search and extraction now read GitHub Copilot CLI and Hermes Agent sessions
