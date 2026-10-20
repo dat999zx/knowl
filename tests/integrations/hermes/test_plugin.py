@@ -313,6 +313,52 @@ class PluginTest(unittest.TestCase):
         finally:
             plugin.os.path.isdir = os.path.isdir
 
+    def test_a_linked_git_worktree_resolves_its_main_checkouts_knowl_project(self):
+        """`.knowl/` is gitignored, so `git worktree add` leaves no `.knowl/` inside a linked
+        worktree. When a session's cwd moves into a sibling worktree (`<repo>.worktrees/<branch>`),
+        `_has_knowl_project` must follow the worktree's `.git` file (`gitdir:` + `commondir`) back
+        to the main checkout's `.knowl/` directory rather than dropping hooks and falling back to
+        personal defaults."""
+        import tempfile, shutil
+        root = tempfile.mkdtemp(prefix="knowl-wt-")
+        try:
+            # Main checkout (initially without .knowl/)
+            repo = os.path.join(root, "repo")
+            git_worktree_admin = os.path.join(repo, ".git", "worktrees", "feat-x")
+            os.makedirs(git_worktree_admin, exist_ok=True)
+            with open(os.path.join(git_worktree_admin, "commondir"), "w", encoding="utf-8") as fh:
+                fh.write("../..\n")
+
+            worktree = os.path.join(root, "repo.worktrees", "feat-x")
+            subdir = os.path.join(worktree, "src", "services")
+            os.makedirs(subdir, exist_ok=True)
+            with open(os.path.join(worktree, ".git"), "w", encoding="utf-8") as fh:
+                fh.write(f"gitdir: {git_worktree_admin}\n")
+
+            plugin = load_plugin()
+
+            # Before main checkout has .knowl/, neither main nor worktree is a Knowl project.
+            self.assertFalse(plugin._has_knowl_project(repo))
+            self.assertFalse(plugin._has_knowl_project(worktree))
+            self.assertFalse(plugin._has_knowl_project(subdir))
+
+            # Once main checkout has .knowl/, both the worktree root and nested subdirs resolve True.
+            os.makedirs(os.path.join(repo, ".knowl"), exist_ok=True)
+            self.assertTrue(plugin._has_knowl_project(repo))
+            self.assertTrue(plugin._has_knowl_project(worktree))
+            self.assertTrue(plugin._has_knowl_project(subdir))
+
+            # A git submodule (.git/modules/sub) is not a linked worktree of the parent checkout.
+            sub_admin = os.path.join(repo, ".git", "modules", "sub")
+            os.makedirs(sub_admin, exist_ok=True)
+            submodule = os.path.join(root, "external-submodule")
+            os.makedirs(submodule, exist_ok=True)
+            with open(os.path.join(submodule, ".git"), "w", encoding="utf-8") as fh:
+                fh.write(f"gitdir: {sub_admin}\n")
+            self.assertFalse(plugin._has_knowl_project(submodule))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     # -- the observer thread -------------------------------------------------
 
     def test_the_observer_thread_runs_in_the_sessions_folder_not_its_own(self):
