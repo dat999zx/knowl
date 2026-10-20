@@ -421,18 +421,8 @@ def _knowl_home() -> str:
     return os.environ.get("KNOWL_HOME") or os.path.join(os.path.expanduser("~"), ".knowl")
 
 
-def _has_knowl_project(cwd: str) -> bool:
-    """Cheap pre-check so we do not spawn node for directories Knowl knows nothing about.
-
-    The machine home is skipped rather than counted. `~/.knowl` exists on every machine that has
-    ever run Knowl -- it holds `models/`, `cache/`, `repos.json`, `credentials.json` and the global
-    store -- so a walk that accepts any `.knowl` directory reports **every path under the user's
-    home** as a project. `knowl` itself refuses that directory (`No Knowl project found at
-    C:\\Users\\<you>`), so the plugin fired hooks that could only fail and claimed a project the
-    engine would not accept. `scaffoldTarget` in `src/mcp/auto-init.ts` has always had this rule.
-    """
-    home = os.path.normcase(os.path.realpath(_knowl_home()))
-    probe = cwd
+def _walk_for_knowl_project(start: str, home: str) -> bool:
+    probe = start
     for _ in range(64):
         candidate = os.path.join(probe, ".knowl")
         if os.path.isdir(candidate) and os.path.normcase(os.path.realpath(candidate)) != home:
@@ -442,6 +432,73 @@ def _has_knowl_project(cwd: str) -> bool:
             return False
         probe = parent
     return False
+
+
+def _main_worktree_root(cwd: str) -> Optional[str]:
+    """Resolve the main checkout root for a linked git worktree, or None.
+
+    Mirrors ``mainWorktreeRoot`` in ``src/core/config.ts``: ``git worktree add`` writes ``.git``
+    as a file containing ``gitdir: <path>`` pointing into ``<main>/.git/worktrees/<name>`` (with
+    ``commondir`` naming the shared ``.git`` directory), whereas ``.knowl/`` is gitignored and
+    lives only in the main checkout. Only a shared directory literally named ``.git`` is accepted
+    so git submodules (``.git/modules/<name>``) are not mistaken for worktrees.
+    """
+    probe = os.path.abspath(cwd)
+    for _ in range(64):
+        dot_git = os.path.join(probe, ".git")
+        if os.path.isfile(dot_git):
+            try:
+                with open(dot_git, encoding="utf-8", errors="replace") as handle:
+                    first = handle.readline().strip()
+                if not first.lower().startswith("gitdir:"):
+                    return None
+                raw_gitdir = first.split(":", 1)[1].strip()
+                if not raw_gitdir:
+                    return None
+                gitdir = os.path.normpath(
+                    raw_gitdir if os.path.isabs(raw_gitdir) else os.path.join(probe, raw_gitdir)
+                )
+                commondir_file = os.path.join(gitdir, "commondir")
+                if os.path.isfile(commondir_file):
+                    with open(commondir_file, encoding="utf-8", errors="replace") as handle:
+                        raw_common = handle.readline().strip()
+                    common = (
+                        os.path.normpath(raw_common if os.path.isabs(raw_common) else os.path.join(gitdir, raw_common))
+                        if raw_common
+                        else gitdir
+                    )
+                else:
+                    common = gitdir
+                if os.path.basename(common) == ".git" and os.path.isdir(common):
+                    return os.path.dirname(common)
+            except OSError:
+                return None
+            return None
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return None
+        probe = parent
+    return None
+
+
+def _has_knowl_project(cwd: str) -> bool:
+    """Cheap pre-check so we do not spawn node for directories Knowl knows nothing about.
+
+    The machine home is skipped rather than counted. `~/.knowl` exists on every machine that has
+    ever run Knowl -- it holds `models/`, `cache/`, `repos.json`, `credentials.json` and the global
+    store -- so a walk that accepts any `.knowl` directory reports **every path under the user's
+    home** as a project. `knowl` itself refuses that directory (`No Knowl project found at
+    C:\\Users\\<you>`), so the plugin fired hooks that could only fail and claimed a project the
+    engine would not accept. `scaffoldTarget` in `src/mcp/auto-init.ts` has always had this rule.
+
+    When the upward walk misses, a linked git worktree (``.git`` file) falls back to its main
+    checkout root, matching ``findProjectRoot`` in ``src/core/config.ts``.
+    """
+    home = os.path.normcase(os.path.realpath(_knowl_home()))
+    if _walk_for_knowl_project(cwd, home):
+        return True
+    main = _main_worktree_root(cwd)
+    return bool(main and _walk_for_knowl_project(main, home))
 
 
 def _has_global_store() -> bool:
