@@ -336,6 +336,16 @@ class PluginTest(unittest.TestCase):
                 fh.write(f"gitdir: {git_worktree_admin}\n")
 
             plugin = load_plugin()
+            # The upward walk must not escape the sandbox: %TEMP% sits under the user's home on CI
+            # runners, and a `.knowl/` anywhere above it would make the "no project" asserts lie.
+            real_isdir = os.path.isdir
+            sandbox = os.path.normcase(os.path.realpath(root))
+            isolate = unittest.mock.patch.object(
+                os.path, "isdir",
+                lambda p: real_isdir(p) and os.path.normcase(os.path.realpath(p)).startswith(sandbox),
+            )
+            isolate.start()
+            self.addCleanup(isolate.stop)
 
             # Before main checkout has .knowl/, neither main nor worktree is a Knowl project.
             self.assertFalse(plugin._has_knowl_project(repo))
