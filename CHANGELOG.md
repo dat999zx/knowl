@@ -3,6 +3,16 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.28.1 - 2026-10-21
+
+### Fix: the Hermes plugin recognises a linked git worktree as a Knowl project
+
+- `.knowl/` is gitignored, so a `git worktree add` checkout has none, and the Hermes plugin
+  reported "This folder is not a Knowl project" as soon as a session moved into one: automatic
+  recall and capture hooks went quiet and new knowledge landed in the personal store. The plugin
+  now follows the worktree's `.git` file back to the main checkout, the same way the CLI does.
+  Git submodules are not mistaken for worktrees. Reinstall with `knowl init hermes` to pick it up.
+
 ## 5.28.0 - 2026-10-19
 
 ### Fix: memory tools work from a folder with no project, and `knowl_update` reaches global atoms
